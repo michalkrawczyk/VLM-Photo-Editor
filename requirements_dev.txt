@@ -1,0 +1,15 @@
+-r requirements.txt
+
+# Testing
+pytest>=8.2
+pytest-cov>=5.0
+pytest-asyncio>=0.23
+
+# Formatting
+black>=24.4
+isort>=5.13
+
+# Linting
+ruff>=0.4
+pydocstyle>=6.3
+
