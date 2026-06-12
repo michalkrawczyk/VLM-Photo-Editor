@@ -1,0 +1,20 @@
+{
+  "plan_id": "plan-001",
+  "steps": [
+    {
+      "step_id": "step-001",
+      "index": 1,
+      "title": "Crop to 4:3",
+      "why": "Remove distracting edges",
+      "op_names": ["crop"]
+    },
+    {
+      "step_id": "step-002",
+      "index": 2,
+      "title": "Brighten slightly",
+      "why": "Subject is underexposed",
+      "op_names": ["exposure"]
+    }
+  ],
+  "mode": "full"
+}

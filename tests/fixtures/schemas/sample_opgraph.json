@@ -1,0 +1,20 @@
+{
+  "ops": [
+    {
+      "op_name": "crop",
+      "backend": "pil",
+      "params": {"left": 0, "top": 0, "right": 800, "bottom": 600},
+      "bbox": null,
+      "risk_tier": "low",
+      "step_id": "step-001"
+    },
+    {
+      "op_name": "exposure",
+      "backend": "pil",
+      "params": {"ev": 0.5},
+      "bbox": null,
+      "risk_tier": "low",
+      "step_id": "step-002"
+    }
+  ]
+}

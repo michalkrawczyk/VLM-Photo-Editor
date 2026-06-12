@@ -1,0 +1,18 @@
+{
+  "recipe_id": "recipe-001",
+  "source_path": "tests/fixtures/images/sample.jpg",
+  "op_graph": {
+    "ops": [
+      {
+        "op_name": "crop",
+        "backend": "pil",
+        "params": {"left": 0, "top": 0, "right": 800, "bottom": 600},
+        "bbox": null,
+        "risk_tier": "low",
+        "step_id": "step-001"
+      }
+    ]
+  },
+  "genai_ops": [],
+  "created_at": "2026-06-12T00:00:00"
+}
