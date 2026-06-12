@@ -30,7 +30,7 @@ replicate>=0.30
 
 # UI
 streamlit>=1.36
-streamlit-drawable-canvas>=0.9.4
+streamlit-drawable-canvas>=0.9.2
 
 # Async (P10 job queue)
 anyio>=4.3

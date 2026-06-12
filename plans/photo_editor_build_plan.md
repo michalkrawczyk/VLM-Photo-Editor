@@ -40,9 +40,9 @@ Contracts-first, role-separated pipeline: **Planner (VLM)** → human plan → *
 **User-facing result.** Nothing visible to edit yet, but the user can enter API keys safely — masked, validated, never stored in plaintext. Foundation for trust.
 
 **Definition of Done.**
-- [ ] Schemas validate the sample fixtures.
-- [ ] A key entered via the UI is retrievable through `SecretStore`, shown masked, and absent from logs (redaction test passes).
-- [ ] Changing a role→model mapping in config takes effect (unit test).
+- [x] Schemas validate the sample fixtures.
+- [x] A key entered via the UI is retrievable through `SecretStore`, shown masked, and absent from logs (redaction test passes).
+- [x] Changing a role→model mapping in config takes effect (unit test).
 
 ---
 
@@ -57,11 +57,11 @@ Contracts-first, role-separated pipeline: **Planner (VLM)** → human plan → *
 **User-facing result.** A clickable app that looks and feels like the final product — the coder (and stakeholders) can adjust layout, controls, naming, and flow before committing backend effort.
 
 **Definition of Done.**
-- [ ] App launches in the browser.
-- [ ] Every planned control is present and interactive against stubs.
+- [x] App launches in the browser.
+- [x] Every planned control is present and interactive against stubs.
 - [ ] Layout and component choices are reviewed/approved.
-- [ ] No control performs real processing yet; placeholders are clearly marked.
-- [ ] Each control's component contract (what it sends/expects) is noted so P7 wires real logic without restructuring the UI.
+- [x] No control performs real processing yet; placeholders are clearly marked.
+- [x] Each control's component contract (what it sends/expects) is noted so P7 wires real logic without restructuring the UI.
 
 ---
 
