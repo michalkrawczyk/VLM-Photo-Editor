@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests*)",
+      "Bash(python -m pytest *)",
+      "Bash(python agent_notes/view_module_map.py*)",
+      "Bash(python agent_notes/search_module_map.py*)",
+      "Bash(python agent_notes/generate_module_map.py)",
+      "Bash(.venv/bin/python agent_notes/view_module_map.py*)",
+      "Bash(.venv/bin/python agent_notes/search_module_map.py*)",
+      "Bash(.venv/bin/python agent_notes/generate_module_map.py)",
+      "WebFetch(domain:github.com)",
+      "Bash(git config *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git show *)",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(.venv/bin/pip install *)"
+    ]
+  }
+}
