@@ -1,31 +1,12 @@
 # VLM Photo Editor — Implementation Plan
 
-A build spec for an implementing LLM (target: Sonnet 4.6). Work **one step at a time**. Do **not** start a step until the previous step's Definition of Done passes. Hold every Global Invariant across all steps.
+A build spec for an implementing LLM (target: Sonnet 4.6). Work **one step at a time**. Do **not** start a step until the previous step's Definition of Done passes.
 
----
+See `CLAUDE.md` §Non-negotiable principles for all global invariants. Two invariants specific to this plan:
+- **Contracts before behavior.** Schemas defined first; never change a contract without updating all dependents.
+- **DoD gates progress.** Each step ships behind its Definition of Done before the next begins.
 
-## Goal
-
-A photo app that edits backgrounds, frames photos, and applies small corrections. A VLM proposes a concise human-readable plan first; on accept, an executor compiles it into deterministic, validated operations. Background edits may use genAI; everything else uses Python imaging libs. Non-destructive throughout.
-
-## Architecture (one line)
-
-Contracts-first, role-separated pipeline: **Planner (VLM)** → human plan → **Compiler** → validated **OpGraph** → **Executor** (deterministic code + optional genAI + optional Photoshop) → **Recipe** (non-destructive, replayable). Optional **Critic** verifies results.
-
-## Global Invariants (anti-drift — never violate)
-
-1. **Original is immutable.** Saves always write a new file. Writing over the source path is an error.
-2. **API keys are secret.** Never in code, recipe, sidecar, logs, prompts, or UI session state. Resolution precedence: process env → OS keyring → gitignored `.env`. Keys flow only into the provider client at call time. UI shows masked (last-4). A global redaction filter scrubs key-shaped strings from all logs/errors. Recipes store the model name only, never the key.
-3. **Recipes are deterministic and replayable.** Every genAI op records model + prompt + seed.
-4. **Contracts before behavior.** Schemas and interfaces are defined first; do not change a contract without updating all dependents.
-5. **Planner ↔ Executor parity.** The Planner's allowed-op set must exactly match what the Executor can run under the active policy (Auto / PS-strict / No-PS).
-6. **Human plan is source of truth.** Compiled ops link to it by stable step-ID. Never silently rewrite the human plan.
-7. **Subject pixels are frozen during background generation.** Only the masked region changes.
-8. **DoD gates progress.** Each step ships behind its Definition of Done before the next begins.
-
-## Module Map
-
-`config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `framing` · `background` · `planner` · `critic` · `recipe` · `prefs` · `ps_bridge` · `app`
+**Sequencing note.** Ship P0 and P1 together (contracts + IO). Slot P0.5 (UI shell) right after P0 to lock look-and-feel against stubs before backend work; real wiring lands in P7. Then P2 → P10 strictly, gating on each DoD.
 
 ---
 
@@ -110,32 +91,35 @@ Contracts-first, role-separated pipeline: **Planner (VLM)** → human plan → *
 **User-facing result.** Undo anything, keep multiple versions, reuse an edit as a preset; the original is never touched.
 
 **Definition of Done.**
-- [ ] `render` is deterministic across runs.
-- [ ] Original is byte-identical after edits.
-- [ ] Undo restores the prior state.
-- [ ] A saved preset reapplies correctly to a second image.
+- [x] `render` is deterministic across runs.
+- [x] Original is byte-identical after edits.
+- [x] Undo restores the prior state.
+- [x] A saved preset reapplies correctly to a second image.
 
 ---
 
 ## Step P4 — Planner (two-stage), Modes, Accept Toggle
 
-**What.** VLM produces a concise human-readable plan → compiler turns it into an `OpGraph` → executor runs it. Mode buttons (Fix background only / Frame only / Full changes). Auto/manual accept (Claude-Code style) with an editable plan. Step-ID linkage. Preferences injection. Allowed-op constraint.
+**What.** VLM produces a concise human-readable plan → compiler turns it into an `OpGraph` → executor runs it. Mode buttons (Fix background only / Frame only / Full changes). Three accept modes (`AcceptMode` enum: `manual` / `auto` / `full_auto`) with an editable plan. Step-ID linkage. Preferences injection. Allowed-op constraint.
 
 **Why.** The core agent loop. Human-readable-first prevents opaque automation and is the main anti-drift lever for the editing logic itself.
 
-**Manual mode = human in the loop.** In manual mode nothing executes until the user explicitly approves. After the plan is shown the app asks for a decision: **accept** or **request changes**. If the user types requested changes in the chat box, the planner regenerates the plan incorporating that feedback and asks for a decision again. This loop repeats — regenerate → present → ask — until the user approves. Only an explicit approval triggers compilation and execution. (Auto mode skips the prompt but still respects risk-tier gating.)
+**Accept modes.**
+- **`manual`** — human in the loop: nothing executes until the user explicitly approves. After the plan is shown the app asks for a decision: **accept** or **request changes**. If the user types requested changes in the chat box, the planner regenerates the plan incorporating that feedback and asks for a decision again. This loop repeats — regenerate → present → ask — until the user approves.
+- **`auto`** — skips human approval when all compiled ops are LOW risk; still prompts for HIGH/DESTRUCTIVE ops.
+- **`full_auto`** — skips human approval unconditionally; plan is compiled and executed immediately after generation, regardless of risk tier.
 
-**Key functionality.** Numbered human plan with short "why" per step; compiled ops shown as an expandable under each step (verify mapping); manual plan editing; chat-driven change requests that regenerate the plan and re-prompt for approval; risk-tier gating so auto-accept skips high-risk/destructive ops.
+**Key functionality.** Numbered human plan with short "why" per step; compiled ops shown as an expandable under each step (verify mapping); manual plan editing; chat-driven change requests that regenerate the plan and re-prompt for approval; risk-tier gating for `auto` mode; `AcceptMode` enum (`schema/ops.py`) used by graph and UI.
 
-**User-facing result.** Sees a clear plan before anything happens. In manual mode, can keep asking for changes in chat and gets a revised plan each time, approving only when satisfied — then it runs.
+**User-facing result.** Sees a clear plan before anything happens. In manual mode, can keep asking for changes in chat and gets a revised plan each time, approving only when satisfied — then it runs. Auto and full-auto modes reduce friction for trusted or low-stakes workflows.
 
 **Definition of Done.**
-- [ ] End-to-end on a sample image in both accept modes.
-- [ ] In manual mode, no op executes before explicit approval.
-- [ ] A chat-box change request produces a regenerated plan and a fresh approval prompt, looping until approval is given.
-- [ ] Each human step maps to ops by stable ID.
-- [ ] Editing the plan changes the executed ops.
-- [ ] The active mode's allowed-op set is respected.
+- [ ] End-to-end on a sample image in all three accept modes.
+- [x] In manual mode, no op executes before explicit approval.
+- [x] A chat-box change request produces a regenerated plan and a fresh approval prompt, looping until approval is given.
+- [x] Each human step maps to ops by stable ID.
+- [x] Editing the plan changes the executed ops.
+- [x] The active mode's allowed-op set is respected.
 
 ---
 
@@ -240,8 +224,3 @@ Contracts-first, role-separated pipeline: **Planner (VLM)** → human plan → *
 - [ ] A cache hit avoids re-planning.
 - [ ] The redaction audit finds zero key leakage across logs and errors.
 
----
-
-## Suggested execution order
-
-Ship P0 and P1 together (contracts + IO) since everything depends on `schema` and `ImageContainer`. Slot **P0.5 (UI shell)** in early — right after P0 — so look-and-feel is locked against stubs before backend work; its real wiring lands later in P7. Then proceed strictly P2 → P10, gating on each Definition of Done.

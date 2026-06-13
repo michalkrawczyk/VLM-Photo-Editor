@@ -1,140 +1,129 @@
 # Project File Structure
 
-Derived from the module map in `photo_editor_build_plan.md`:
-`config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `framing` · `background` · `planner` · `critic` · `recipe` · `prefs` · `ps_bridge` · `app`
+Modules: `config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `framing` · `background` · `agents` · `planner` · `recipe` · `prefs` · `ps_bridge` · `app`
+
+For per-module invariants, import rules, and common mistakes see `AGENTS.md` in each module directory.
 
 ---
 
 ```
 vlm_photo_editor/
 │
-├── config/                         # P0 — policy modes, model registry, thresholds
+├── config/
 │   ├── __init__.py
-│   ├── policy.py                   # PolicyMode enum (Auto / PS-strict / No-PS), risk-tier gating rules
-│   ├── registry.py                 # role→model mapping; switchable at runtime
-│   └── settings.py                 # app-level paths, seam-quality threshold, cache TTL
+│   ├── policy.py
+│   ├── registry.py
+│   └── settings.py
 │
-├── secrets/                        # P0 — secret resolution and redaction
+├── secrets/
 │   ├── __init__.py
-│   ├── store.py                    # SecretStore.get(provider): env → keyring → .env precedence
-│   └── redaction.py                # log/error filter that scrubs key-shaped strings
+│   ├── store.py
+│   └── redaction.py
 │
-├── schema/                         # P0 — all Pydantic contracts; imported by every other module
+├── schema/
 │   ├── __init__.py
-│   ├── ops.py                      # Op, OpGraph, OpName enum, Backend enum, RiskTier enum
-│   ├── plan.py                     # HumanPlan, HumanStep (stable step-IDs), CompilerResult
-│   ├── recipe.py                   # Recipe: op-graph + model + prompt + seed per genAI op
-│   └── prefs.py                    # Preferences, ExplicitRule, LearnedRule, PrefsVersion
+│   ├── ops.py
+│   ├── plan.py
+│   ├── recipe.py
+│   └── prefs.py
 │
-├── imageio/                        # P1 — image I/O; never writes over source
+├── imageio/
 │   ├── __init__.py
-│   ├── container.py                # ImageContainer: pixels, bit-depth, ICC profile, metadata
-│   ├── loaders.py                  # RAW (rawpy → 16-bit linear), JPG/PNG (Pillow); format detection
-│   └── savers.py                   # save(): raises if dest == source path; naming scheme
+│   ├── container.py
+│   ├── loaders.py
+│   └── savers.py
 │
-├── models/                         # P0/P4 — VLM client factories
+├── models/
 │   ├── __init__.py
-│   └── registry.py                 # build_client(role) → anthropic.Anthropic or compatible client
+│   └── registry.py
 │
-├── ops/                            # P2 — deterministic edit engine
+├── ops/
 │   ├── __init__.py
-│   ├── executor.py                 # Executor.apply(container, opgraph) → ImageContainer
-│   ├── validator.py                # reject unknown ops, out-of-bounds params; clear error messages
-│   ├── mask.py                     # bounding-box → region mask; subject-pixel freeze assertion
+│   ├── executor.py
+│   ├── validator.py
+│   ├── mask.py
 │   └── backends/
 │       ├── __init__.py
-│       ├── pil_backend.py          # crop, rotate, white-balance, exposure, denoise via Pillow
-│       ├── cv_backend.py           # ops that benefit from OpenCV (e.g. bilateral denoise)
-│       └── stubs.py                # genAI and Photoshop backend stubs (raise NotImplementedError)
+│       ├── pil_backend.py
+│       ├── cv_backend.py
+│       └── stubs.py
 │
-├── framing/                        # P5 — subject-aware composition
+├── framing/
 │   ├── __init__.py
-│   ├── detector.py                 # face detection + saliency map → subject bbox
-│   └── modes.py                    # FramingMode enum implementations:
-│                                   #   rule_of_thirds, golden_ratio, golden_spiral,
-│                                   #   center_symmetry, portrait_headroom, face_only,
-│                                   #   negative_space, fill_frame, lead_room, horizon_third
+│   ├── detector.py
+│   └── modes.py
 │
-├── background/                     # P6 — genAI background pipeline
+├── background/
 │   ├── __init__.py
-│   ├── generator.py                # generate N candidates (seed, prompt, model stored for recipe)
-│   ├── composite.py                # LAB color transfer, grain/noise match, feathered seam blend
-│   └── quality.py                  # seam metric gate; seed re-roll; flag-for-manual fallback
+│   ├── generator.py
+│   ├── composite.py
+│   └── quality.py
 │
-├── planner/                        # P4 — two-stage VLM planning
+├── agents/
 │   ├── __init__.py
-│   ├── planner.py                  # VLM call → HumanPlan (numbered steps with "why" per step)
-│   └── compiler.py                 # HumanPlan → OpGraph; step-ID linkage; allowed-op enforcement
+│   ├── planner.py        ← VLM: image + intent → HumanPlan
+│   ├── critic.py         ← VLM: edit quality verification (P9)
+│   ├── aggregator.py     ← LLM: preference rule summarization (P8)
+│   └── AGENTS.md
 │
-├── critic/                         # P9 — optional quality-gate VLM
+├── planner/
 │   ├── __init__.py
-│   └── critic.py                   # verify result vs intent; loop on failure
+│   └── compiler.py       ← deterministic HumanPlan → OpGraph
 │
-├── recipe/                         # P3 — non-destructive store and replay
+├── recipe/
 │   ├── __init__.py
-│   ├── store.py                    # serialize/deserialize to <name>.edit.json sidecar; XMP stub
-│   └── renderer.py                 # deterministic render(); undo/redo stack; variant branches
+│   ├── store.py
+│   └── renderer.py
 │
-├── prefs/                          # P8 — preferences learning loop
+├── prefs/
 │   ├── __init__.py
-│   ├── explicit.py                 # user-authored rules; always override learned on conflict
-│   └── learned.py                  # delta capture on accept/reject/edit; LLM aggregation;
-│                                   # candidate rules → user approval → inject into planner
+│   ├── explicit.py
+│   └── learned.py
 │
-├── ps_bridge/                      # P9 — optional Photoshop integration
+├── ps_bridge/
 │   ├── __init__.py
-│   ├── client.py                   # MCP server wrapping UXP/ExtendScript; capability discovery
-│   └── vocabulary.py               # PS-expressible op set fed into planner prompt for PS-strict mode
+│   ├── client.py
+│   └── vocabulary.py
 │
-└── app/                            # P0.5 / P7 — Streamlit UI
+└── app/
     ├── __init__.py
-    ├── main.py                     # entrypoint: `streamlit run app/main.py`
-    ├── state.py                    # session state management; no secrets in state
-    ├── stubs.py                    # mock data for P0.5 shell (replaced by real wiring in P7)
+    ├── main.py
+    ├── state.py
+    ├── stubs.py
     └── components/
         ├── __init__.py
-        ├── upload.py               # file upload widget
-        ├── preview.py              # before/after side-by-side preview
-        ├── plan_view.py            # plan display; expandable compiled ops per step
-        ├── canvas.py               # streamlit-drawable-canvas bbox selection
-        ├── prefs_panel.py          # explicit + learned rules panel; per-rule toggles
-        └── settings.py             # masked API-key entry; role→model switchers; mode buttons
+        ├── upload.py
+        ├── preview.py
+        ├── plan_view.py
+        ├── canvas.py
+        ├── prefs_panel.py
+        └── settings.py
 
 tests/
 ├── fixtures/
 │   ├── images/
 │   │   ├── sample.jpg
 │   │   ├── sample.png
-│   │   └── sample.nef              # RAW fixture (or .cr2)
+│   │   └── sample.nef
 │   └── schemas/
 │       ├── sample_plan.json
 │       ├── sample_opgraph.json
 │       └── sample_recipe.json
 ├── unit/
-│   ├── test_schema.py              # schema validation against fixtures
-│   ├── test_secrets.py             # SecretStore + redaction filter
-│   ├── test_imageio.py             # round-trip per format; RAW bit-depth; source-override guard
-│   ├── test_ops.py                 # op execution, validator rejection, bbox region isolation
-│   ├── test_recipe.py              # deterministic render; undo; preset reapply
-│   ├── test_planner.py             # plan→opgraph; step-ID linkage; allowed-op enforcement
-│   ├── test_framing.py             # each mode on face + scene fixtures; no head-clipping
-│   └── test_background.py          # subject pixels frozen; seam gate; N candidates
+│   ├── test_schema.py
+│   ├── test_secrets.py
+│   ├── test_imageio.py
+│   ├── test_ops.py
+│   ├── test_recipe.py
+│   ├── test_planner.py
+│   ├── test_framing.py
+│   └── test_background.py
 └── integration/
-    └── test_pipeline.py            # end-to-end: upload → plan → compile → execute → recipe
+    └── test_pipeline.py
 
-.env.example                        # documents required env vars; no real values
-.gitignore                          # includes .env, *.edit.json is NOT ignored (sidecars ship)
-pyproject.toml                      # project metadata, tool config (black, ruff, mypy, pytest)
+.env.example
+.gitignore
+pyproject.toml
 requirements.txt
 requirements_dev.txt
 ```
-
----
-
-## Notes
-
-- `schema/` must have **zero imports from sibling modules** — it is the root dependency.
-- `secrets/redaction.py` is wired into the root logger at startup in `app/main.py` so all log sinks are covered before any key ever flows through the system.
-- `app/stubs.py` provides the complete mock surface for P0.5. Every component in `app/components/` accepts an optional `data` parameter; when it is a stub type, no real processing is triggered.
-- `ops/backends/stubs.py` keeps the genAI and Photoshop backends cleanly removable — import only under the active policy.
-- XMP sidecar in `recipe/store.py` is a stub at P3; full XMP round-trip is deferred to P10 hardening.

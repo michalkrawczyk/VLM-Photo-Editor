@@ -19,6 +19,7 @@ Photo editing app powered by a VLM: propose a human-readable plan → user appro
 
 **How to work on this project:**
 - Follow `plans/photo_editor_build_plan.md` in order. DoD checkboxes are a gate, not a suggestion.
+- When a file's path is already known, read it directly — don't use an Explore agent (it summarizes, losing precision). Use `codebase-navigation` to find the exact location of a symbol, class, or function within files. Use Explore only when the file's location is genuinely unknown.
 - If a request conflicts with a principle above, stop and flag it — don't quietly reinterpret.
 - Prefer the boring, deterministic path. Use genAI/Photoshop only where imaging libs genuinely can't do the job.
 - Make the invisible inspectable: plans, compiled ops, recipes, and learned preferences must be viewable and editable.
@@ -127,6 +128,8 @@ See [agent_notes/stack.md](agent_notes/stack.md) for full stack and rationale. R
 
 Layer locations: [agent_notes/structure.md](agent_notes/structure.md). Strict boundaries: `schema/` imports nothing from siblings; `planner/` never imports `imageio/`/`ops/`; `imageio/` never overwrites source; `secrets/` RedactionProcessor on every log sink.
 
+Per-module invariants, import rules, file map, and common mistakes: `vlm_photo_editor/<module>/AGENTS.md` — read it before editing that module.
+
 ---
 
 ## Common Mistakes
@@ -146,6 +149,7 @@ Layer locations: [agent_notes/structure.md](agent_notes/structure.md). Strict bo
 
 ## Reference Documentation
 
+**Goal:** [agent_notes/goal.md](agent_notes/goal.md)  
 **Stack & Rationale:** [agent_notes/stack.md](agent_notes/stack.md)  
 **Project Structure:** [agent_notes/structure.md](agent_notes/structure.md)  
 **Product Description:** [agent_notes/description.md](agent_notes/description.md)  

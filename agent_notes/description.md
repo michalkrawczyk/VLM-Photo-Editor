@@ -8,7 +8,7 @@ A photographer or editor who wants fast, explainable, reversible edits — not a
 
 ## What "Good" Looks Like
 
-- User sees a clear plan before anything happens and can steer it in chat until satisfied.
+- User sees a clear plan before anything happens and can steer it in chat until satisfied. Three accept modes control automation level: `manual` always prompts; `auto` skips approval for low-risk ops only; `full_auto` executes immediately without any human gate.
 - Background edits look real, not pasted-in; the subject is never touched.
 - Framing follows photographic intent (composition modes), not just an aspect ratio.
 - Every edit is reversible, reproducible, and saved as a new file — the original is untouched.
