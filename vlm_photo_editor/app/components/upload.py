@@ -1,4 +1,5 @@
 """File upload widget. Contract: sets state['uploaded_file'] on upload."""
+
 from __future__ import annotations
 
 import streamlit as st

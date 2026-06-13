@@ -37,9 +37,12 @@ class Executor:
     def _resolve_backend(op: Op):
         if op.backend == Backend.PIL:
             from .backends.pil_backend import apply
+
             return apply
         if op.backend == Backend.OPENCV:
             from .backends.cv_backend import apply
+
             return apply
         from .backends.stubs import apply
+
         return apply

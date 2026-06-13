@@ -1,4 +1,5 @@
 """Mock data for P0.5 UI shell. Replaced by real backend wiring in P7."""
+
 from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
 from vlm_photo_editor.schema.plan import HumanPlan, HumanStep
 from vlm_photo_editor.schema.prefs import ExplicitRule, LearnedRule, Preferences

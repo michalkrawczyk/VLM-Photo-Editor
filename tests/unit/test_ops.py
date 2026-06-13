@@ -20,7 +20,9 @@ def _container(pixels: np.ndarray | None = None, bit_depth: int = 8) -> ImageCon
     return ImageContainer(pixels=pixels, bit_depth=bit_depth, source_path=_FAKE_SRC)
 
 
-def _op(name: OpName, params: dict, *, bbox: BoundingBox | None = None, backend: Backend = Backend.PIL) -> Op:
+def _op(
+    name: OpName, params: dict, *, bbox: BoundingBox | None = None, backend: Backend = Backend.PIL
+) -> Op:
     return Op(op_name=name, params=params, bbox=bbox, backend=backend, step_id="s1")
 
 
@@ -32,13 +34,14 @@ def _graph(*ops: Op) -> OpGraph:
 # Validator
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "op_name,params",
     [
-        (OpName.CROP, {"left": 0, "top": 0}),          # missing right + bottom
-        (OpName.ROTATE, {}),                             # missing angle
-        (OpName.WHITE_BALANCE, {}),                      # missing temperature
-        (OpName.EXPOSURE, {}),                           # missing ev
+        (OpName.CROP, {"left": 0, "top": 0}),  # missing right + bottom
+        (OpName.ROTATE, {}),  # missing angle
+        (OpName.WHITE_BALANCE, {}),  # missing temperature
+        (OpName.EXPOSURE, {}),  # missing ev
     ],
 )
 def test_validator_rejects_missing_param(op_name: OpName, params: dict) -> None:
@@ -86,10 +89,12 @@ def test_validator_accepts_valid_op() -> None:
 
 
 def test_validate_op_graph_raises_on_first_bad_op() -> None:
-    graph = OpGraph(ops=[
-        Op(op_name=OpName.EXPOSURE, params={"ev": 0.5}, step_id="good"),
-        Op(op_name=OpName.EXPOSURE, params={"ev": 99.0}, step_id="bad"),
-    ])
+    graph = OpGraph(
+        ops=[
+            Op(op_name=OpName.EXPOSURE, params={"ev": 0.5}, step_id="good"),
+            Op(op_name=OpName.EXPOSURE, params={"ev": 99.0}, step_id="bad"),
+        ]
+    )
     with pytest.raises(ValueError):
         validate_op_graph(graph)
 
@@ -97,6 +102,7 @@ def test_validate_op_graph_raises_on_first_bad_op() -> None:
 # ---------------------------------------------------------------------------
 # Executor — golden image
 # ---------------------------------------------------------------------------
+
 
 def test_exposure_brightens_image() -> None:
     container = _container(np.full((64, 64, 3), 64, dtype=np.uint8))
@@ -132,7 +138,7 @@ def test_white_balance_shifts_channels() -> None:
 def test_executor_chains_ops() -> None:
     container = _container(np.full((64, 64, 3), 64, dtype=np.uint8))
     graph = _graph(
-        _op(OpName.EXPOSURE, {"ev": 1.0}),   # 64 → 128
+        _op(OpName.EXPOSURE, {"ev": 1.0}),  # 64 → 128
         _op(OpName.CROP, {"left": 0, "top": 0, "right": 32, "bottom": 32}),
     )
     result = Executor().apply(container, graph)
@@ -150,6 +156,7 @@ def test_executor_respects_allowed_ops_policy() -> None:
 # ---------------------------------------------------------------------------
 # Executor — bbox region isolation
 # ---------------------------------------------------------------------------
+
 
 def test_bbox_confines_exposure() -> None:
     pixels = np.full((64, 64, 3), 50, dtype=np.uint8)
@@ -183,6 +190,7 @@ def test_bbox_edge_pixels_unchanged() -> None:
 # Mask
 # ---------------------------------------------------------------------------
 
+
 def test_mask_true_inside_bbox() -> None:
     container = _container()
     bbox = BoundingBox(x=5, y=5, width=10, height=10)
@@ -197,5 +205,5 @@ def test_mask_clips_to_image_bounds() -> None:
     bbox = BoundingBox(x=5, y=5, width=20, height=20)  # extends beyond image
     mask = bbox_to_mask(container, bbox)
     assert mask.shape == (10, 10)
-    assert mask[9, 9]      # clamped: row 9, col 9 inside clipped region
+    assert mask[9, 9]  # clamped: row 9, col 9 inside clipped region
     assert not mask[0, 0]  # outside

@@ -4,6 +4,7 @@ Contract:
   - Displays ExplicitRule and LearnedRule lists from Preferences.
   - All mutations log intent; no real mutation in P0.5 (wired in P8).
 """
+
 from __future__ import annotations
 
 import streamlit as st

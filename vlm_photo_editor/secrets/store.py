@@ -30,7 +30,7 @@ class SecretStore:
 
         # 3. .env file — lowest priority
         try:
-            from dotenv import find_dotenv, dotenv_values
+            from dotenv import dotenv_values, find_dotenv
 
             env_file = find_dotenv(usecwd=True)
             if env_file:

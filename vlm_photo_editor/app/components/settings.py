@@ -5,6 +5,7 @@ Contract:
     Logs masked version only. Real storage wired to SecretStore in P7.
   - Model selectors: log intent with role + model; selection stored in state['model_roles'].
 """
+
 from __future__ import annotations
 
 import streamlit as st

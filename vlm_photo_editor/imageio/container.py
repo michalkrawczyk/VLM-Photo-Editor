@@ -8,8 +8,8 @@ import numpy as np
 
 @dataclass
 class ImageContainer:
-    pixels: np.ndarray       # HxWxC uint8 or uint16
-    bit_depth: int           # 8 or 16
+    pixels: np.ndarray  # HxWxC uint8 or uint16
+    bit_depth: int  # 8 or 16
     source_path: Path
     icc_profile: bytes | None = None
     metadata: dict = field(default_factory=dict)

@@ -25,6 +25,7 @@ def apply(container: ImageContainer, op: Op) -> ImageContainer:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _to_pil_8bit(container: ImageContainer) -> Image.Image:
     pixels = container.pixels
     if pixels.dtype == np.uint16:
@@ -50,6 +51,7 @@ def _from_pil(img: Image.Image, source: ImageContainer) -> ImageContainer:
 # ---------------------------------------------------------------------------
 # Op implementations
 # ---------------------------------------------------------------------------
+
 
 def _crop(container: ImageContainer, params: dict) -> ImageContainer:
     left = int(params["left"])
@@ -85,7 +87,7 @@ def _white_balance(container: ImageContainer, params: dict) -> ImageContainer:
 
 def _exposure(container: ImageContainer, params: dict) -> ImageContainer:
     ev = float(params["ev"])
-    factor = 2.0 ** ev
+    factor = 2.0**ev
     max_val = 65535.0 if container.bit_depth == 16 else 255.0
     pixels = np.clip(container.pixels.astype(np.float64) * factor, 0, max_val)
     result = container.copy()

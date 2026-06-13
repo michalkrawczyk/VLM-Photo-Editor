@@ -93,7 +93,13 @@ def test_compiler_result_round_trip():
         steps=[HumanStep(step_id="s1", index=1, title="Crop", why="Better composition")]
     )
     graph = OpGraph(
-        ops=[Op(op_name=OpName.CROP, params={"left": 0, "top": 0, "right": 400, "bottom": 300}, step_id="s1")]
+        ops=[
+            Op(
+                op_name=OpName.CROP,
+                params={"left": 0, "top": 0, "right": 400, "bottom": 300},
+                step_id="s1",
+            )
+        ]
     )
     result = CompilerResult(plan=plan, op_graph=graph)
     restored = CompilerResult.model_validate(result.model_dump())
@@ -102,7 +108,9 @@ def test_compiler_result_round_trip():
 
 
 def test_genai_op_stored_without_key():
-    op = GenAIOp(step_id="s1", model="stable-diffusion-inpainting", prompt="forest background", seed=42)
+    op = GenAIOp(
+        step_id="s1", model="stable-diffusion-inpainting", prompt="forest background", seed=42
+    )
     data = op.model_dump()
     assert "api_key" not in data
     assert data["model"] == "stable-diffusion-inpainting"

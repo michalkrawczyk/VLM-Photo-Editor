@@ -5,6 +5,7 @@ Contract:
   - Coordinates map directly to BoundingBox schema for Op.
   - Gracefully degrades if streamlit-drawable-canvas is not installed.
 """
+
 from __future__ import annotations
 
 import streamlit as st
@@ -24,8 +25,7 @@ def render() -> None:
 
     if not _CANVAS_AVAILABLE:
         st.warning(
-            "streamlit-drawable-canvas not installed. "
-            "Run: pip install streamlit-drawable-canvas"
+            "streamlit-drawable-canvas not installed. " "Run: pip install streamlit-drawable-canvas"
         )
         return
 

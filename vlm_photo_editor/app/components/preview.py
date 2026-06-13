@@ -1,4 +1,5 @@
 """Before/after side-by-side preview. Contract: accepts PIL Images or None (shows placeholder)."""
+
 from __future__ import annotations
 
 import streamlit as st
