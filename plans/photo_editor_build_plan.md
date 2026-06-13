@@ -76,9 +76,9 @@ Contracts-first, role-separated pipeline: **Planner (VLM)** → human plan → *
 **User-facing result.** Opens RAW/JPG/PNG with no color or quality loss; originals are provably safe.
 
 **Definition of Done.**
-- [ ] Round-trip tests pass for each format.
-- [ ] RAW yields 16-bit with profile intact.
-- [ ] Attempting to save over the source raises.
+- [x] Round-trip tests pass for each format.
+- [x] RAW yields 16-bit with profile intact.
+- [x] Attempting to save over the source raises.
 
 ---
 
@@ -93,9 +93,9 @@ Contracts-first, role-separated pipeline: **Planner (VLM)** → human plan → *
 **User-facing result.** Edits apply predictably; bad instructions are caught, not run.
 
 **Definition of Done.**
-- [ ] An op-graph applies to the expected golden image.
-- [ ] Unknown ops or out-of-bounds params are rejected with a clear error.
-- [ ] A bbox region edit changes only pixels inside the box.
+- [x] An op-graph applies to the expected golden image.
+- [x] Unknown ops or out-of-bounds params are rejected with a clear error.
+- [x] A bbox region edit changes only pixels inside the box.
 
 ---
 
