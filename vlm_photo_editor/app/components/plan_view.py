@@ -5,6 +5,7 @@ Contract:
   - Accept button sets state['plan_approved'] = True and logs intent.
   - Change request input logs intent with the request text; would regenerate plan in P7.
 """
+
 from __future__ import annotations
 
 import streamlit as st
@@ -15,7 +16,7 @@ from vlm_photo_editor.schema.plan import HumanPlan
 
 
 def render(plan: HumanPlan, op_graph: OpGraph | None = None) -> None:
-    st.subheader("Proposed Plan [STUB]")
+    st.subheader("Proposed Plan")
 
     ops_by_step: dict[str, list] = {}
     if op_graph:
@@ -39,7 +40,7 @@ def render(plan: HumanPlan, op_graph: OpGraph | None = None) -> None:
         if st.button("Accept Plan", type="primary", key="accept_plan_btn"):
             state.set("plan_approved", True)
             state.log_intent("accept_plan", {"plan_id": plan.plan_id})
-            st.success("Plan accepted. [STUB — execution wired in P7]")
+            st.success("Plan accepted. Execution wired in P7.")
 
     with col_chg:
         change = st.text_input("Request changes:", key="change_request_input")
@@ -47,4 +48,4 @@ def render(plan: HumanPlan, op_graph: OpGraph | None = None) -> None:
             state.set("change_request", change)
             state.set("plan_approved", False)
             state.log_intent("request_changes", {"change": change})
-            st.info(f"Change queued: {change!r} [STUB — would regenerate plan]")
+            st.info(f"Change queued: {change!r} — planner will regenerate (wired in P7).")

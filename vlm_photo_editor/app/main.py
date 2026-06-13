@@ -1,4 +1,5 @@
 """Streamlit entrypoint. Run: streamlit run vlm_photo_editor/app/main.py"""
+
 import streamlit as st
 
 # Redaction filter must be installed before any logging occurs.
@@ -12,9 +13,9 @@ from vlm_photo_editor.app.components import canvas  # noqa: E402
 from vlm_photo_editor.app.components import plan_view  # noqa: E402
 from vlm_photo_editor.app.components import prefs_panel  # noqa: E402
 from vlm_photo_editor.app.components import preview  # noqa: E402
-from vlm_photo_editor.app.components import settings as settings_component  # noqa: E402
 from vlm_photo_editor.app.components import upload  # noqa: E402
-from vlm_photo_editor.schema.ops import FramingMode  # noqa: E402
+from vlm_photo_editor.app.components import settings as settings_component  # noqa: E402
+from vlm_photo_editor.schema.ops import AcceptMode, FramingMode  # noqa: E402
 
 st.set_page_config(
     page_title="VLM Photo Editor",
@@ -44,7 +45,7 @@ with col_full:
 with col_accept:
     accept_mode = st.radio(
         "Accept mode:",
-        options=["manual", "auto"],
+        options=[m.value for m in AcceptMode],
         horizontal=True,
         key="accept_mode_radio",
     )
