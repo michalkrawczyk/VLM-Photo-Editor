@@ -45,6 +45,12 @@ class FramingMode(str, Enum):
     HORIZON_THIRD = "horizon_third"
 
 
+class AcceptMode(str, Enum):
+    MANUAL = "manual"
+    AUTO = "auto"
+    FULL_AUTO = "full_auto"
+
+
 class BoundingBox(BaseModel):
     x: int = Field(ge=0)
     y: int = Field(ge=0)

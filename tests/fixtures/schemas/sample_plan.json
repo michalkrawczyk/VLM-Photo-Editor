@@ -6,14 +6,16 @@
       "index": 1,
       "title": "Crop to 4:3",
       "why": "Remove distracting edges",
-      "op_names": ["crop"]
+      "op_names": ["crop"],
+      "op_params": [{"left": 0, "top": 0, "right": 800, "bottom": 600}]
     },
     {
       "step_id": "step-002",
       "index": 2,
       "title": "Brighten slightly",
       "why": "Subject is underexposed",
-      "op_names": ["exposure"]
+      "op_names": ["exposure"],
+      "op_params": [{"ev": 0.5}]
     }
   ],
   "mode": "full"

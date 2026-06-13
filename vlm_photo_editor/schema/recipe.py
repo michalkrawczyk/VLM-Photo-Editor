@@ -20,3 +20,4 @@ class Recipe(BaseModel):
     op_graph: OpGraph
     genai_ops: list[GenAIOp] = Field(default_factory=list)
     created_at: str = ""
+    branch: str = "main"

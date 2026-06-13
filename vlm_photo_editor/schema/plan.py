@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +14,7 @@ class HumanStep(BaseModel):
     title: str
     why: str
     op_names: list[str] = Field(default_factory=list)
+    op_params: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HumanPlan(BaseModel):
