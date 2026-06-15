@@ -1,9 +1,10 @@
 """Plan display with expandable compiled ops per step.
 
 Contract:
-  - Receives HumanPlan + optional OpGraph (stub or real).
-  - Accept button sets state['plan_approved'] = True and logs intent.
-  - Change request input logs intent with the request text; would regenerate plan in P7.
+  - Receives HumanPlan + optional OpGraph.
+  - "Accept Plan" sets state['plan_approved'] = True.
+  - "Request Changes" sets state['change_request'] and state['plan_approved'] = False.
+  - Execution is triggered by main.py after detecting plan_approved = True.
 """
 
 from __future__ import annotations
@@ -40,7 +41,6 @@ def render(plan: HumanPlan, op_graph: OpGraph | None = None) -> None:
         if st.button("Accept Plan", type="primary", key="accept_plan_btn"):
             state.set("plan_approved", True)
             state.log_intent("accept_plan", {"plan_id": plan.plan_id})
-            st.success("Plan accepted. Execution wired in P7.")
 
     with col_chg:
         change = st.text_input("Request changes:", key="change_request_input")
@@ -48,4 +48,3 @@ def render(plan: HumanPlan, op_graph: OpGraph | None = None) -> None:
             state.set("change_request", change)
             state.set("plan_approved", False)
             state.log_intent("request_changes", {"change": change})
-            st.info(f"Change queued: {change!r} — planner will regenerate (wired in P7).")

@@ -8,6 +8,8 @@ import streamlit as st
 
 _DEFAULTS: dict[str, Any] = {
     "uploaded_file": None,
+    "container": None,  # ImageContainer after loading the uploaded file
+    "edited_container": None,  # ImageContainer after Executor.apply()
     "current_plan": None,
     "current_opgraph": None,
     "accept_mode": "manual",
@@ -19,6 +21,10 @@ _DEFAULTS: dict[str, Any] = {
     "prefs": None,
     "model_roles": {},
     "intent_log": [],
+    "intent": "",
+    "ui_phase": "idle",  # idle | has_image | plan_ready | done
+    "error": None,
+    "saved_path": None,
 }
 
 
