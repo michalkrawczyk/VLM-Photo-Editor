@@ -150,10 +150,10 @@ See `CLAUDE.md` §Non-negotiable principles for all global invariants. Two invar
 **User-facing result.** Realistic background edits, several options to choose from, fully reproducible.
 
 **Definition of Done.**
-- [ ] Subject pixels are unchanged (asserted).
-- [ ] Seam metric is under threshold or the result is flagged.
-- [ ] N candidates are returned.
-- [ ] The recipe reproduces a chosen candidate exactly.
+- [x] Subject pixels are unchanged (asserted).
+- [x] Seam metric is under threshold or the result is flagged.
+- [x] N candidates are returned.
+- [x] The recipe reproduces a chosen candidate exactly.
 
 ---
 
@@ -168,9 +168,9 @@ See `CLAUDE.md` §Non-negotiable principles for all global invariants. Two invar
 **User-facing result.** The full workflow runs in the browser end to end.
 
 **Definition of Done.**
-- [ ] User can upload → see plan → edit/accept → preview before/after → save a new file.
-- [ ] Switching planner and execution models works.
-- [ ] A bbox drawn in the UI drives the region edit.
+- [x] User can upload → see plan → edit/accept → preview before/after → save a new file.
+- [x] Switching planner and execution models works.
+- [x] A bbox drawn in the UI drives the region edit.
 
 ---
 
