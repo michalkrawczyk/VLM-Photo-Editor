@@ -125,7 +125,7 @@ def test_render_deterministic(tmp_path: Path) -> None:
     result1 = renderer.render_from_path(recipe)
     result2 = renderer.render_from_path(recipe)
 
-    np.testing.assert_array_equal(result1.pixels, result2.pixels)
+    np.testing.assert_array_equal(result1.container.pixels, result2.container.pixels)
 
 
 def test_render_source_unchanged(tmp_path: Path) -> None:
@@ -156,7 +156,7 @@ def test_render_applies_ops(tmp_path: Path) -> None:
     result = Renderer().render_from_path(recipe)
 
     # ev=1.0 doubles pixel values (64 * 2^1.0 = 128)
-    np.testing.assert_allclose(result.pixels, 128, atol=1)
+    np.testing.assert_allclose(result.container.pixels, 128, atol=1)
 
 
 # ---------------------------------------------------------------------------
@@ -176,10 +176,10 @@ def test_preset_reapply(tmp_path: Path) -> None:
     result_b = renderer.apply_as_preset(recipe, load(src_b))
 
     # src_b starts at 32; ev=1.0 doubles → ~64
-    np.testing.assert_allclose(result_b.pixels, 64, atol=1)
+    np.testing.assert_allclose(result_b.container.pixels, 64, atol=1)
     # different from src_a result (~128) and from raw src_b pixels (32)
-    assert result_b.pixels[0, 0, 0] != 32
-    assert result_b.pixels[0, 0, 0] != 128
+    assert result_b.container.pixels[0, 0, 0] != 32
+    assert result_b.container.pixels[0, 0, 0] != 128
 
 
 # ---------------------------------------------------------------------------

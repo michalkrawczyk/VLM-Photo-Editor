@@ -107,13 +107,13 @@ def test_validate_op_graph_raises_on_first_bad_op() -> None:
 def test_exposure_brightens_image() -> None:
     container = _container(np.full((64, 64, 3), 64, dtype=np.uint8))
     result = Executor().apply(container, _graph(_op(OpName.EXPOSURE, {"ev": 1.0})))
-    np.testing.assert_allclose(result.pixels, 128, atol=1)
+    np.testing.assert_allclose(result.container.pixels, 128, atol=1)
 
 
 def test_exposure_clips_at_max() -> None:
     container = _container(np.full((64, 64, 3), 200, dtype=np.uint8))
     result = Executor().apply(container, _graph(_op(OpName.EXPOSURE, {"ev": 2.0})))
-    assert np.all(result.pixels == 255)
+    assert np.all(result.container.pixels == 255)
 
 
 def test_crop_reduces_dimensions() -> None:
@@ -122,7 +122,7 @@ def test_crop_reduces_dimensions() -> None:
         container,
         _graph(_op(OpName.CROP, {"left": 0, "top": 0, "right": 32, "bottom": 16})),
     )
-    assert result.pixels.shape == (16, 32, 3)
+    assert result.container.pixels.shape == (16, 32, 3)
 
 
 def test_white_balance_shifts_channels() -> None:
@@ -132,7 +132,7 @@ def test_white_balance_shifts_channels() -> None:
     result = Executor().apply(
         container, _graph(_op(OpName.WHITE_BALANCE, {"temperature": 10000.0}))
     )
-    assert int(result.pixels[0, 0, 2]) > int(result.pixels[0, 0, 0])
+    assert int(result.container.pixels[0, 0, 2]) > int(result.container.pixels[0, 0, 0])
 
 
 def test_executor_chains_ops() -> None:
@@ -142,8 +142,8 @@ def test_executor_chains_ops() -> None:
         _op(OpName.CROP, {"left": 0, "top": 0, "right": 32, "bottom": 32}),
     )
     result = Executor().apply(container, graph)
-    assert result.pixels.shape == (32, 32, 3)
-    np.testing.assert_allclose(result.pixels, 128, atol=1)
+    assert result.container.pixels.shape == (32, 32, 3)
+    np.testing.assert_allclose(result.container.pixels, 128, atol=1)
 
 
 def test_executor_respects_allowed_ops_policy() -> None:
@@ -167,11 +167,11 @@ def test_bbox_confines_exposure() -> None:
     result = Executor().apply(container, _graph(op))
 
     # Outside bbox: unchanged
-    assert np.all(result.pixels[0, 0] == 50)
-    assert np.all(result.pixels[63, 63] == 50)
+    assert np.all(result.container.pixels[0, 0] == 50)
+    assert np.all(result.container.pixels[63, 63] == 50)
 
     # Inside bbox: 50 * 4 = 200
-    np.testing.assert_allclose(result.pixels[20, 20], 200, atol=1)
+    np.testing.assert_allclose(result.container.pixels[20, 20], 200, atol=1)
 
 
 def test_bbox_edge_pixels_unchanged() -> None:
@@ -182,8 +182,8 @@ def test_bbox_edge_pixels_unchanged() -> None:
     result = Executor().apply(container, _graph(op))
 
     # Row/col 32 is just outside the bbox
-    assert np.all(result.pixels[32, 32] == 100)
-    assert np.all(result.pixels[0, 0] == 255)  # 100 * 4 clipped to 255
+    assert np.all(result.container.pixels[32, 32] == 100)
+    assert np.all(result.container.pixels[0, 0] == 255)  # 100 * 4 clipped to 255
 
 
 # ---------------------------------------------------------------------------
