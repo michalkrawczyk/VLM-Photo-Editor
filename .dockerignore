@@ -1,0 +1,19 @@
+.venv/
+.git/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# Never bake secrets into the image
+.env
+
+# Dev / CI only
+tests/
+requirements_dev.txt
+
+# Docs and tooling — not needed at runtime
+agent_notes/
+agent_ignore/
+plans/
+CLAUDE.md
