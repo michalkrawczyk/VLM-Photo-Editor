@@ -9,7 +9,7 @@ keyring>=25.0
 
 # Image I/O
 Pillow>=10.3
-rawpy>=0.21
+rawpy>=0.23
 
 # Image Processing
 numpy>=1.26
@@ -20,10 +20,10 @@ scikit-image>=0.23
 # VLM / AI Planner & Critic — LangChain core (required)
 langchain>=0.2
 langgraph>=0.2
-# Provider adapter — install at least one:
-#   pip install -r requirements-anthropic.txt
+# Default provider: Anthropic/Claude. Add others as needed:
 #   pip install -r requirements-openai.txt
 #   pip install -r requirements-huggingface.txt
+langchain-anthropic>=0.2
 
 # Background Generation (genAI inpainting)
 replicate>=0.30
