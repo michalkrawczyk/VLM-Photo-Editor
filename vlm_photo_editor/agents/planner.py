@@ -120,6 +120,8 @@ class Planner:
         from PIL import Image
 
         img = Image.fromarray(container.pixels)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
         return base64.b64encode(buf.getvalue()).decode()
