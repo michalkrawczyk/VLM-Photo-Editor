@@ -143,7 +143,11 @@ def _do_save() -> None:
 
 # ── Process pending backend actions (before rendering) ────────────────────────
 
-uploaded_file = state.get("uploaded_file")
+# Read from widget key — Streamlit pre-populates it before the script runs,
+# so this works even though upload.render() hasn't executed yet on this pass.
+uploaded_file = st.session_state.get("upload_widget") or state.get("uploaded_file")
+if uploaded_file is not None:
+    state.set("uploaded_file", uploaded_file)
 
 # Auto-load newly uploaded image.
 if uploaded_file is not None and state.get("container") is None:
