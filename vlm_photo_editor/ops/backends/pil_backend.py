@@ -14,6 +14,7 @@ def apply(container: ImageContainer, op: Op) -> ImageContainer:
         OpName.WHITE_BALANCE: _white_balance,
         OpName.EXPOSURE: _exposure,
         OpName.DENOISE: _denoise,
+        OpName.FRAME: _frame,
     }
     fn = dispatch.get(op.op_name)
     if fn is None:
@@ -58,6 +59,12 @@ def _crop(container: ImageContainer, params: dict) -> ImageContainer:
     top = int(params["top"])
     right = int(params["right"])
     bottom = int(params["bottom"])
+    h, w = container.pixels.shape[:2]
+    if left < 0 or top < 0 or right > w or bottom > h or right <= left or bottom <= top:
+        raise ValueError(
+            f"crop params out of bounds: left={left} top={top} right={right} bottom={bottom}"
+            f" image={w}x{h}"
+        )
     result = container.copy()
     result.pixels = container.pixels[top:bottom, left:right]
     return result
@@ -99,3 +106,50 @@ def _denoise(container: ImageContainer, params: dict) -> ImageContainer:
     img = _to_pil_8bit(container)
     img = img.filter(ImageFilter.MedianFilter(size=3))
     return _from_pil(img, container)
+
+
+_FRAME_ASPECT: dict[str, tuple[int, int]] = {
+    "rule_of_thirds": (4, 3),
+    "golden_ratio": (1618, 1000),
+    "golden_spiral": (1618, 1000),
+    "center_symmetry": (1, 1),
+    "portrait_headroom": (3, 4),
+    "face_only": (3, 4),
+    "negative_space": (16, 9),
+    "fill_frame": (0, 0),  # sentinel: no-op
+    "lead_room": (16, 9),
+    "horizon_third": (16, 9),
+}
+
+
+def frame_target_size(w: int, h: int, composition: str) -> tuple[int, int] | None:
+    """Return (target_w, target_h) for a composition crop, or None for fill_frame."""
+    aspect = _FRAME_ASPECT.get(composition, (4, 3))
+    if aspect == (0, 0):
+        return None
+    tw, th = aspect
+    if w / h > tw / th:
+        return int(h * tw / th), h
+    return w, int(w * th / tw)
+
+
+def _frame(container: ImageContainer, params: dict) -> ImageContainer:
+    mode = str(params.get("mode", "rule_of_thirds"))
+    h, w = container.pixels.shape[:2]
+    aspect = _FRAME_ASPECT.get(mode, (4, 3))
+    if aspect == (0, 0):
+        return container.copy()
+    tw, th = aspect
+    if w / h > tw / th:
+        new_w = int(h * tw / th)
+        left = (w - new_w) // 2
+        right = left + new_w
+        top, bottom = 0, h
+    else:
+        new_h = int(w * th / tw)
+        top = (h - new_h) // 2
+        bottom = top + new_h
+        left, right = 0, w
+    result = container.copy()
+    result.pixels = container.pixels[top:bottom, left:right]
+    return result
