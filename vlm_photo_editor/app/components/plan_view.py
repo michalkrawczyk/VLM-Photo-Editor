@@ -16,7 +16,7 @@ from vlm_photo_editor.schema.ops import OpGraph
 from vlm_photo_editor.schema.plan import HumanPlan
 
 
-def render(plan: HumanPlan, op_graph: OpGraph | None = None) -> None:
+def render(plan: HumanPlan, op_graph: OpGraph | None = None, *, executed: bool = False) -> None:
     st.subheader("Proposed Plan")
 
     ops_by_step: dict[str, list] = {}
@@ -38,7 +38,9 @@ def render(plan: HumanPlan, op_graph: OpGraph | None = None) -> None:
     st.divider()
     col_acc, col_chg = st.columns(2)
     with col_acc:
-        if st.button("Accept Plan", type="primary", key="accept_plan_btn"):
+        if executed:
+            st.success("Executed ✓")
+        elif st.button("Accept Plan", type="primary", key="accept_plan_btn"):
             state.set("plan_approved", True)
             state.log_intent("accept_plan", {"plan_id": plan.plan_id})
 

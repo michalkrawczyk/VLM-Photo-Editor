@@ -33,8 +33,8 @@ def render(before: DisplayImage = None, after: DisplayImage = None) -> None:
     col_b, col_a = st.columns(2)
     with col_b:
         st.caption("Before")
-        st.image(_to_display(before), use_container_width=True)
+        st.image(_to_display(before), width="stretch")
     with col_a:
         after_label = "After" if after is not None else "After (pending execution)"
         st.caption(after_label)
-        st.image(_to_display(after), use_container_width=True)
+        st.image(_to_display(after), width="stretch")

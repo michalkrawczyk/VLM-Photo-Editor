@@ -40,6 +40,22 @@ def _load_uploaded(file) -> "ImageContainer":  # type: ignore[name-defined]
     return load(tmp_path)
 
 
+def _validate_crop_bounds(op_graph: "OpGraph", w: int, h: int) -> None:  # type: ignore[name-defined]
+    from vlm_photo_editor.schema.ops import OpName
+
+    for op in op_graph.ops:
+        if op.op_name != OpName.CROP:
+            continue
+        p = op.params
+        left, top, right, bottom = int(p["left"]), int(p["top"]), int(p["right"]), int(p["bottom"])
+        if left < 0 or top < 0 or right > w or bottom > h or right <= left or bottom <= top:
+            raise ValueError(
+                f"Planner proposed out-of-bounds crop "
+                f"(left={left} top={top} right={right} bottom={bottom}) "
+                f"for {w}x{h} image. Re-generate plan."
+            )
+
+
 def _do_generate_plan() -> None:
     from vlm_photo_editor.agents.planner import Planner
     from vlm_photo_editor.planner.compiler import Compiler, CompilerError
@@ -49,9 +65,11 @@ def _do_generate_plan() -> None:
     mode = state.get("edit_mode") or "full"
     prefs = state.get("prefs")
 
+    composition = state.get("framing_mode") if mode == "frame" else None
     try:
-        plan = Planner().plan(container, intent, prefs, mode)
+        plan = Planner().plan(container, intent, prefs, mode, composition)
         result = Compiler().compile(plan, mode)
+        _validate_crop_bounds(result.op_graph, container.width, container.height)
         state.set("current_plan", result.plan)
         state.set("current_opgraph", result.op_graph)
         state.set("ui_phase", "plan_ready")
@@ -71,9 +89,11 @@ def _do_revise_plan(change: str) -> None:
     mode = state.get("edit_mode") or "full"
     prefs = state.get("prefs")
 
+    composition = state.get("framing_mode") if mode == "frame" else None
     try:
-        plan = Planner().revise(container, previous_plan, change, prefs, mode)
+        plan = Planner().revise(container, previous_plan, change, prefs, mode, composition)
         result = Compiler().compile(plan, mode)
+        _validate_crop_bounds(result.op_graph, container.width, container.height)
         state.set("current_plan", result.plan)
         state.set("current_opgraph", result.op_graph)
         state.set("change_request", "")
@@ -113,7 +133,13 @@ def _do_execute() -> None:
         state.set("edited_container", result.container)
         state.set("ui_phase", "done")
         state.set("error", None)
-        state.log_intent("execute", {"ops": len(op_graph.ops)})
+        state.log_intent(
+            "execute",
+            {
+                "ops": len(op_graph.ops),
+                "steps": [{"op": op.op_name.value, "params": op.params} for op in op_graph.ops],
+            },
+        )
     except Exception as exc:
         state.set("error", str(exc))
 
@@ -126,10 +152,24 @@ def _do_save() -> None:
     edited = state.get("edited_container")
     op_graph = state.get("current_opgraph")
     source = edited.source_path
+    output_format = state.get("output_format") or "same"
 
-    dest = source.parent / f"{source.stem}_edited{source.suffix}"
+    _RAW_EXTS = {".nef", ".cr2", ".arw", ".dng", ".orf", ".rw2"}
+    _FORMAT_EXT = {"jpeg": ".jpg", "png": ".png", "tiff": ".tif", "webp": ".webp"}
+    _FORMAT_PIL = {"jpeg": "JPEG", "png": "PNG", "tiff": "TIFF", "webp": "WEBP"}
+
+    if output_format == "same":
+        if source.suffix.lower() in _RAW_EXTS:
+            dest_suffix, pil_fmt = ".tif", "TIFF"
+        else:
+            dest_suffix, pil_fmt = source.suffix, None
+    else:
+        dest_suffix = _FORMAT_EXT[output_format]
+        pil_fmt = _FORMAT_PIL[output_format]
+
+    dest = source.parent / f"{source.stem}_edited{dest_suffix}"
     try:
-        saved = _save(edited, dest)
+        saved = _save(edited, dest, fmt=pil_fmt)
         state.set("saved_path", str(saved))
 
         recipe = Recipe(source_path=str(source), op_graph=op_graph)
@@ -145,21 +185,38 @@ def _do_save() -> None:
 
 # Read from widget key — Streamlit pre-populates it before the script runs,
 # so this works even though upload.render() hasn't executed yet on this pass.
-uploaded_file = st.session_state.get("upload_widget") or state.get("uploaded_file")
+# upload_widget returns a list when accept_multiple_files=True.
+_widget_val = st.session_state.get("upload_widget")
+if isinstance(_widget_val, list):
+    _files = _widget_val
+    if _files:
+        _idx = int(state.get("current_file_index") or 0)
+        _idx = max(0, min(_idx, len(_files) - 1))
+        uploaded_file = _files[_idx]
+    else:
+        uploaded_file = None
+else:
+    uploaded_file = _widget_val or state.get("uploaded_file")
 if uploaded_file is not None:
     state.set("uploaded_file", uploaded_file)
 
-# Auto-load newly uploaded image.
-if uploaded_file is not None and state.get("container") is None:
+# Auto-load when new file uploaded or container missing.
+# Use object identity to detect file replacement without widget reset.
+if uploaded_file is not None and (
+    state.get("container") is None
+    or state.get("_loaded_file_id") != f"{uploaded_file.name}:{uploaded_file.size}"
+):
     with st.spinner("Loading image…"):
         try:
             container = _load_uploaded(uploaded_file)
+            state.set("_loaded_file_id", f"{uploaded_file.name}:{uploaded_file.size}")
             state.set("container", container)
             state.set("ui_phase", "has_image")
             state.set("edited_container", None)
             state.set("current_plan", None)
             state.set("current_opgraph", None)
             state.set("saved_path", None)
+            state.set("plan_approved", False)
         except Exception as exc:
             state.set("error", str(exc))
 
@@ -176,36 +233,22 @@ if uploaded_file is None and state.get("container") is not None:
 st.title("VLM Photo Editor")
 st.caption("Propose → Approve → Apply. Originals are never altered.")
 
-# ── Top controls bar ──────────────────────────────────────────────────────────
-col_bg, col_frame, col_full, col_accept = st.columns([1, 1, 1, 2])
-with col_bg:
-    if st.button("Background Only", key="mode_bg"):
-        state.set("edit_mode", "background")
-        state.log_intent("mode_change", {"mode": "background"})
-with col_frame:
-    if st.button("Frame Only", key="mode_frame"):
-        state.set("edit_mode", "frame")
-        state.log_intent("mode_change", {"mode": "frame"})
-with col_full:
-    if st.button("Full Edit", key="mode_full"):
-        state.set("edit_mode", "full")
-        state.log_intent("mode_change", {"mode": "full"})
-with col_accept:
-    accept_mode = st.radio(
-        "Accept mode:",
-        options=[m.value for m in AcceptMode],
-        horizontal=True,
-        key="accept_mode_radio",
-    )
-    state.set("accept_mode", accept_mode)
-
-st.divider()
-
 # ── Main layout ───────────────────────────────────────────────────────────────
 sidebar_col, main_col = st.columns([1, 2])
 
 with sidebar_col:
     upload.render()
+    st.divider()
+
+    st.subheader("Accept Mode")
+    accept_mode = st.radio(
+        "Approval flow:",
+        options=[m.value for m in AcceptMode],
+        horizontal=False,
+        key="accept_mode_radio",
+    )
+    state.set("accept_mode", accept_mode)
+
     st.divider()
 
     st.subheader("Framing Mode")
@@ -217,6 +260,47 @@ with sidebar_col:
     state.set("framing_mode", framing)
 
     st.divider()
+    st.subheader("Edit Mode")
+    _MODE_OPTIONS = ["full", "background", "frame", "custom"]
+    _MODE_LABELS = {
+        "full": "Full Edit",
+        "background": "Background Only",
+        "frame": "Frame Only",
+        "custom": "Custom Edit",
+    }
+    _current_mode = state.get("edit_mode") or "full"
+    _mode_idx = _MODE_OPTIONS.index(_current_mode) if _current_mode in _MODE_OPTIONS else 0
+    edit_mode = st.selectbox(
+        "Edit mode:",
+        options=_MODE_OPTIONS,
+        format_func=_MODE_LABELS.get,
+        index=_mode_idx,
+        key="edit_mode_selector",
+    )
+    if edit_mode != state.get("edit_mode"):
+        state.set("edit_mode", edit_mode)
+        state.log_intent("mode_change", {"mode": edit_mode})
+
+    st.divider()
+
+    st.subheader("Output Format")
+    _FMT_OPTIONS = ["same", "jpeg", "png", "tiff", "webp"]
+    _FMT_LABELS = {
+        "same": "Same as input",
+        "jpeg": "JPEG",
+        "png": "PNG",
+        "tiff": "TIFF",
+        "webp": "WebP",
+    }
+    output_format = st.selectbox(
+        "Format:",
+        options=_FMT_OPTIONS,
+        format_func=_FMT_LABELS.get,
+        key="output_format_select",
+    )
+    state.set("output_format", output_format)
+
+    st.divider()
     settings_component.render()
 
 with main_col:
@@ -226,22 +310,13 @@ with main_col:
 
     ui_phase = state.get("ui_phase") or "idle"
 
-    # Before/after preview
-    container = state.get("container")
-    edited = state.get("edited_container")
-    preview.render(
-        before=container.pixels if container else None,
-        after=edited.pixels if edited else None,
-    )
-
-    st.divider()
-
-    # Intent input + plan generation
+    # Intent input + plan generation — at top so it reads as a unit with sidebar mode buttons
     if ui_phase in ("has_image", "plan_ready", "done"):
         intent_val = state.get("intent") or ""
-        intent = st.text_input(
+        intent = st.text_area(
             "What would you like to do with this image?",
             value=intent_val,
+            height=120,
             key="intent_input",
         )
         state.set("intent", intent)
@@ -256,6 +331,16 @@ with main_col:
 
     st.divider()
 
+    # Before/after preview
+    container = state.get("container")
+    edited = state.get("edited_container")
+    preview.render(
+        before=container.pixels if container else None,
+        after=edited.pixels if edited else None,
+    )
+
+    st.divider()
+
     # BBox canvas — show when image is loaded
     if ui_phase in ("has_image", "plan_ready", "done"):
         canvas.render()
@@ -266,7 +351,7 @@ with main_col:
     current_opgraph = state.get("current_opgraph")
 
     if ui_phase in ("plan_ready", "done") and current_plan is not None:
-        plan_view.render(current_plan, current_opgraph)
+        plan_view.render(current_plan, current_opgraph, executed=(ui_phase == "done"))
 
         # Handle Accept Plan
         if state.get("plan_approved") and ui_phase != "done":
