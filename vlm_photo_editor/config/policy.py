@@ -24,7 +24,7 @@ def requires_manual_approval(tier: RiskTier, mode: PolicyMode) -> bool:
 _OP_SETS: dict[str, set[OpName]] = {
     "full": set(OpName),
     "background": {OpName.BACKGROUND_REPLACE, OpName.MASK},
-    "frame": {OpName.FRAME, OpName.CROP},
+    "frame": {OpName.CROP},
 }
 
 
