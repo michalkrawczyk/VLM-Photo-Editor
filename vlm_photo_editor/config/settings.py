@@ -18,3 +18,15 @@ _settings = AppSettings()
 
 def get_settings() -> AppSettings:
     return _settings
+
+
+@dataclass
+class DebugSettings:
+    vlm_prompt_debug: bool = True
+
+
+_debug = DebugSettings()
+
+
+def get_debug_settings() -> DebugSettings:
+    return _debug
