@@ -47,7 +47,7 @@ def _plan(*steps: HumanStep, mode: str = "full") -> HumanPlan:
     [
         ("full", OpName.EXPOSURE, None),
         ("background", OpName.BACKGROUND_REPLACE, OpName.CROP),
-        ("frame", OpName.FRAME, OpName.EXPOSURE),
+        ("frame", OpName.CROP, OpName.EXPOSURE),
     ],
 )
 def test_allowed_ops_for_mode_membership(mode, expected, excluded):
@@ -55,6 +55,11 @@ def test_allowed_ops_for_mode_membership(mode, expected, excluded):
     assert expected in ops
     if excluded is not None:
         assert excluded not in ops
+
+
+def test_frame_mode_excludes_frame_op():
+    # Frame mode only allows crop; VLM decides placement, not a blind center-crop.
+    assert OpName.FRAME not in allowed_ops_for_mode("frame")
 
 
 def test_allowed_ops_for_mode_full_has_all():
@@ -131,6 +136,7 @@ def test_compiler_pads_missing_params_validator_catches():
         ("exposure", "background", {"ev": 1.0}),
         ("background_replace", "frame", {"prompt": "forest"}),
         ("region_edit", "frame", {"prompt": "blur"}),
+        ("frame", "frame", {"mode": "rule_of_thirds"}),
     ],
 )
 def test_compiler_rejects_op_not_in_mode(op_name, mode, params):
@@ -232,6 +238,130 @@ def test_planner_calls_llm_returns_human_plan(method):
         assert isinstance(result, HumanPlan)
         assert result.mode == "full"
         mock_llm.with_structured_output.return_value.invoke.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Planner._user_content — dimensions in message
+# ---------------------------------------------------------------------------
+
+
+def test_user_content_includes_dimensions():
+    from pathlib import Path
+
+    from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.imageio.container import ImageContainer
+
+    container = ImageContainer(
+        pixels=np.zeros((48, 80, 3), dtype=np.uint8),
+        bit_depth=8,
+        source_path=Path("/fake/img.jpg"),
+    )
+    with patch("vlm_photo_editor.agents.planner.build_client"):
+        planner = Planner()
+
+    content = planner._user_content(container, "crop tightly")
+    text_block = next(b for b in content if b.get("type") == "text")["text"]
+    assert "80x48" in text_block  # width x height
+    assert "Edit intent: crop tightly" in text_block
+
+
+# ---------------------------------------------------------------------------
+# frame_target_size — pure utility
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "w,h,composition,expected",
+    [
+        (4000, 3000, "rule_of_thirds", (4000, 3000)),  # 4:3 matches exactly
+        (4000, 3000, "portrait_headroom", (2250, 3000)),  # wider than 3:4 → crop width
+        (3000, 4000, "portrait_headroom", (3000, 4000)),  # already 3:4 (within int rounding)
+        (3000, 3000, "center_symmetry", (3000, 3000)),  # 1:1 square
+        (1920, 1080, "negative_space", (1920, 1080)),  # 16:9 matches exactly
+        (4000, 3000, "fill_frame", None),  # no-op → None
+    ],
+)
+def test_frame_target_size(w, h, composition, expected):
+    from vlm_photo_editor.ops.backends.pil_backend import frame_target_size
+
+    assert frame_target_size(w, h, composition) == expected
+
+
+# ---------------------------------------------------------------------------
+# Planner._system_prompt — framing instructions injected when composition set
+# ---------------------------------------------------------------------------
+
+
+def test_system_prompt_includes_framing_instructions():
+    with patch("vlm_photo_editor.agents.planner.build_client"):
+        from vlm_photo_editor.agents.planner import Planner
+
+        planner = Planner()
+
+    prompt = planner._system_prompt(
+        "frame", None, composition="portrait_headroom", target_size=(2250, 3000)
+    )
+    assert "FRAMING INSTRUCTIONS" in prompt
+    assert "portrait_headroom" in prompt
+    assert "2250" in prompt
+    assert "3000" in prompt
+    assert "right - left == 2250" in prompt
+
+
+def test_system_prompt_no_framing_without_composition():
+    with patch("vlm_photo_editor.agents.planner.build_client"):
+        from vlm_photo_editor.agents.planner import Planner
+
+        planner = Planner()
+
+    prompt = planner._system_prompt("frame", None)
+    assert "FRAMING INSTRUCTIONS" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Planner._user_content — target frame line injected when composition set
+# ---------------------------------------------------------------------------
+
+
+def test_user_content_includes_target_frame():
+    from pathlib import Path
+
+    from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.imageio.container import ImageContainer
+
+    container = ImageContainer(
+        pixels=np.zeros((3000, 4000, 3), dtype=np.uint8),
+        bit_depth=8,
+        source_path=Path("/fake/img.jpg"),
+    )
+    with patch("vlm_photo_editor.agents.planner.build_client"):
+        planner = Planner()
+
+    content = planner._user_content(
+        container, "frame me", composition="portrait_headroom", target_size=(2250, 3000)
+    )
+    text_block = next(b for b in content if b.get("type") == "text")["text"]
+    assert "Target frame: 2250x3000" in text_block
+    assert "portrait_headroom" in text_block
+
+
+def test_user_content_no_target_frame_without_composition():
+    from pathlib import Path
+
+    from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.imageio.container import ImageContainer
+
+    container = ImageContainer(
+        pixels=np.zeros((48, 80, 3), dtype=np.uint8),
+        bit_depth=8,
+        source_path=Path("/fake/img.jpg"),
+    )
+    with patch("vlm_photo_editor.agents.planner.build_client"):
+        planner = Planner()
+
+    content = planner._user_content(container, "brighten")
+    text_block = next(b for b in content if b.get("type") == "text")["text"]
+    assert "Target frame" not in text_block
 
 
 # ---------------------------------------------------------------------------
