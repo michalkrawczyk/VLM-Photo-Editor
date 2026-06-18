@@ -122,12 +122,14 @@ def _do_execute() -> None:
     bbox_raw = state.get("bbox")
 
     # Inject bbox into region-targeted ops if one was drawn.
+    # bbox_raw stores normalized coords [0, 1]; scale to image pixels here.
     if bbox_raw and bbox_raw.get("width", 0) > 0 and bbox_raw.get("height", 0) > 0:
+        img_w, img_h = container.width, container.height
         bbox = BoundingBox(
-            x=bbox_raw["x"],
-            y=bbox_raw["y"],
-            width=bbox_raw["width"],
-            height=bbox_raw["height"],
+            x=int(bbox_raw["x"] * img_w),
+            y=int(bbox_raw["y"] * img_h),
+            width=max(1, int(bbox_raw["width"] * img_w)),
+            height=max(1, int(bbox_raw["height"] * img_h)),
         )
         from vlm_photo_editor.schema.ops import OpName
 
