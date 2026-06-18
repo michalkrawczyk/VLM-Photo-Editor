@@ -356,20 +356,17 @@ with main_col:
 
         _edit_mode = state.get("edit_mode") or "full"
 
-        # Framing mode selector — only visible in Reframe Only mode (U3/U4)
+        # Framing mode selector — always visible
         _framing_mode = state.get("framing_mode") or FramingMode.RULE_OF_THIRDS.value
-        if _edit_mode == "frame":
-            _framing_opts = [m.value for m in FramingMode]
-            _framing_idx = (
-                _framing_opts.index(_framing_mode) if _framing_mode in _framing_opts else 0
-            )
-            _framing_mode = st.selectbox(
-                "Composition:",
-                options=_framing_opts,
-                index=_framing_idx,
-                key="framing_mode_select",
-            )
-            state.set("framing_mode", _framing_mode)
+        _framing_opts = [m.value for m in FramingMode]
+        _framing_idx = _framing_opts.index(_framing_mode) if _framing_mode in _framing_opts else 0
+        _framing_mode = st.selectbox(
+            "Composition:",
+            options=_framing_opts,
+            index=_framing_idx,
+            key="framing_mode_select",
+        )
+        state.set("framing_mode", _framing_mode)
 
         # Auto-generate when Reframe Only + non-Custom composition (U3).
         # Any change in framing_mode triggers a new plan without a button press.
