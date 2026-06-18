@@ -18,7 +18,7 @@ from vlm_photo_editor.app.components import preview  # noqa: E402
 from vlm_photo_editor.app.components import upload  # noqa: E402
 from vlm_photo_editor.app.components import settings as settings_component  # noqa: E402
 from vlm_photo_editor.app.stubs import MOCK_PREFS  # noqa: E402
-from vlm_photo_editor.schema.ops import AcceptMode, BoundingBox, FramingMode  # noqa: E402
+from vlm_photo_editor.schema.ops import AcceptMode, BoundingBox, FramingMode, RiskTier  # noqa: E402
 
 st.set_page_config(
     page_title="VLM Photo Editor",
@@ -79,7 +79,17 @@ def _do_generate_plan() -> None:
         state.set("current_opgraph", result.op_graph)
         state.set("ui_phase", "plan_ready")
         state.set("error", None)
-        state.set("plan_approved", False)
+        # Auto-approve based on accept_mode (B6).
+        accept_mode_val = state.get("accept_mode") or AcceptMode.MANUAL.value
+        if accept_mode_val == AcceptMode.FULL_AUTO.value:
+            state.set("plan_approved", True)
+        elif accept_mode_val == AcceptMode.AUTO.value:
+            if all(op.risk_tier == RiskTier.LOW for op in result.op_graph.ops):
+                state.set("plan_approved", True)
+            else:
+                state.set("plan_approved", False)
+        else:
+            state.set("plan_approved", False)
     except Exception as exc:
         state.set("error", str(exc))
         state.set("ui_phase", "has_image")
