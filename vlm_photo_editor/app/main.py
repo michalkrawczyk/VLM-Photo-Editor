@@ -273,38 +273,6 @@ with sidebar_col:
 
     st.divider()
 
-    st.subheader("Framing Mode")
-    framing = st.selectbox(
-        "Composition:",
-        options=[m.value for m in FramingMode],
-        key="framing_mode_select",
-    )
-    state.set("framing_mode", framing)
-
-    st.divider()
-    st.subheader("Edit Mode")
-    _MODE_OPTIONS = ["full", "background", "frame", "custom"]
-    _MODE_LABELS = {
-        "full": "Full Edit",
-        "background": "Background Only",
-        "frame": "Frame Only",
-        "custom": "Custom Edit",
-    }
-    _current_mode = state.get("edit_mode") or "full"
-    _mode_idx = _MODE_OPTIONS.index(_current_mode) if _current_mode in _MODE_OPTIONS else 0
-    edit_mode = st.selectbox(
-        "Edit mode:",
-        options=_MODE_OPTIONS,
-        format_func=_MODE_LABELS.get,
-        index=_mode_idx,
-        key="edit_mode_selector",
-    )
-    if edit_mode != state.get("edit_mode"):
-        state.set("edit_mode", edit_mode)
-        state.log_intent("mode_change", {"mode": edit_mode})
-
-    st.divider()
-
     st.subheader("Output Format")
     _FMT_OPTIONS = ["same", "jpeg", "png", "tiff", "webp"]
     _FMT_LABELS = {
@@ -332,19 +300,96 @@ with main_col:
 
     ui_phase = state.get("ui_phase") or "idle"
 
-    # Intent input + plan generation — at top so it reads as a unit with sidebar mode buttons
-    if ui_phase in ("has_image", "plan_ready", "done"):
-        intent_val = state.get("intent") or ""
-        intent = st.text_area(
-            "What would you like to do with this image?",
-            value=intent_val,
-            height=120,
-            key="intent_input",
-        )
-        state.set("intent", intent)
+    # Before/after preview — shown first so intent area appears beneath the image
+    container = state.get("container")
+    edited = state.get("edited_container")
+    preview.render(
+        before=container.pixels if container else None,
+        after=edited.pixels if edited else None,
+    )
 
-        col_gen, col_regen = st.columns([1, 1])
-        with col_gen:
+    # Intent input + plan generation (below preview)
+    if ui_phase in ("has_image", "plan_ready", "done"):
+        st.divider()
+
+        # Quick-mode prefill buttons (U2): set edit_mode and populate intent from template.
+        from vlm_photo_editor import prompt_templates
+
+        _edit_mode = state.get("edit_mode") or "full"
+        col_full, col_bg, col_frame = st.columns(3)
+        with col_full:
+            if st.button(
+                "Full Edit",
+                use_container_width=True,
+                type="primary" if _edit_mode == "full" else "secondary",
+                key="mode_btn_full",
+            ):
+                st.session_state["intent_input"] = prompt_templates.load("full_edit")
+                state.set("edit_mode", "full")
+                state.set("_last_auto_gen_key", "")
+                state.log_intent("mode_change", {"mode": "full"})
+                st.rerun()
+        with col_bg:
+            if st.button(
+                "Background",
+                use_container_width=True,
+                type="primary" if _edit_mode == "background" else "secondary",
+                key="mode_btn_bg",
+            ):
+                st.session_state["intent_input"] = prompt_templates.load("background")
+                state.set("edit_mode", "background")
+                state.set("_last_auto_gen_key", "")
+                state.log_intent("mode_change", {"mode": "background"})
+                st.rerun()
+        with col_frame:
+            if st.button(
+                "Reframe Only",
+                use_container_width=True,
+                type="primary" if _edit_mode == "frame" else "secondary",
+                key="mode_btn_frame",
+            ):
+                st.session_state["intent_input"] = prompt_templates.load("frame")
+                state.set("edit_mode", "frame")
+                state.set("_last_auto_gen_key", "")
+                state.log_intent("mode_change", {"mode": "frame"})
+                st.rerun()
+
+        _edit_mode = state.get("edit_mode") or "full"
+
+        # Framing mode selector — only visible in Reframe Only mode (U3/U4)
+        _framing_mode = state.get("framing_mode") or FramingMode.RULE_OF_THIRDS.value
+        if _edit_mode == "frame":
+            _framing_opts = [m.value for m in FramingMode]
+            _framing_idx = (
+                _framing_opts.index(_framing_mode) if _framing_mode in _framing_opts else 0
+            )
+            _framing_mode = st.selectbox(
+                "Composition:",
+                options=_framing_opts,
+                index=_framing_idx,
+                key="framing_mode_select",
+            )
+            state.set("framing_mode", _framing_mode)
+
+        # Auto-generate when Reframe Only + non-Custom composition (U3).
+        # Any change in framing_mode triggers a new plan without a button press.
+        _is_frame_auto = _edit_mode == "frame" and _framing_mode != FramingMode.CUSTOM.value
+        _auto_gen_key = f"frame:{_framing_mode}" if _is_frame_auto else ""
+        if _is_frame_auto and state.get("_last_auto_gen_key") != _auto_gen_key:
+            state.set("_last_auto_gen_key", _auto_gen_key)
+            with st.spinner(f"Generating plan for {_framing_mode}…"):
+                _do_generate_plan()
+            st.rerun()
+
+        # Intent text area + Generate button — hidden when frame auto-generates (U3)
+        if not _is_frame_auto:
+            intent = st.text_area(
+                "What would you like to do with this image?",
+                height=120,
+                key="intent_input",
+            )
+            state.set("intent", intent)
+
             generate_label = "Generate Plan" if ui_phase == "has_image" else "Regenerate Plan"
             if st.button(generate_label, key="generate_plan_btn", disabled=not intent):
                 with st.spinner("Generating plan…"):
@@ -353,19 +398,9 @@ with main_col:
 
     st.divider()
 
-    # Before/after preview
-    container = state.get("container")
-    edited = state.get("edited_container")
-    preview.render(
-        before=container.pixels if container else None,
-        after=edited.pixels if edited else None,
-    )
-
-    st.divider()
-
     # BBox canvas — show when image is loaded
     if ui_phase in ("has_image", "plan_ready", "done"):
-        canvas.render()
+        canvas.render(background_pixels=container.pixels if container else None)
         st.divider()
 
     # Plan view + accept/change flow
