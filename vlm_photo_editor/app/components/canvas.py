@@ -9,6 +9,18 @@ Contract:
 from __future__ import annotations
 
 import streamlit as st
+import streamlit.elements.image as _st_image_module
+
+if not hasattr(_st_image_module, "image_to_url"):
+    from streamlit.elements.lib.image_utils import image_to_url as _new_image_to_url
+    from streamlit.elements.lib.layout_utils import LayoutConfig as _LayoutConfig
+
+    def _image_to_url_compat(image, width, clamp, channels, output_format, image_id):
+        return _new_image_to_url(
+            image, _LayoutConfig(width=width), clamp, channels, output_format, image_id
+        )
+
+    _st_image_module.image_to_url = _image_to_url_compat
 
 from vlm_photo_editor.app import state
 
