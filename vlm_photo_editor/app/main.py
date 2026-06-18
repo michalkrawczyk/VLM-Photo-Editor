@@ -65,7 +65,12 @@ def _do_generate_plan() -> None:
     mode = state.get("edit_mode") or "full"
     prefs = state.get("prefs")
 
-    composition = state.get("framing_mode") if mode == "frame" else None
+    framing_val = state.get("framing_mode")
+    composition = (
+        framing_val
+        if mode == "frame" and framing_val and framing_val != FramingMode.CUSTOM.value
+        else None
+    )
     try:
         plan = Planner().plan(container, intent, prefs, mode, composition)
         result = Compiler().compile(plan, mode)
@@ -89,7 +94,12 @@ def _do_revise_plan(change: str) -> None:
     mode = state.get("edit_mode") or "full"
     prefs = state.get("prefs")
 
-    composition = state.get("framing_mode") if mode == "frame" else None
+    framing_val = state.get("framing_mode")
+    composition = (
+        framing_val
+        if mode == "frame" and framing_val and framing_val != FramingMode.CUSTOM.value
+        else None
+    )
     try:
         plan = Planner().revise(container, previous_plan, change, prefs, mode, composition)
         result = Compiler().compile(plan, mode)

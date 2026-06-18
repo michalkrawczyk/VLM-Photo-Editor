@@ -43,6 +43,7 @@ class FramingMode(str, Enum):
     FILL_FRAME = "fill_frame"
     LEAD_ROOM = "lead_room"
     HORIZON_THIRD = "horizon_third"
+    CUSTOM = "custom"
 
 
 class AcceptMode(str, Enum):
