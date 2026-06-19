@@ -169,9 +169,15 @@ class Planner:
 
     @staticmethod
     def _encode_image(container: "ImageContainer") -> str:
+        import numpy as np
         from PIL import Image
 
-        img = Image.fromarray(container.pixels)
+        pixels = container.pixels
+        if pixels.dtype != np.uint8:
+            lo, hi = int(pixels.min()), int(pixels.max())
+            span = hi - lo or 1
+            pixels = ((pixels.astype(np.float32) - lo) / span * 255).round().astype(np.uint8)
+        img = Image.fromarray(pixels)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
         buf = io.BytesIO()

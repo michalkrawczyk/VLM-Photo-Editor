@@ -365,6 +365,36 @@ def test_user_content_no_target_frame_without_composition():
 
 
 # ---------------------------------------------------------------------------
+# T1 — _encode_image handles 16-bit (RAW) containers without crashing (B1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+def test_encode_image_handles_bit_depth(dtype):
+    import base64
+    import io as _io
+    from pathlib import Path
+
+    from PIL import Image as PILImage
+
+    from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.imageio.container import ImageContainer
+
+    pixels = np.full((32, 32, 3), 32768 if dtype == np.uint16 else 128, dtype=dtype)
+    container = ImageContainer(
+        pixels=pixels,
+        bit_depth=16 if dtype == np.uint16 else 8,
+        source_path=Path("/fake/img.cr2"),
+    )
+    with patch("vlm_photo_editor.agents.planner.build_client"):
+        planner = Planner()
+
+    b64 = planner._encode_image(container)
+    img = PILImage.open(_io.BytesIO(base64.b64decode(b64)))
+    assert img.size == (32, 32)
+
+
+# ---------------------------------------------------------------------------
 # Integration — real LLM round-trip (skipped in CI unless API key present)
 # ---------------------------------------------------------------------------
 
