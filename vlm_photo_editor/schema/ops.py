@@ -48,8 +48,9 @@ class FramingMode(str, Enum):
 
 class AcceptMode(str, Enum):
     MANUAL = "manual"
-    AUTO = "auto"
-    FULL_AUTO = "full_auto"
+    AUTO_LOW = "auto_low"  # auto-approve if all ops are LOW risk
+    AUTO_MEDIUM = "auto_medium"  # auto-approve if all ops are LOW or MEDIUM risk
+    FULL_AUTO = "full_auto"  # always auto-approve
 
 
 class BoundingBox(BaseModel):

@@ -18,7 +18,7 @@ from vlm_photo_editor.app.components import preview  # noqa: E402
 from vlm_photo_editor.app.components import upload  # noqa: E402
 from vlm_photo_editor.app.components import settings as settings_component  # noqa: E402
 from vlm_photo_editor.app.stubs import MOCK_PREFS  # noqa: E402
-from vlm_photo_editor.schema.ops import AcceptMode, BoundingBox, FramingMode, RiskTier  # noqa: E402
+from vlm_photo_editor.schema.ops import AcceptMode, BoundingBox, FramingMode  # noqa: E402
 
 st.set_page_config(
     page_title="VLM Photo Editor",
@@ -79,17 +79,10 @@ def _do_generate_plan() -> None:
         state.set("current_opgraph", result.op_graph)
         state.set("ui_phase", "plan_ready")
         state.set("error", None)
-        # Auto-approve based on accept_mode (B6).
-        accept_mode_val = state.get("accept_mode") or AcceptMode.MANUAL.value
-        if accept_mode_val == AcceptMode.FULL_AUTO.value:
-            state.set("plan_approved", True)
-        elif accept_mode_val == AcceptMode.AUTO.value:
-            if all(op.risk_tier == RiskTier.LOW for op in result.op_graph.ops):
-                state.set("plan_approved", True)
-            else:
-                state.set("plan_approved", False)
-        else:
-            state.set("plan_approved", False)
+        from vlm_photo_editor.agents.edit_flow import _can_auto_approve
+
+        _mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)
+        state.set("plan_approved", _can_auto_approve(result.op_graph, _mode))
     except Exception as exc:
         state.set("error", str(exc))
         state.set("ui_phase", "has_image")
@@ -117,8 +110,11 @@ def _do_revise_plan(change: str) -> None:
         state.set("current_plan", result.plan)
         state.set("current_opgraph", result.op_graph)
         state.set("change_request", "")
-        state.set("plan_approved", False)
         state.set("error", None)
+        from vlm_photo_editor.agents.edit_flow import _can_auto_approve
+
+        _mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)
+        state.set("plan_approved", _can_auto_approve(result.op_graph, _mode))
     except Exception as exc:
         state.set("error", str(exc))
 
@@ -263,9 +259,16 @@ with sidebar_col:
     st.divider()
 
     st.subheader("Accept Mode")
+    _ACCEPT_LABELS = {
+        "manual": "Manual",
+        "auto_low": "Auto-Accept Low Risk",
+        "auto_medium": "Auto-Accept Medium Risk",
+        "full_auto": "Full Auto",
+    }
     accept_mode = st.radio(
         "Approval flow:",
         options=[m.value for m in AcceptMode],
+        format_func=_ACCEPT_LABELS.get,
         horizontal=False,
         key="accept_mode_radio",
     )

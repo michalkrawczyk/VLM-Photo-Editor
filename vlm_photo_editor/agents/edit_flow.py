@@ -63,21 +63,26 @@ def _execute(state: EditState) -> dict:
 # --- routing ---
 
 
-def _route_after_compile(state: EditState) -> str:
-    mode = state.get("accept_mode")
+def _can_auto_approve(op_graph: OpGraph | None, mode: AcceptMode) -> bool:
+    if not op_graph:
+        return False
     if mode == AcceptMode.FULL_AUTO:
-        return "execute"
-    if mode == AcceptMode.AUTO and _all_low_risk(state["op_graph"]):
+        return True
+    if mode == AcceptMode.AUTO_MEDIUM:
+        return all(op.risk_tier in (RiskTier.LOW, RiskTier.MEDIUM) for op in op_graph.ops)
+    if mode == AcceptMode.AUTO_LOW:
+        return all(op.risk_tier == RiskTier.LOW for op in op_graph.ops)
+    return False
+
+
+def _route_after_compile(state: EditState) -> str:
+    if _can_auto_approve(state.get("op_graph"), state.get("accept_mode")):
         return "execute"
     return "await_human"
 
 
 def _route_after_human(state: EditState) -> str:
     return "execute" if state.get("approved") else "revise_plan"
-
-
-def _all_low_risk(op_graph: OpGraph | None) -> bool:
-    return bool(op_graph) and all(op.risk_tier == RiskTier.LOW for op in op_graph.ops)
 
 
 # --- graph ---

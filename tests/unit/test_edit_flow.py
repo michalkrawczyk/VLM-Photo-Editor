@@ -61,6 +61,20 @@ def _high_risk_op_graph():
     )
 
 
+def _medium_risk_op_graph():
+    return OpGraph(
+        ops=[
+            Op(
+                op_name=OpName.REGION_EDIT,
+                params={"prompt": "blur"},
+                step_id="s1",
+                risk_tier=RiskTier.MEDIUM,
+                backend=Backend.PIL,
+            )
+        ]
+    )
+
+
 def _compile_result(op_graph):
     r = MagicMock()
     r.op_graph = op_graph
@@ -175,7 +189,7 @@ def test_auto_mode_low_risk_skips_human():
         mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
 
         # Should run to END without any interrupt
-        final = graph.invoke(_initial_state(AcceptMode.AUTO), thread)
+        final = graph.invoke(_initial_state(AcceptMode.AUTO_LOW), thread)
 
     assert final["op_graph"] is op_graph
     # never visited await_human → approved stays False
@@ -201,7 +215,7 @@ def test_auto_mode_high_risk_requires_human():
         mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
 
         # Should interrupt at await_human (high-risk overrides auto)
-        result = graph.invoke(_initial_state(AcceptMode.AUTO), thread)
+        result = graph.invoke(_initial_state(AcceptMode.AUTO_LOW), thread)
 
     assert result["op_graph"] is op_graph  # compiled before interrupt
     assert graph.get_state(thread).next == ("await_human",)
@@ -241,7 +255,7 @@ def test_full_auto_mode_skips_human_regardless_of_risk():
     "accept_mode,op_graph_fn",
     [
         (AcceptMode.MANUAL, _high_risk_op_graph),  # manual — always interrupts
-        (AcceptMode.AUTO, _high_risk_op_graph),  # auto + high-risk — interrupts
+        (AcceptMode.AUTO_LOW, _high_risk_op_graph),  # auto + high-risk — interrupts
     ],
 )
 def test_initial_invoke_sets_plan_and_op_graph(accept_mode, op_graph_fn):
@@ -261,3 +275,72 @@ def test_initial_invoke_sets_plan_and_op_graph(accept_mode, op_graph_fn):
 
     assert result["plan"] is plan
     assert result["op_graph"] is op_graph
+
+
+# ---------------------------------------------------------------------------
+# T3 — auto-approve applies after plan revision (B6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "accept_mode,op_graph_fn,expect_interrupt",
+    [
+        (AcceptMode.FULL_AUTO, _high_risk_op_graph, False),  # always skips
+        (AcceptMode.AUTO_LOW, _low_risk_op_graph, False),  # low risk → skips
+        (AcceptMode.AUTO_LOW, _medium_risk_op_graph, True),  # medium risk → pauses
+        (AcceptMode.AUTO_MEDIUM, _medium_risk_op_graph, False),  # medium risk → skips
+    ],
+)
+def test_auto_approve_after_revision(accept_mode, op_graph_fn, expect_interrupt):
+    """After revision, _route_after_compile respects accept_mode (T3 / B6 coverage)."""
+    plan_v1 = _plan(_step(["denoise"]))
+    plan_v2 = _plan(_step(["exposure"], [{"ev": 1.0}]))
+    op_graph = op_graph_fn()
+    thread = {"configurable": {"thread_id": f"t3-{accept_mode.value}-{op_graph_fn.__name__}"}}
+    graph = build_edit_graph()
+
+    with (
+        patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
+        patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+    ):
+        mock_planner_cls.return_value.plan.return_value = plan_v1
+        mock_planner_cls.return_value.revise.return_value = plan_v2
+        mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+
+        # Force the graph through await_human regardless of accept_mode on the first pass
+        # by using MANUAL for the first invoke, then resume with feedback to trigger revision.
+        # On the revision compile, the state's accept_mode determines the routing.
+        state = _initial_state(AcceptMode.MANUAL)
+        state["accept_mode"] = accept_mode  # set actual mode before invoke
+        graph.invoke(state, thread)
+
+        # At this point the graph is at await_human (MANUAL would interrupt; auto modes may
+        # have already ended). For modes that auto-approved on generate, we can't test
+        # revision routing via the same thread — test via a fresh MANUAL-first thread.
+        if graph.get_state(thread).next != ("await_human",):
+            # The mode auto-approved on generate; start fresh, force manual first pass.
+            thread2 = {
+                "configurable": {
+                    "thread_id": f"t3-manual-{accept_mode.value}-{op_graph_fn.__name__}"
+                }
+            }
+            graph2 = build_edit_graph()
+            manual_state = _initial_state(AcceptMode.MANUAL)
+            graph2.invoke(manual_state, thread2)
+            # Now update accept_mode in state and send feedback to trigger revision
+            graph2.update_state(thread2, {"accept_mode": accept_mode})
+            graph2.invoke(Command(resume={"approved": False, "feedback": "brighter"}), thread2)
+            next_nodes = graph2.get_state(thread2).next
+        else:
+            # Interrupted normally; send feedback to trigger revision
+            graph.invoke(Command(resume={"approved": False, "feedback": "brighter"}), thread)
+            next_nodes = graph.get_state(thread).next
+
+    if expect_interrupt:
+        assert next_nodes == (
+            "await_human",
+        ), f"{accept_mode} + {op_graph_fn.__name__} should interrupt after revision"
+    else:
+        assert (
+            next_nodes == ()
+        ), f"{accept_mode} + {op_graph_fn.__name__} should auto-approve after revision"
