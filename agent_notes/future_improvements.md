@@ -44,3 +44,22 @@ Extend `agent_notes/generate_module_map.py` to emit a `module_api.json` alongsid
 Add a "Key files to read for context" subsection to each P-step in `plans/photo_editor_build_plan.md`. Eliminates discovery entirely for planned work; an agent reads the listed files verbatim and proceeds without an Explore pass.
 
 **Trigger for adoption:** Any of these pays off when P-step planning takes more than one round of clarification reads. Option A (richer AGENTS.md) is the cheapest and can be done incrementally as each module stabilizes. Option B is worth doing once all core modules (P0–P6) are complete.
+
+---
+
+## Pre-VLM Face Anonymization
+
+**Problem:** Sending user photos to external VLM/planner APIs (Anthropic, Replicate, etc.) exposes identifiable faces to third-party systems. Users may not expect or consent to this.
+
+**Mechanism:** Before encoding any `ImageContainer` for a VLM API call, run a local face-detection pass (mediapipe or similar — see Local Face Detection above) and replace each detected face region with a neutral placeholder (solid fill, Gaussian blur, or a synthetic face via a local diffusion model). This anonymized copy is sent to the API; the original pixels are never transmitted. The anonymization is ephemeral — it exists only in the encoded bytes, never written to disk.
+
+**Integration point:** `Planner._encode_image` (currently `vlm_photo_editor/agents/planner.py:119`). Add an optional `anonymize_faces: bool` parameter (default `False` until mediapipe is added as a dependency). The session state or `AppSettings` exposes this toggle to the user.
+
+**Scope:** Applies to the planning step only. The executor operates entirely locally on the original pixels.
+
+**Constraints:**
+- Anonymization must not alter bounding-box geometry visible to the VLM (blurring is safer than cropping).
+- The redaction must be reversible to zero: the unmodified `ImageContainer` must remain accessible in session state after the API call.
+- Log that anonymization ran, but never log which regions were masked (face coordinates are PII-adjacent).
+
+**Trigger for adoption:** When the app handles photos of real people in production, or when a user requests a privacy mode. Should be implemented alongside the mediapipe integration since both share the same face-detection pre-pass.

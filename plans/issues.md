@@ -6,12 +6,9 @@ Audit date: 2026-06-16. All tests pass (122 passed, 2 skipped) but the issues be
 
 ## BUGS — cause crashes or incorrect behavior
 
-### B1: `_encode_image` crashes on 16-bit (RAW) images
-**File:** [vlm_photo_editor/agents/planner.py:119-127](vlm_photo_editor/agents/planner.py#L119)
+### ~~B1: `_encode_image` crashes on 16-bit (RAW) images~~ ✓ FIXED
 
-`Image.fromarray(container.pixels)` called on a `uint16` HxWx3 array. PIL raises `TypeError: Cannot handle this data type` for uint16 RGB. The recent fix (`4e43725`) added `RGBA→RGB` conversion but not the 16-bit downscale. Fix: `pixels >> 8` before `fromarray`, same pattern as `pil_backend._to_pil_8bit`.
-
-The path is exercised only by the real VLM integration — the unit test mocks `Planner` wholesale, so this goes undetected.
+Added NORM_MINMAX guard in `_encode_image` (`planner.py:171-182`): non-uint8 pixels are auto-contrast scaled to [0, 255] before `fromarray`. Test `test_encode_image_handles_bit_depth` added (T1 covered).
 
 ---
 
@@ -163,7 +160,7 @@ edit_graph = build_edit_graph()
 
 ## MISSING TESTS
 
-### T1: No test for `_encode_image` on 16-bit container (uncovers B1)
+### ~~T1: No test for `_encode_image` on 16-bit container (uncovers B1)~~ ✓ FIXED
 
 ### T2: No test for revision error path in UI (uncovers B2)
 
@@ -179,6 +176,15 @@ The only test verifying 16-bit RAW handling is permanently skipped because the f
 ---
 
 ## UI / UX ISSUES
+
+### U0: No save button for result image
+**File:** [vlm_photo_editor/app/main.py](vlm_photo_editor/app/main.py)
+
+After execution completes there is no UI button to save the result image. Users have no way to export the edited image from the app. Related to B7 (output goes to `/tmp`).
+
+Fix: add a "Save Result" button in the post-execution UI. On click, write the result to a user-visible location (e.g. `~/Pictures/vlm_edits/`). Display a success message that includes the full saved path and filename, e.g. `Saved: /home/user/Pictures/vlm_edits/photo_edited.jpg`. Debug/log output should also emit the path and filename so it is visible in the Streamlit debug expander.
+
+---
 
 ### U1: Layout and edit mode placement
 **Files:** [vlm_photo_editor/app/main.py](vlm_photo_editor/app/main.py), [vlm_photo_editor/app/components/preview.py](vlm_photo_editor/app/components/preview.py)
@@ -218,3 +224,21 @@ Design work needed:
 - Define how the planner conveys composition intent to a subject-aware backend (e.g. providing face bounding boxes from a detection pre-pass so the crop centers on the subject).
 - Decide whether the planner receives saliency/face data as input context before generating frame ops, or whether the executor handles it transparently behind the `FRAME` op interface.
 - Route `FRAME` through the P5 framing module once that module is complete, replacing the PIL backend center-crop stub.
+
+---
+
+### D14: Composition mode sends only target aspect ratio — no focus instruction
+
+**File:** framing module / wherever `FRAME` op parameters are constructed for the planner.
+
+Each composition mode (Face Only, Rule of Thirds, Head & Shoulders, etc.) currently passes only the target frame ratio to the planner and executor. It provides no instruction about *what region to prioritize*, so the executor falls back to a geometric center crop that ignores subject position.
+
+Examples of the missing signal:
+- **Face Only** — crop tightly around the face bounding box; do not include the torso.
+- **Head & Shoulders** — include head + upper chest; exclude legs.
+- **Rule of Thirds** — place the primary subject's eye-line on the upper third; do not simply center.
+- **Full Body** — ensure feet and top of head are both within frame.
+
+Fix: augment the `FRAME` op payload (or a parallel `FramingIntent` schema) with a short natural-language focus instruction per mode, generated at mode-selection time. The planner can include this in its reasoning; the executor uses it to bias the crop anchor toward the correct subject region (face bbox, eye-line, centroid, etc.) rather than the image center.
+
+This is a prerequisite for D13's subject-aware backend design: the executor needs to know *which* subject region to protect before it can request the right detection pre-pass.
