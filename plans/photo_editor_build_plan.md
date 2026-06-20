@@ -131,11 +131,18 @@ See `CLAUDE.md` §Non-negotiable principles for all global invariants. Two invar
 
 **Key functionality.** Modes: rule of thirds, golden ratio, golden spiral, center/symmetry, portrait headroom, face-only, negative space, fill frame, lead/gaze room, horizon level + horizon-on-third. Outpaint fallback when a crop would lose needed content.
 
-**User-facing result.** Pick a photographic framing intent and get a correct, subject-aware crop.
+- **Framing focus instructions.** Each `FramingMode` selection generates a short natural-language focus instruction alongside `frame_ratio` (e.g., Face Only → "crop tightly around the face bounding box; exclude torso"). Both fields are carried in the `FRAME` op payload (or a parallel `FramingIntent` schema). The planner embeds this instruction in its reasoning; the executor uses it to bias the crop anchor away from the image center toward the correct subject region.
+- **`RECOMMEND_BEST` mode.** A new `FramingMode.RECOMMEND_BEST` enum value. When active, no `frame_ratio` or focus instruction is pre-specified — the planner analyzes the image and selects the single best mode and ratio given composition, subject placement, and aspect. Learned and explicit preferences are injected as soft constraints. An optional free-text user instruction (e.g. "leave breathing room above the head") is forwarded to the planner as an additional guidance signal, taking precedence over preferences when both are present. UI shows the mode the planner chose and why.
+
+**User-facing result.** Pick a photographic framing intent and get a correct, subject-aware crop. Or let the VLM pick the best framing, optionally guided by a text prompt.
 
 **Definition of Done.**
-- [ ] Each mode produces a sane crop on face and scene fixtures with no head-clipping.
-- [ ] Outpaint is requested when a crop cannot satisfy the mode.
+- [x] Each mode produces a sane crop on face and scene fixtures with no head-clipping.
+- [x] Outpaint is requested when a crop cannot satisfy the mode.
+- [x] Every framing mode emits a non-empty focus instruction alongside `frame_ratio`.
+- [x] `RECOMMEND_BEST` causes the planner to output a chosen mode and ratio (verified in a unit test against a mock VLM response).
+- [x] When active preferences exist, they appear in the planner prompt for `RECOMMEND_BEST`.
+- [x] A free-text user instruction passed with `RECOMMEND_BEST` overrides preferences and is present in the prompt.
 
 ---
 
@@ -223,4 +230,32 @@ See `CLAUDE.md` §Non-negotiable principles for all global invariants. Two invar
 - [ ] A large RAW processes without blocking the UI (progress shown).
 - [ ] A cache hit avoids re-planning.
 - [ ] The redaction audit finds zero key leakage across logs and errors.
+
+---
+
+## Step P11 — Batch Processing
+
+**What.** Multi-image upload → per-image VLM plan → async execution → per-image review UI → bulk save.
+
+**Why.** High-volume workflows (event shoots, product catalogs) need throughput, not one-at-a-time approval loops. Rate-limit awareness prevents API bans and cost spikes.
+
+**Key functionality.**
+- Upload N images at once (`file_uploader(accept_multiple_files=True)`).
+- VLM batch size determined by model capability: if the active planner model supports multi-image input, images are grouped into batches up to a user-configurable max; if the model only supports one image at a time, images are sent one-by-one. A `model_registry` entry declares `max_images_per_call`; the batch scheduler reads this at runtime.
+- Async execution via `anyio` task group: planning and execution run concurrently across images without blocking the UI. Streamlit progress bar per image and overall.
+- Rate-limit handling: exponential back-off + jitter on HTTP 429 / provider-specific errors; configurable max retries per image.
+- Accept-mode awareness: `full_auto` executes and saves every image without prompting; `auto` executes images whose compiled ops all fall under the configured risk threshold and queues the rest for manual review; `manual` queues every image for review.
+- Mixed-result handling: after async planning completes, images split into **auto-executed** (already done) and **needs review** (risk too high, plan error, or manual mode). UI shows a summary banner ("12 auto-saved · 3 need review") and opens the review panel on the first pending image. Auto-executed images are accessible read-only with a "revert" option. User iterates pending images with ← → navigation; each can be accepted, rejected, or sent back for re-planning via the chat box.
+- "Save All Accepted" writes each accepted edit to a new file (never overwriting source), with a download ZIP option.
+- Failed images (plan error, execution error, user reject) are collected in a "needs attention" list and are re-triable individually.
+
+**User-facing result.** Upload a folder of images, review AI plans in bulk, save accepted edits — without waiting for one image to finish before the next starts.
+
+**Definition of Done.**
+- [ ] N images are planned concurrently; total wall time < N × single-image time.
+- [ ] A simulated HTTP 429 triggers back-off and retry; the image eventually succeeds.
+- [ ] Progress bar advances per image, not just at the end.
+- [ ] `auto` mode auto-executes low-risk images and queues high-risk ones; summary banner reflects the split.
+- [ ] "Save All Accepted" writes N new files; originals byte-identical.
+- [ ] Rejected images do not produce output files.
 

@@ -6,16 +6,10 @@ Audit date: 2026-06-16. All tests pass (122 passed, 2 skipped) but the issues be
 
 ## BUGS — cause crashes or incorrect behavior
 
-### ~~B1: `_encode_image` crashes on 16-bit (RAW) images~~ ✓ FIXED
-
-Added NORM_MINMAX guard in `_encode_image` (`planner.py:171-182`): non-uint8 pixels are auto-contrast scaled to [0, 255] before `fromarray`. Test `test_encode_image_handles_bit_depth` added (T1 covered).
-
----
-
 ### B2: Revision error causes infinite retry loop
 **File:** [vlm_photo_editor/app/main.py:65-84](vlm_photo_editor/app/main.py#L65)
 
-`_do_revise_plan` catches exceptions internally and sets `state["error"]` but does **not** clear `state["change_request"]`. Back in `main.py:279-283`:
+`_do_revise_plan` catches exceptions internally and sets `state["error"]` but does **not** clear `state["change_request"]`. Back in `main.py:421-425`:
 
 ```python
 change = state.get("change_request") or ""
@@ -30,21 +24,6 @@ Fix: add `state.set("change_request", "")` in the `except` block of `_do_revise_
 
 ---
 
-### B4: Canvas bbox coordinates not mapped to image space
-**File:** [vlm_photo_editor/app/components/canvas.py:32-55](vlm_photo_editor/app/components/canvas.py#L32)
-
-The canvas is fixed at 600×300 px. Bbox coordinates are in canvas pixels. They are stored directly into `state["bbox"]` and injected into ops verbatim:
-
-```python
-bbox = BoundingBox(x=bbox_raw["x"], y=bbox_raw["y"], ...)
-```
-
-If the image is 4000×3000, a canvas box at `(100, 50, 200, 100)` covers a tiny corner, not the intended region. Without scaling by `(image_w / 600, image_h / 300)` the region edit operates on the wrong pixels.
-
-Additionally, the canvas doesn't show the actual image so the user is drawing blind. Both problems need to be addressed together (load image into canvas background, then scale coords on read-back).
-
----
-
 ### B5: Uploaded image temp file never deleted
 **File:** [vlm_photo_editor/app/main.py:37-40](vlm_photo_editor/app/main.py#L37)
 
@@ -54,13 +33,6 @@ with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
 ```
 
 `delete=False` and no cleanup path. Every upload leaks a temp file. Large RAWs (30–100 MB each) accumulate in `/tmp` until the OS sweeps them. Fix: track `tmp_path` in session state and delete on new upload or session end, or use `delete=True` + immediately call `load(tmp_path)` before the context manager exits.
-
----
-
-### B6: `AcceptMode` radio has no functional effect in the UI
-**File:** [vlm_photo_editor/app/main.py:194-200](vlm_photo_editor/app/main.py#L194) and [vlm_photo_editor/agents/edit_flow.py](vlm_photo_editor/agents/edit_flow.py)
-
-`accept_mode` is stored in state but `main.py` always goes through the manual path: it waits for `plan_approved = True` regardless of mode. The `AcceptMode.AUTO` / `AcceptMode.FULL_AUTO` auto-approval logic lives in `edit_flow.py` (the LangGraph agent), but `main.py` never uses that graph — it calls `Planner`, `Compiler`, `Executor` directly. Switching the radio to "auto" or "full_auto" does nothing different from "manual".
 
 ---
 
@@ -102,13 +74,6 @@ def _execute(state: EditState) -> dict:
 ```
 
 The LangGraph agent graph's execute node does nothing. Even if the graph were hooked up to the UI (see B6), edits would never apply. P7 marked the DoD "User can upload → see plan → edit/accept → preview before/after → save" as complete, but the graph itself isn't wired.
-
----
-
-### D2: `requires_manual_approval` is dead code
-**File:** [vlm_photo_editor/config/policy.py:18-21](vlm_photo_editor/config/policy.py#L18)
-
-`requires_manual_approval(tier, mode)` is defined but never called anywhere in the codebase. The actual approval gating in `edit_flow.py` uses `AcceptMode` directly via `_route_after_compile`. Remove or connect.
 
 ---
 
@@ -160,8 +125,6 @@ edit_graph = build_edit_graph()
 
 ## MISSING TESTS
 
-### ~~T1: No test for `_encode_image` on 16-bit container (uncovers B1)~~ ✓ FIXED
-
 ### T2: No test for revision error path in UI (uncovers B2)
 
 ### T3: No test that `AcceptMode.AUTO` skips human approval in the UI flow (uncovers B6)
@@ -172,45 +135,6 @@ edit_graph = build_edit_graph()
 **File:** [tests/unit/test_imageio.py:83-88](tests/unit/test_imageio.py#L83)
 
 The only test verifying 16-bit RAW handling is permanently skipped because the fixture file doesn't exist. This means the entire RAW codepath is untested in CI.
-
----
-
-## UI / UX ISSUES
-
-### U0: No save button for result image
-**File:** [vlm_photo_editor/app/main.py](vlm_photo_editor/app/main.py)
-
-After execution completes there is no UI button to save the result image. Users have no way to export the edited image from the app. Related to B7 (output goes to `/tmp`).
-
-Fix: add a "Save Result" button in the post-execution UI. On click, write the result to a user-visible location (e.g. `~/Pictures/vlm_edits/`). Display a success message that includes the full saved path and filename, e.g. `Saved: /home/user/Pictures/vlm_edits/photo_edited.jpg`. Debug/log output should also emit the path and filename so it is visible in the Streamlit debug expander.
-
----
-
-### U1: Layout and edit mode placement
-**Files:** [vlm_photo_editor/app/main.py](vlm_photo_editor/app/main.py), [vlm_photo_editor/app/components/preview.py](vlm_photo_editor/app/components/preview.py)
-
-"What would you like to do with this image?" prompt should appear under the image preview, not in a separate section. Edit mode selector should be colocated with "Generate Plan" — they belong together since the mode governs how the plan is generated.
-
----
-
-### U2: Reframe Only / Background / Full Edit as prompt prefills
-**File:** [vlm_photo_editor/app/main.py](vlm_photo_editor/app/main.py)
-
-"Reframe Only", "Background", and "Full Edit" should not be a separate mode selector — they should be prefill shortcuts that populate "What would you like to do with this image?" with a sensible starting prompt for the planner. User can then edit the text before generating the plan.
-
----
-
-### U3: Auto-generate plan for Reframe Only when mode is not Custom
-**File:** [vlm_photo_editor/app/main.py](vlm_photo_editor/app/main.py)
-
-When the user selects "Reframe Only" and the framing mode is anything other than "Custom", the intent is fully specified — no free-text input is needed. In this case, clicking the framing mode should trigger `generate_plan` automatically without requiring a separate button press.
-
----
-
-### U4: Framing mode needs a "Custom" option
-**File:** [vlm_photo_editor/app/main.py](vlm_photo_editor/app/main.py)
-
-Framing mode selector lacks a "Custom" option. When "Custom" is selected, the "What would you like to do with this image?" field becomes required and the user must describe the desired framing before the plan can be generated. All other framing modes are fully specified and should auto-generate (see U3).
 
 ---
 
