@@ -18,7 +18,13 @@ from vlm_photo_editor.app.components import preview  # noqa: E402
 from vlm_photo_editor.app.components import upload  # noqa: E402
 from vlm_photo_editor.app.components import settings as settings_component  # noqa: E402
 from vlm_photo_editor.app.stubs import MOCK_PREFS  # noqa: E402
-from vlm_photo_editor.schema.ops import AcceptMode, BoundingBox, FramingMode  # noqa: E402
+from vlm_photo_editor.schema.ops import (  # noqa: E402
+    AcceptMode,
+    BoundingBox,
+    FramingIntent,
+    FramingMode,
+)
+from vlm_photo_editor.templates.framing import focus_instruction, frame_ratio_str  # noqa: E402
 
 st.set_page_config(
     page_title="VLM Photo Editor",
@@ -56,6 +62,18 @@ def _validate_crop_bounds(op_graph: "OpGraph", w: int, h: int) -> None:  # type:
             )
 
 
+def _build_framing_intent(framing_val: str) -> FramingIntent:
+    mode = FramingMode(framing_val)
+    fi = FramingIntent(
+        mode=mode,
+        focus_instruction=focus_instruction(mode),
+        frame_ratio=frame_ratio_str(mode),
+    )
+    if mode is FramingMode.RECOMMEND_BEST:
+        fi.user_instruction = st.session_state.get("framing_hint") or None
+    return fi
+
+
 def _do_generate_plan() -> None:
     from vlm_photo_editor.agents.planner import Planner
     from vlm_photo_editor.planner.compiler import Compiler, CompilerError
@@ -66,13 +84,9 @@ def _do_generate_plan() -> None:
     prefs = state.get("prefs")
 
     framing_val = state.get("framing_mode")
-    composition = (
-        framing_val
-        if mode == "frame" and framing_val and framing_val != FramingMode.CUSTOM.value
-        else None
-    )
+    fi = _build_framing_intent(framing_val) if framing_val else None
     try:
-        plan = Planner().plan(container, intent, prefs, mode, composition)
+        plan = Planner().plan(container, intent, prefs, mode, fi)
         result = Compiler().compile(plan, mode)
         _validate_crop_bounds(result.op_graph, container.width, container.height)
         state.set("current_plan", result.plan)
@@ -83,6 +97,12 @@ def _do_generate_plan() -> None:
 
         _mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)
         state.set("plan_approved", _can_auto_approve(result.op_graph, _mode))
+        if result.plan.chosen_framing_mode:
+            st.info(
+                f"Chosen framing: {result.plan.chosen_framing_mode} — {result.plan.chosen_framing_why}"
+            )
+        if result.plan.outpaint_needed:
+            st.warning("This framing requires outpainting — switching to background mode.")
     except Exception as exc:
         state.set("error", str(exc))
         state.set("ui_phase", "has_image")
@@ -98,13 +118,9 @@ def _do_revise_plan(change: str) -> None:
     prefs = state.get("prefs")
 
     framing_val = state.get("framing_mode")
-    composition = (
-        framing_val
-        if mode == "frame" and framing_val and framing_val != FramingMode.CUSTOM.value
-        else None
-    )
+    fi = _build_framing_intent(framing_val) if framing_val else None
     try:
-        plan = Planner().revise(container, previous_plan, change, prefs, mode, composition)
+        plan = Planner().revise(container, previous_plan, change, prefs, mode, fi)
         result = Compiler().compile(plan, mode)
         _validate_crop_bounds(result.op_graph, container.width, container.height)
         state.set("current_plan", result.plan)
@@ -316,7 +332,7 @@ with main_col:
         st.divider()
 
         # Quick-mode prefill buttons (U2): set edit_mode and populate intent from template.
-        from vlm_photo_editor import prompt_templates
+        from vlm_photo_editor import templates as prompt_templates
 
         _edit_mode = state.get("edit_mode") or "full"
         col_full, col_bg, col_frame = st.columns(3)
@@ -370,6 +386,9 @@ with main_col:
             key="framing_mode_select",
         )
         state.set("framing_mode", _framing_mode)
+
+        if _framing_mode == FramingMode.RECOMMEND_BEST.value:
+            st.text_input("Framing guidance (optional)", key="framing_hint")
 
         # Auto-generate when Reframe Only + non-Custom composition (U3).
         # Any change in framing_mode triggers a new plan without a button press.
