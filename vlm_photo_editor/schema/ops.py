@@ -44,6 +44,7 @@ class FramingMode(str, Enum):
     LEAD_ROOM = "lead_room"
     HORIZON_THIRD = "horizon_third"
     CUSTOM = "custom"
+    RECOMMEND_BEST = "recommend_best"
 
 
 class AcceptMode(str, Enum):
@@ -71,3 +72,10 @@ class Op(BaseModel):
 
 class OpGraph(BaseModel):
     ops: list[Op] = Field(default_factory=list)
+
+
+class FramingIntent(BaseModel):
+    mode: FramingMode
+    focus_instruction: str = ""
+    frame_ratio: str | None = None
+    user_instruction: str | None = None

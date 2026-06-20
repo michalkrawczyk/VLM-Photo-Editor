@@ -21,6 +21,9 @@ class HumanPlan(BaseModel):
     plan_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     steps: list[HumanStep] = Field(default_factory=list)
     mode: str = "full"
+    chosen_framing_mode: str | None = None
+    chosen_framing_why: str | None = None
+    outpaint_needed: bool = False
 
 
 class CompilerResult(BaseModel):
