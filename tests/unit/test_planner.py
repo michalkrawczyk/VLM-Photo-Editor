@@ -8,8 +8,9 @@ import pytest
 
 from vlm_photo_editor.config.policy import allowed_ops_for_mode
 from vlm_photo_editor.planner.compiler import Compiler, CompilerError
-from vlm_photo_editor.schema.ops import OpName
+from vlm_photo_editor.schema.ops import FramingIntent, FramingMode, OpName
 from vlm_photo_editor.schema.plan import CompilerResult, HumanPlan, HumanStep
+from vlm_photo_editor.templates.planner import build_system_prompt
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -293,14 +294,12 @@ def test_frame_target_size(w, h, composition, expected):
 
 
 def test_system_prompt_includes_framing_instructions():
-    with patch("vlm_photo_editor.agents.planner.build_client"):
-        from vlm_photo_editor.agents.planner import Planner
-
-        planner = Planner()
-
-    prompt = planner._system_prompt(
-        "frame", None, composition="portrait_headroom", target_size=(2250, 3000)
+    fi = FramingIntent(
+        mode=FramingMode.PORTRAIT_HEADROOM,
+        focus_instruction="Leave breathing room above the head.",
+        frame_ratio="3:4",
     )
+    prompt = build_system_prompt("frame", None, fi, (2250, 3000))
     assert "FRAMING INSTRUCTIONS" in prompt
     assert "portrait_headroom" in prompt
     assert "2250" in prompt
@@ -309,12 +308,7 @@ def test_system_prompt_includes_framing_instructions():
 
 
 def test_system_prompt_no_framing_without_composition():
-    with patch("vlm_photo_editor.agents.planner.build_client"):
-        from vlm_photo_editor.agents.planner import Planner
-
-        planner = Planner()
-
-    prompt = planner._system_prompt("frame", None)
+    prompt = build_system_prompt("frame", None, None, None)
     assert "FRAMING INSTRUCTIONS" not in prompt
 
 
