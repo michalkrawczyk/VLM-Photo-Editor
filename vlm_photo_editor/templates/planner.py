@@ -11,15 +11,41 @@ def build_system_prompt(
     framing_intent: FramingIntent | None,
     target_size: tuple[int, int] | None,
 ) -> str:
-    lines = _base_lines(mode)
+    from vlm_photo_editor.config.settings import get_settings
+
+    settings = get_settings()
+    no_genai = settings.no_genai
+    lines = _base_lines(mode, no_genai)
+    if settings.ps_mode == "strict":
+        lines += _ps_strict_lines()
     lines += _framing_lines(framing_intent, target_size, prefs)
     lines += _prefs_lines(prefs, framing_intent)
     return "\n".join(lines)
 
 
-def _base_lines(mode: str) -> list[str]:
-    allowed = sorted(op.value for op in allowed_ops_for_mode(mode))
+_PS_EXPRESSIBLE_OPS = [
+    "crop",
+    "rotate",
+    "white_balance",
+    "exposure",
+    "denoise",
+    "mask",
+    "region_edit",
+]
+
+
+def _ps_strict_lines() -> list[str]:
     return [
+        "",
+        "PS-STRICT MODE: Only propose ops expressible in Photoshop.",
+        f"  Allowed PS ops: {_PS_EXPRESSIBLE_OPS}",
+        '  Do NOT use backend="genai". Use backend="opencv" for any inpaint op.',
+    ]
+
+
+def _base_lines(mode: str, no_genai: bool = False) -> list[str]:
+    allowed = sorted(op.value for op in allowed_ops_for_mode(mode))
+    lines = [
         "You are a photo-editing planner. Produce a concise human-readable editing plan.",
         "",
         f"ACTIVE MODE: {mode}",
@@ -46,11 +72,27 @@ def _base_lines(mode: str) -> list[str]:
         "  exposure: {ev} (float -10 to 10)",
         "  denoise: {}",
         "  mask: {}",
-        "  region_edit: {prompt: str}",
-        "  background_replace: {prompt: str}",
+        '  region_edit: {prompt: str (required for genai), backend: "genai"|"opencv" (optional)}',
+        '  background_replace: {prompt: str (required for genai), backend: "genai"|"opencv" (optional)}',
         "  frame: {mode: str} — one of: rule_of_thirds, golden_ratio, golden_spiral,",
         "    center_symmetry, portrait_headroom, face_only, negative_space,",
         "    fill_frame, lead_room, horizon_third",
+        "",
+        "INPAINT BACKEND SELECTION (region_edit / background_replace):",
+        '  Default is backend="genai": full content synthesis via external API.',
+        '  Use backend="opencv" when ALL of the following hold:',
+        "    - The object to remove is small (scratch, wire, text, watermark, small spot).",
+        "    - No semantic content synthesis is needed (nearby texture can fill the gap).",
+        "    - When backend=opencv, omit prompt (it is not used).",
+    ]
+    if no_genai:
+        lines += [
+            "",
+            'NO-GENAI MODE: Do NOT set backend="genai" for any inpaint op.',
+            '  Use backend="opencv" for all region_edit and background_replace ops.',
+            "  Omit prompt for these ops.",
+        ]
+    lines += [
         "",
         "RULES:",
         "  - Only ops from ALLOWED OPS. Never invent op names.",
@@ -58,6 +100,7 @@ def _base_lines(mode: str) -> list[str]:
         "  - ≤5 steps unless strictly necessary.",
         "  - Never include API keys or secrets.",
     ]
+    return lines
 
 
 def _framing_lines(

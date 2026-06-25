@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import socket
+
 from vlm_photo_editor.config.policy import allowed_ops_for_mode
 from vlm_photo_editor.ops.validator import validate_op_graph
-from vlm_photo_editor.schema.ops import Op, OpGraph, OpName, RiskTier
+from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
 from vlm_photo_editor.schema.plan import CompilerResult, HumanPlan
+
+_PS_MCP_HOST = "127.0.0.1"
+_PS_MCP_PORT = 8080
+
+
+def _ps_available() -> bool:
+    try:
+        with socket.create_connection((_PS_MCP_HOST, _PS_MCP_PORT), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
 
 _OP_RISK: dict[OpName, RiskTier] = {
     OpName.CROP: RiskTier.LOW,
@@ -17,6 +31,14 @@ _OP_RISK: dict[OpName, RiskTier] = {
     OpName.FRAME: RiskTier.LOW,
 }
 
+# Default backend per op; PIL is the Op default so only non-PIL entries are listed.
+_OP_DEFAULT_BACKEND: dict[OpName, Backend] = {
+    OpName.BACKGROUND_REPLACE: Backend.GENAI,
+    OpName.REGION_EDIT: Backend.GENAI,
+}
+
+_INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
+
 
 class CompilerError(ValueError):
     """HumanPlan could not be compiled to a valid OpGraph."""
@@ -24,7 +46,19 @@ class CompilerError(ValueError):
 
 class Compiler:
     def compile(self, plan: HumanPlan, mode: str) -> CompilerResult:
+        from vlm_photo_editor.config.settings import get_settings
+
+        settings = get_settings()
         allowed = allowed_ops_for_mode(mode)  # KeyError for unknown mode → let propagate
+        no_genai = settings.no_genai
+
+        if settings.ps_mode == "strict" and not _ps_available():
+            raise CompilerError(
+                "PS-strict mode requires Photoshop. "
+                "Connect the PS plugin or switch to 'auto' mode."
+            )
+        # ps_mode == "none" will block Backend.PHOTOSHOP when that backend is added.
+
         ops: list[Op] = []
 
         for step in plan.steps:
@@ -39,10 +73,29 @@ class Compiler:
                         f"Step {step.step_id!r}: unknown op {op_name_str!r}. "
                         f"Valid: {[n.value for n in OpName]}"
                     )
+
+                params = dict(params)  # shallow copy — don't mutate step
+                backend_str = params.pop("backend", None)
+                if backend_str is not None:
+                    try:
+                        backend = Backend(backend_str)
+                    except ValueError:
+                        raise CompilerError(
+                            f"Step {step.step_id!r}: unknown backend {backend_str!r}. "
+                            f"Valid: {[b.value for b in Backend]}"
+                        )
+                else:
+                    backend = _OP_DEFAULT_BACKEND.get(op_name, Backend.PIL)
+
+                # no_genai safety net: redirect GENAI inpaint ops to OPENCV
+                if no_genai and backend == Backend.GENAI and op_name in _INPAINT_OPS:
+                    backend = Backend.OPENCV
+
                 ops.append(
                     Op(
                         op_name=op_name,
-                        params=dict(params),  # shallow copy — don't mutate step
+                        backend=backend,
+                        params=params,
                         step_id=step.step_id,  # STABLE ID linkage
                         risk_tier=_OP_RISK.get(op_name, RiskTier.LOW),
                     )
