@@ -10,7 +10,26 @@ if TYPE_CHECKING:
 
 
 def build_client(role: str) -> "BaseChatModel":
-    model_id = get_registry().get(role)
+    entry = get_registry().get_entry(role)
+    model_id = entry.model_id
+
+    if entry.provider == "local":
+        if entry.loader == "ollama":
+            try:
+                from langchain_ollama import ChatOllama
+            except ImportError as exc:
+                raise ImportError(
+                    "langchain-ollama not installed. Run: pip install langchain-ollama"
+                ) from exc
+            return ChatOllama(model=model_id)  # type: ignore[return-value]
+        try:
+            from langchain_huggingface import HuggingFacePipeline
+        except ImportError as exc:
+            raise ImportError(
+                "langchain-huggingface not installed. Run: pip install langchain-huggingface"
+            ) from exc
+        hf_repo = entry.hf_repo or model_id
+        return HuggingFacePipeline.from_model_id(model_id=hf_repo, task="text-generation")  # type: ignore[return-value]
 
     if "claude" in model_id or "anthropic" in model_id:
         try:

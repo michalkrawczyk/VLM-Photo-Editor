@@ -82,6 +82,15 @@ AVAILABLE_MODELS = [
     "claude-opus-4-8",
     "gpt-4o",
     "gpt-4o-mini",
+    "gpt-4.1-mini",
+    "LiquidAI/LFM2.5-1.2B-Instruct",
 ]
 
 PROVIDERS = ["anthropic", "openai", "replicate"]
+
+LOCAL_MODEL_IDS: frozenset[str] = frozenset(
+    {
+        "LiquidAI/LFM2.5-1.2B-Instruct",
+        "LiquidAI/LFM2.5-VL-1.6B",
+    }
+)

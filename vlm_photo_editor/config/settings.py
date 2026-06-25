@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 
 @dataclass
@@ -11,6 +12,11 @@ class AppSettings:
     max_background_candidates: int = 3
     output_dir: Path = field(default_factory=lambda: Path("output"))
     recipes_dir: Path = field(default_factory=lambda: Path("recipes"))
+    # When True, planner must not propose Backend.GENAI for inpaint ops;
+    # compiler falls back GENAI → OPENCV as a safety net.
+    no_genai: bool = False
+    # PS mode: "auto" = normal, "strict" = PS-expressible ops only, "none" = no PS backend.
+    ps_mode: Literal["auto", "strict", "none"] = "auto"
 
 
 _settings = AppSettings()
