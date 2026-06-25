@@ -1,0 +1,1 @@
+/goal Without reading the files(But you may use codebase-navigation or agent_notes for view the structure) create plans/plan_review.md where you split modules/files to check into reasonable batches (add for each short reasoning why). The review should be targeted on bugs, issues found, possible improvements and optimizations

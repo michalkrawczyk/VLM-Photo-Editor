@@ -166,3 +166,34 @@ Examples of the missing signal:
 Fix: augment the `FRAME` op payload (or a parallel `FramingIntent` schema) with a short natural-language focus instruction per mode, generated at mode-selection time. The planner can include this in its reasoning; the executor uses it to bias the crop anchor toward the correct subject region (face bbox, eye-line, centroid, etc.) rather than the image center.
 
 This is a prerequisite for D13's subject-aware backend design: the executor needs to know *which* subject region to protect before it can request the right detection pre-pass.
+
+---
+
+### D15: Save path UX undefined — no dialog, no structured tmp layout
+
+**Related:** B7 (saved file written to `/tmp`), B5 (temp file never deleted).
+
+Two separate concerns:
+
+**1. User-defined output path (save-as dialog)**
+After hitting the Save button, the user should be able to choose where the edited file goes via a native file-save dialog. Streamlit has no built-in file picker; options:
+- `tkinter.filedialog.asksaveasfilename` — works in local deployments, fails in browser-based ones.
+- Offer a download button (`st.download_button`) as the universal fallback; the browser handles the destination.
+- For a desktop packaging path, wrap with a native dialog via `tkinter` or `pyside6.QFileDialog`, guarded by a capability flag.
+
+Default suggested: `st.download_button` first (works everywhere); add native dialog behind a `USE_NATIVE_DIALOG=1` env flag for local installs.
+
+**2. Structured tmp directory for per-image data**
+Current code scatters all temp files flat in `/tmp`. Required layout:
+
+```
+/tmp/vlm_photo_editor/
+└── <image-stem>_<session-id>/   ← one subfolder per uploaded image
+    ├── original.<ext>
+    ├── edited.<ext>
+    └── <stem>.edit.json
+```
+
+- Create `vlm_photo_editor/` on first use; create the per-image subfolder on upload.
+- Sweep the per-image subfolder on new upload or session end (fixes B5).
+- The subfolder name should be deterministic within a session so the recipe and output always land together.
