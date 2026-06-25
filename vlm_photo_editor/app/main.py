@@ -17,7 +17,11 @@ from vlm_photo_editor.app.components import prefs_panel  # noqa: E402
 from vlm_photo_editor.app.components import preview  # noqa: E402
 from vlm_photo_editor.app.components import upload  # noqa: E402
 from vlm_photo_editor.app.components import settings as settings_component  # noqa: E402
-from vlm_photo_editor.app.stubs import MOCK_PREFS  # noqa: E402
+from vlm_photo_editor.preferences.store import (  # noqa: E402
+    AGGREGATE_AFTER,
+    DeltaStore,
+    PreferenceStore,
+)
 from vlm_photo_editor.schema.ops import (  # noqa: E402
     AcceptMode,
     BoundingBox,
@@ -91,6 +95,8 @@ def _do_generate_plan() -> None:
         _validate_crop_bounds(result.op_graph, container.width, container.height)
         state.set("current_plan", result.plan)
         state.set("current_opgraph", result.op_graph)
+        state.set("initial_plan", result.plan)
+        state.set("change_requests_log", [])
         state.set("ui_phase", "plan_ready")
         state.set("error", None)
         from vlm_photo_editor.agents.edit_flow import _can_auto_approve
@@ -120,6 +126,9 @@ def _do_revise_plan(change: str) -> None:
     framing_val = state.get("framing_mode")
     fi = _build_framing_intent(framing_val) if framing_val else None
     try:
+        log_ = state.get("change_requests_log") or []
+        log_.append(change)
+        state.set("change_requests_log", log_)
         plan = Planner().revise(container, previous_plan, change, prefs, mode, fi)
         result = Compiler().compile(plan, mode)
         _validate_crop_bounds(result.op_graph, container.width, container.height)
@@ -174,8 +183,49 @@ def _do_execute() -> None:
                 "steps": [{"op": op.op_name.value, "params": op.params} for op in op_graph.ops],
             },
         )
+        from vlm_photo_editor.schema.prefs import EditDelta
+
+        ds = DeltaStore()
+        ds.append(
+            EditDelta(
+                intent=state.get("intent") or "",
+                mode=state.get("edit_mode") or "full",
+                change_requests=state.get("change_requests_log") or [],
+                accepted_ops=[op.op_name.value for op in op_graph.ops],
+            )
+        )
+        if len(ds.list()) >= AGGREGATE_AFTER:
+            state.set("run_aggregation", True)
     except Exception as exc:
         state.set("error", str(exc))
+
+
+def _do_critic_check() -> bool:
+    from vlm_photo_editor.agents.critic import Critic
+
+    container = state.get("container")
+    edited = state.get("edited_container")
+    intent = state.get("intent") or ""
+    verdict = Critic().verify(container.pixels, edited.pixels, intent)
+    if verdict.passed:
+        return True
+    state.set("error", f"Critic: {verdict.reason}")
+    state.set("ui_phase", "plan_ready")
+    state.set("edited_container", None)
+    return False
+
+
+def _do_aggregate() -> None:
+    from vlm_photo_editor.agents.aggregator import Aggregator
+
+    ds = DeltaStore()
+    candidates = Aggregator().aggregate(ds.list())
+    if candidates:
+        ps = PreferenceStore()
+        ps.add_learned(candidates)
+        state.set("prefs", ps.load())
+        ds.clear()
+        st.info(f"{len(candidates)} new preference candidate(s) ready for review.")
 
 
 def _do_save() -> None:
@@ -289,6 +339,16 @@ with sidebar_col:
         key="accept_mode_radio",
     )
     state.set("accept_mode", accept_mode)
+
+    st.divider()
+
+    st.subheader("Critic")
+    critic_enabled = st.checkbox(
+        "Enable Critic (auto quality check)",
+        value=bool(state.get("critic_enabled")),
+        key="critic_enabled_checkbox",
+    )
+    state.set("critic_enabled", critic_enabled)
 
     st.divider()
 
@@ -434,6 +494,10 @@ with main_col:
             with st.spinner("Executing plan…"):
                 _do_execute()
             state.set("plan_approved", False)
+            if state.get("ui_phase") == "done" and state.get("critic_enabled"):
+                with st.spinner("Critic verifying…"):
+                    if not _do_critic_check():
+                        st.rerun()
             st.rerun()
 
         # Handle Change Request
@@ -443,11 +507,19 @@ with main_col:
                 _do_revise_plan(change)
             st.rerun()
 
+    # Handle aggregation (runs after execution or on manual trigger from prefs panel)
+    if state.get("run_aggregation"):
+        with st.spinner("Summarizing preferences…"):
+            _do_aggregate()
+        state.set("run_aggregation", False)
+        st.rerun()
+
     elif ui_phase == "idle":
         st.info("Upload an image to begin.")
 
     st.divider()
-    prefs = state.get("prefs") or MOCK_PREFS
+    prefs = state.get("prefs") or PreferenceStore().load()
+    state.set("prefs", prefs)
     prefs_panel.render(prefs)
 
 # ── Save button ───────────────────────────────────────────────────────────────
