@@ -8,6 +8,9 @@ from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 from vlm_photo_editor.schema.recipe import GenAIOp
 
+# Ops whose backends manage the mask internally (cannot use the generic apply→mask flow)
+_INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
+
 from .mask import bbox_to_mask
 from .validator import validate_op_graph
 
@@ -38,6 +41,16 @@ class Executor:
 
             result, genai_op = genai_apply(container, op)
             return result, genai_op
+
+        if op.backend == Backend.OPENCV and op.op_name in _INPAINT_OPS:
+            from .backends.cv_backend import apply_inpaint
+
+            return apply_inpaint(container, op), None
+
+        if op.backend == Backend.PHOTOSHOP and op.op_name in _INPAINT_OPS:
+            from .backends.stubs import apply as stub_apply
+
+            return stub_apply(container, op), None
 
         backend_fn = self._resolve_backend(op)
 

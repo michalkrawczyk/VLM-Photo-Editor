@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from vlm_photo_editor.schema.ops import Op, OpGraph, OpName
+from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 
 _REQUIRED_PARAMS: dict[OpName, list[str]] = {
     OpName.CROP: ["left", "top", "right", "bottom"],
@@ -13,6 +13,9 @@ _REQUIRED_PARAMS: dict[OpName, list[str]] = {
     OpName.BACKGROUND_REPLACE: ["prompt"],
     OpName.FRAME: ["mode"],
 }
+
+# prompt is only meaningful for GENAI; CV/PS backends do pixel-space inpainting
+_INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
 
 _PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "ev": (-10.0, 10.0),
@@ -29,7 +32,9 @@ def validate_op(op: Op, allowed_ops: set[OpName] | None = None) -> None:
     if allowed_ops is not None and op.op_name not in allowed_ops:
         raise ValueError(f"Op {op.op_name!r} not in allowed set")
 
-    required = _REQUIRED_PARAMS.get(op.op_name, [])
+    required = list(_REQUIRED_PARAMS.get(op.op_name, []))
+    if op.op_name in _INPAINT_OPS and op.backend != Backend.GENAI:
+        required = [r for r in required if r != "prompt"]
     for key in required:
         if key not in op.params:
             raise ValueError(f"Op {op.op_name!r} missing required param {key!r}")
