@@ -163,6 +163,76 @@ def test_compiler_unknown_mode_raises_key_error():
         Compiler().compile(_plan(step), "invalid_mode")
 
 
+# ---------------------------------------------------------------------------
+# Compiler — backend assignment
+# ---------------------------------------------------------------------------
+
+
+from vlm_photo_editor.schema.ops import Backend  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "op_name,expected_backend",
+    [
+        ("background_replace", Backend.GENAI),
+        ("region_edit", Backend.GENAI),
+        ("exposure", Backend.PIL),
+        ("crop", Backend.PIL),
+    ],
+)
+def test_compiler_assigns_default_backend(op_name, expected_backend):
+    params: dict = {"prompt": "sky"} if op_name in {"background_replace", "region_edit"} else {}
+    if op_name == "crop":
+        params = {"left": 0, "top": 0, "right": 100, "bottom": 80}
+    elif op_name == "exposure":
+        params = {"ev": 1.0}
+    step = _step([op_name], [params])
+    result = Compiler().compile(_plan(step), "full")
+    assert result.op_graph.ops[0].backend == expected_backend
+
+
+def test_compiler_reads_backend_from_op_params():
+    step = _step(["background_replace"], [{"backend": "opencv"}])
+    result = Compiler().compile(_plan(step), "full")
+    op = result.op_graph.ops[0]
+    assert op.backend == Backend.OPENCV
+    assert "backend" not in op.params  # stripped from params
+
+
+def test_compiler_raises_on_unknown_backend():
+    step = _step(["background_replace"], [{"backend": "turbo", "prompt": "sky"}])
+    with pytest.raises(CompilerError, match="unknown backend"):
+        Compiler().compile(_plan(step), "full")
+
+
+def test_compiler_no_genai_redirects_inpaint_to_opencv():
+    from unittest.mock import patch
+
+    from vlm_photo_editor.config.settings import AppSettings
+
+    step = _step(["background_replace"], [{"prompt": "remove"}])
+    with patch(
+        "vlm_photo_editor.config.settings.get_settings",
+        return_value=AppSettings(no_genai=True),
+    ):
+        result = Compiler().compile(_plan(step), "full")
+    assert result.op_graph.ops[0].backend == Backend.OPENCV
+
+
+def test_compiler_no_genai_does_not_affect_non_inpaint_ops():
+    from unittest.mock import patch
+
+    from vlm_photo_editor.config.settings import AppSettings
+
+    step = _step(["exposure"], [{"ev": 0.5}])
+    with patch(
+        "vlm_photo_editor.config.settings.get_settings",
+        return_value=AppSettings(no_genai=True),
+    ):
+        result = Compiler().compile(_plan(step), "full")
+    assert result.op_graph.ops[0].backend == Backend.PIL
+
+
 def test_compiler_result_preserves_plan():
     plan = _plan(_step(["denoise"], [{}]))
     result = Compiler().compile(plan, "full")

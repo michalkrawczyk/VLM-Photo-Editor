@@ -101,7 +101,7 @@ def test_model_registry_default_roles():
     reg = get_registry()
     assert reg.get("planner") == "claude-sonnet-4-6"
     assert reg.get("critic") == "claude-sonnet-4-6"
-    assert reg.get("preference_aggregator") == "claude-haiku-4-5-20251001"
+    assert reg.get("preference_aggregator") == "LiquidAI/LFM2.5-1.2B-Instruct"
 
 
 def test_model_registry_set_takes_effect():

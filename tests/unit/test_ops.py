@@ -207,3 +207,113 @@ def test_mask_clips_to_image_bounds() -> None:
     assert mask.shape == (10, 10)
     assert mask[9, 9]  # clamped: row 9, col 9 inside clipped region
     assert not mask[0, 0]  # outside
+
+
+# ---------------------------------------------------------------------------
+# Validator — inpaint backend / prompt rules
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "op_name,backend",
+    [
+        (OpName.BACKGROUND_REPLACE, Backend.OPENCV),
+        (OpName.REGION_EDIT, Backend.OPENCV),
+        (OpName.BACKGROUND_REPLACE, Backend.PHOTOSHOP),
+        (OpName.REGION_EDIT, Backend.PHOTOSHOP),
+    ],
+)
+def test_validator_inpaint_no_prompt_required_for_non_genai(op_name, backend) -> None:
+    op = Op(op_name=op_name, params={}, backend=backend, step_id="s1")
+    validate_op(op)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "op_name",
+    [OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT],
+)
+def test_validator_inpaint_genai_requires_prompt(op_name) -> None:
+    op = Op(op_name=op_name, params={}, backend=Backend.GENAI, step_id="s1")
+    with pytest.raises(ValueError, match="missing required param"):
+        validate_op(op)
+
+
+# ---------------------------------------------------------------------------
+# CV inpaint — pixel isolation invariant
+# ---------------------------------------------------------------------------
+
+
+def _container_with_spot(spot_value: int = 0) -> tuple[ImageContainer, BoundingBox]:
+    """White 64x64 image with a black 10x10 spot at (20,20)."""
+    pixels = np.full((64, 64, 3), 255, dtype=np.uint8)
+    pixels[20:30, 20:30] = spot_value
+    container = ImageContainer(pixels=pixels, bit_depth=8, source_path=_FAKE_SRC)
+    bbox = BoundingBox(x=20, y=20, width=10, height=10)
+    return container, bbox
+
+
+def test_cv_inpaint_outside_bbox_unchanged() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_inpaint
+
+    container, bbox = _container_with_spot(spot_value=0)
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={},
+        bbox=bbox,
+        backend=Backend.OPENCV,
+        step_id="s1",
+    )
+    result = apply_inpaint(container, op)
+
+    outside_mask = ~bbox_to_mask(container, bbox)
+    np.testing.assert_array_equal(result.pixels[outside_mask], container.pixels[outside_mask])
+
+
+def test_cv_inpaint_modifies_inside_bbox() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_inpaint
+
+    container, bbox = _container_with_spot(spot_value=0)
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={},
+        bbox=bbox,
+        backend=Backend.OPENCV,
+        step_id="s1",
+    )
+    result = apply_inpaint(container, op)
+
+    inside_mask = bbox_to_mask(container, bbox)
+    # Black spot should be inpainted toward the white surroundings
+    assert result.pixels[inside_mask].mean() > 128
+
+
+def test_cv_inpaint_raises_without_bbox() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_inpaint
+
+    container = _container()
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={},
+        bbox=None,
+        backend=Backend.OPENCV,
+        step_id="s1",
+    )
+    with pytest.raises(ValueError, match="requires a bbox"):
+        apply_inpaint(container, op)
+
+
+def test_cv_inpaint_via_executor_end_to_end() -> None:
+    container, bbox = _container_with_spot(spot_value=0)
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={},
+        bbox=bbox,
+        backend=Backend.OPENCV,
+        step_id="s1",
+    )
+    result = Executor().apply(container, _graph(op))
+
+    outside_mask = ~bbox_to_mask(container, bbox)
+    np.testing.assert_array_equal(
+        result.container.pixels[outside_mask], container.pixels[outside_mask]
+    )
