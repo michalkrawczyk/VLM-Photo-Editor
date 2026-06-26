@@ -197,3 +197,174 @@ Current code scatters all temp files flat in `/tmp`. Required layout:
 - Create `vlm_photo_editor/` on first use; create the per-image subfolder on upload.
 - Sweep the per-image subfolder on new upload or session end (fixes B5).
 - The subfolder name should be deterministic within a session so the recipe and output always land together.
+
+---
+
+## Batch 1 Review — Schema Layer
+
+Review date: 2026-06-26. Files: `schema/__init__.py`, `schema/ops.py`, `schema/plan.py`, `schema/prefs.py`, `schema/recipe.py`, `schema/batch.py`.
+
+---
+
+### Bugs & Correctness
+
+**S-B1: `HumanStep.op_names` / `op_params` parallel lists lack parity validator**
+**File:** [vlm_photo_editor/schema/plan.py:16-17](vlm_photo_editor/schema/plan.py#L16)
+
+`op_names` and `op_params` are independent lists with no `model_validator` enforcing equal length. Mismatched lengths pass schema validation but cause `IndexError` in the compiler.
+
+Fix: add `@model_validator(mode="after")` asserting `len(self.op_names) == len(self.op_params)`.
+
+---
+
+**S-B2: `AcceptMode`, `FramingIntent`, `EditDelta` missing from `schema/__init__.py`**
+**File:** [vlm_photo_editor/schema/__init__.py](vlm_photo_editor/schema/__init__.py)
+
+All three are actively used across 10+ call sites but are absent from both the `from .ops import …` / `from .prefs import …` lines and `__all__`. Every caller imports directly from the submodule (`schema.ops`, `schema.prefs`). If the submodule is reorganised the callsites break without a schema-layer signal.
+
+Fix: add all three to the imports and `__all__` in `__init__.py`.
+
+---
+
+### Security & Data Integrity
+
+**S-D1: `BatchImageRecord.filename` is unvalidated — path traversal risk**
+**File:** [vlm_photo_editor/schema/batch.py:27](vlm_photo_editor/schema/batch.py#L27)
+
+The comment states the field is "used for display and save destination". There is no stripping of `..`, leading `/`, or null bytes. If `filename` is used as `Path(output_dir) / record.filename`, an adversarial upload name can escape the output directory.
+
+Fix: add `@field_validator("filename")` that calls `Path(v).name` (basename only, strips directory components) and rejects names containing null bytes.
+
+---
+
+**S-D2: `GenAIOp.prompt` and `GenAIOp.model` accept empty strings**
+**File:** [vlm_photo_editor/schema/recipe.py:11-14](vlm_photo_editor/schema/recipe.py#L11)
+
+A `GenAIOp` with a blank prompt or model name passes validation but creates a non-reproducible recipe entry, violating Principle 5 (deterministic and reproducible).
+
+Fix: `prompt: str = Field(min_length=1)`, `model: str = Field(min_length=1)`.
+
+---
+
+**S-D3: `Recipe.source_path` is an unvalidated bare string**
+**File:** [vlm_photo_editor/schema/recipe.py:20](vlm_photo_editor/schema/recipe.py#L20)
+
+`source_path` is serialised to the sidecar JSON. An attacker-controlled recipe can embed a path to a critical file; any replay logic that opens `recipe.source_path` directly would follow it.
+
+Fix: validate on construction (`Path(v).resolve()` and check it's within an allowed root), or type as `pathlib.Path` so callers are at least aware they're dealing with a path.
+
+---
+
+### Code Smells / Maintainability
+
+**S-C1: `Op.params: dict[str, Any]` — complete type erasure**
+**File:** [vlm_photo_editor/schema/ops.py:67](vlm_photo_editor/schema/ops.py#L67)
+
+Every `OpName` has a specific parameter contract (`crop` needs `left/top/right/bottom`; `rotate` needs `angle`; etc.), but `params` accepts any dict. No per-op discriminated union exists. Validation is deferred entirely to the executor, making the schema useless as a correctness gate.
+
+This is the single largest schema weakness: a mistyped param key (`"angl"` instead of `"angle"`) passes schema validation, passes compilation, and only fails at executor dispatch.
+
+Fix (incremental): define a `CropParams`, `RotateParams`, etc. `TypedDict` or `BaseModel` per op and add a `model_validator` that parses `params` against the correct model when `op_name` is known.
+
+---
+
+**S-C2: `HumanStep.op_names: list[str]` instead of `list[OpName]`**
+**File:** [vlm_photo_editor/schema/plan.py:16](vlm_photo_editor/schema/plan.py#L16)
+
+Bare `str` bypasses the `OpName` enum. An invalid op name (e.g. `"crpp"`) passes schema validation but fails at compiler time with a confusing error.
+
+Fix: `op_names: list[OpName] = Field(default_factory=list)`.
+
+---
+
+**S-C3: `HumanPlan.mode` and `EditDelta.mode` are unvalidated bare strings**
+**Files:** [vlm_photo_editor/schema/plan.py:23](vlm_photo_editor/schema/plan.py#L23), [vlm_photo_editor/schema/prefs.py:35](vlm_photo_editor/schema/prefs.py#L35)
+
+`HumanPlan.mode: str = "full"` and `EditDelta.mode: str` accept any string. An edit mode enum should exist per Principle 7 (contracts before behavior), since the compiler and aggregator branch on this value.
+
+---
+
+**S-C4: `HumanPlan.chosen_framing_mode: str | None` should be `FramingMode | None`**
+**File:** [vlm_photo_editor/schema/plan.py:24](vlm_photo_editor/schema/plan.py#L24)
+
+`FramingMode` already exists in `ops.py`. Using `str | None` here means an invalid framing mode stored in a `HumanPlan` won't be caught until a downstream consumer tries to match it against the enum.
+
+---
+
+**S-C5: `Preferences.version` uses UUID — wrong semantics**
+**File:** [vlm_photo_editor/schema/prefs.py:24](vlm_photo_editor/schema/prefs.py#L24)
+
+`version: str = Field(default_factory=lambda: str(uuid.uuid4()))` generates a new random UUID on every construction. UUIDs convey no ordering and no schema compatibility, making it impossible to detect stale preference files or apply migrations.
+
+Fix: use an integer counter (default `0`, incremented on each write) or an ISO timestamp; document what "version" means for this type.
+
+---
+
+**S-C6: `BatchImageRecord` uses `Any` for runtime types to avoid circular imports**
+**File:** [vlm_photo_editor/schema/batch.py:25-29](vlm_photo_editor/schema/batch.py#L25)
+
+`container: Any`, `edited_container: Any`, `plan: Any`, `op_graph: Any` erase all type information. The comments state what these fields "should be". The standard pattern for this situation is a `TYPE_CHECKING` guard with string-quoted forward refs; `arbitrary_types_allowed` is only necessary for non-Pydantic types (e.g. numpy arrays).
+
+---
+
+**S-C7: `HumanStep.index` has no non-negative constraint**
+**File:** [vlm_photo_editor/schema/plan.py:13](vlm_photo_editor/schema/plan.py#L13)
+
+`index: int` accepts `-1`, which would pass validation but break any step ordering logic.
+
+Fix: `index: int = Field(ge=0)`.
+
+---
+
+### Performance
+
+No significant issues at the schema layer (pure data classes, no hot paths).
+
+---
+
+### Over-engineered / Unjustified Functionality
+
+**S-O1: `Recipe.branch` field has no documented purpose**
+**File:** [vlm_photo_editor/schema/recipe.py:23](vlm_photo_editor/schema/recipe.py#L23)
+
+`branch: str = "main"` is hardcoded to `"main"` everywhere and never populated with actual git branch info. If intended for reproducibility, it should be populated at recipe-creation time; if not, it adds noise to every saved sidecar.
+
+Fix: remove the field or populate it from `subprocess.check_output(["git", "branch", "--show-current"])` at save time (guarded for non-git environments).
+
+---
+
+## Summary
+
+All issues sorted by priority.
+
+| # | Severity | File | Issue |
+|---|----------|------|-------|
+| B2 | High | main.py:65 | Revision error leaves `change_request` set → infinite retry loop |
+| D1 | High | edit_flow.py:58 | `_execute` node is a stub; edits never apply |
+| D4 | High | composite.py:130 | Subject-pixel invariant uses `assert` (disabled with `-O`) |
+| D5 | High | generator.py:110 | Instruct-model branch identical to inpaint branch (copy-paste) |
+| S-B1 | High | plan.py:16 | `op_names`/`op_params` parallel lists lack parity validator |
+| S-D1 | High | batch.py:27 | `filename` unvalidated — path traversal risk |
+| B5 | Medium | main.py:37 | Uploaded image temp file never deleted |
+| B7 | Medium | main.py:128 | Saved file and recipe written to `/tmp` |
+| D6 | Medium | edit_flow.py:107 | Module-level `edit_graph` singleton breaks multi-worker deploy |
+| D7 | Medium | quality.py:47 | `seam_metric` threshold 10× `AppSettings` default; setting never read |
+| D13 | Medium | — | FRAME op planner–executor coordination undefined |
+| D14 | Medium | — | Composition mode sends only aspect ratio; no focus instruction |
+| D15 | Medium | — | Save path UX undefined; no native dialog or structured tmp layout |
+| T5 | Medium | test_imageio.py:83 | `test_raw_16bit` permanently skipped; RAW codepath untested |
+| S-B2 | Medium | schema/__init__.py | `AcceptMode`, `FramingIntent`, `EditDelta` missing from `__all__` |
+| S-C1 | Medium | ops.py:67 | `Op.params: dict[str, Any]` — type erasure, no per-op validation |
+| S-D2 | Medium | recipe.py:11 | `GenAIOp.prompt`/`model` accept empty strings |
+| S-D3 | Medium | recipe.py:20 | `source_path` unvalidated bare string — replay path risk |
+| B8 | Low | main.py:135 | `Recipe.created_at` always empty |
+| S-C2 | Low | plan.py:16 | `op_names: list[str]` instead of `list[OpName]` |
+| S-C3 | Low | plan.py:23 | `HumanPlan.mode` and `EditDelta.mode` unvalidated bare strings |
+| S-C4 | Low | plan.py:24 | `chosen_framing_mode: str \| None` instead of `FramingMode \| None` |
+| S-C5 | Low | prefs.py:24 | `Preferences.version` uses UUID — no ordering or migration semantics |
+| S-C6 | Low | batch.py:25 | `BatchImageRecord` runtime types erased to `Any` |
+| S-C7 | Low | plan.py:13 | `HumanStep.index` accepts negative values |
+| S-O1 | Low | recipe.py:23 | `Recipe.branch` hardcoded `"main"`, never populated from git |
+| T2 | Low | — | No test for revision error path (uncovers B2) |
+| T3 | Low | — | No test that `AcceptMode.AUTO` skips approval (uncovers B6) |
+| T4 | Low | — | No regression test for crop out-of-bounds validation |
