@@ -1,3 +1,4 @@
+from .batch import BatchImageRecord, ImageStatus
 from .ops import Backend, BoundingBox, FramingMode, Op, OpGraph, OpName, RiskTier
 from .plan import CompilerResult, HumanPlan, HumanStep
 from .prefs import ExplicitRule, LearnedRule, Preferences
@@ -19,4 +20,6 @@ __all__ = [
     "Preferences",
     "ExplicitRule",
     "LearnedRule",
+    "BatchImageRecord",
+    "ImageStatus",
 ]
