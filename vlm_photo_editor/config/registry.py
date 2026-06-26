@@ -9,7 +9,10 @@ class ModelEntry:
     model_id: str
     provider: Literal["anthropic", "replicate", "local", "openai"] = "anthropic"
     hf_repo: str | None = None
-    loader: Literal["transformers", "ollama"] | None = None
+    loader: Literal["transformers", "ollama", "vllm", "llamacpp"] | None = None
+    vllm_base_url: str = "http://localhost:8000/v1"
+    gguf_path: str | None = None
+    max_images_per_call: int = 1
 
     @property
     def is_local(self) -> bool:
