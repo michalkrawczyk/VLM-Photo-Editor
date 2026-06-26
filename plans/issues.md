@@ -368,3 +368,199 @@ All issues sorted by priority.
 | T2 | Low | — | No test for revision error path (uncovers B2) |
 | T3 | Low | — | No test that `AcceptMode.AUTO` skips approval (uncovers B6) |
 | T4 | Low | — | No regression test for crop out-of-bounds validation |
+
+---
+
+## Batch 2 Review — Security & Configuration
+
+Review date: 2026-06-26. Files: `secrets/store.py`, `secrets/redaction.py`, `config/policy.py`, `config/registry.py`, `config/settings.py`, `models/registry.py`.
+
+---
+
+### Bugs & Correctness
+
+**SEC-B1: Anthropic API keys are never redacted**
+**File:** [vlm_photo_editor/secrets/redaction.py:6](vlm_photo_editor/secrets/redaction.py#L6)
+
+```python
+_KEY_PATTERN = re.compile(r"(?:sk-|r8_)[A-Za-z0-9]{20,}")
+```
+
+Anthropic keys have the format `sk-ant-api03-[alphanumeric-and-dashes]`. After matching the `sk-` prefix, the next chars are `ant-` — the hyphen is not in `[A-Za-z0-9]`, so the match stops at `ant` (3 chars < 20) and the whole match fails. Replicate (`r8_`) and OpenAI plain (`sk-[alphanumeric]`) keys are redacted; Anthropic keys are not. Since Anthropic is the primary provider, this is the most critical gap.
+
+Fix: broaden the pattern to cover hyphens in the key body:
+```python
+_KEY_PATTERN = re.compile(r"(?:sk-ant-|sk-|r8_)[A-Za-z0-9\-]{20,}")
+```
+Or use a generic high-entropy token pattern as a secondary pass.
+
+---
+
+**SEC-B2: `record.args = ()` breaks log formatting when `msg` has `%` placeholders**
+**File:** [vlm_photo_editor/secrets/redaction.py:11-12](vlm_photo_editor/secrets/redaction.py#L11)
+
+```python
+record.msg = _KEY_PATTERN.sub("[REDACTED]", str(record.msg))
+record.args = ()
+```
+
+If a logger is called with `logger.info("key=%s value=%s", key, val)`, `record.msg` is `"key=%s value=%s"` and `record.args` is `(key, val)`. Clearing `args` to `()` before the `Formatter` calls `msg % args` causes a `TypeError` (too few args). The `[REDACTED]` substitution also runs on the unformatted template, not the rendered string.
+
+Fix: format first, then redact:
+```python
+record.msg = _KEY_PATTERN.sub("[REDACTED]", record.getMessage())
+record.args = ()
+```
+
+---
+
+**SEC-B3: `PolicyMode` and `_OP_SETS` are completely disconnected**
+**File:** [vlm_photo_editor/config/policy.py](vlm_photo_editor/config/policy.py)
+
+`PolicyMode` defines values `"auto"`, `"ps_strict"`, `"no_ps"`. `_OP_SETS` has keys `"full"`, `"background"`, `"frame"`. `allowed_ops_for_mode(PolicyMode.AUTO)` raises `KeyError("Unknown edit mode: 'auto'")`. There is no function that maps a `PolicyMode` to an allowed op set. Principle 8 (Planner ↔ Executor parity) has no enforcement mechanism.
+
+Fix: add entries to `_OP_SETS` for each `PolicyMode` value — e.g. `"auto": set(OpName)`, `"ps_strict": {ops that have a PS backend}`, `"no_ps": {ops that don't require PS}` — and change the parameter type to `PolicyMode`.
+
+---
+
+**SEC-B4: `build_client` ignores `entry.provider`; routes by model name string**
+**File:** [vlm_photo_editor/models/registry.py:59-79](vlm_photo_editor/models/registry.py#L59)
+
+```python
+if "claude" in model_id or "anthropic" in model_id:
+    ...
+if "gpt" in model_id:
+    ...
+```
+
+`entry.provider` is defined on `ModelEntry` but never consulted for non-local providers. A `ModelEntry("future-anthropic-model-v2", provider="anthropic")` where "claude" doesn't appear in the ID falls through to `raise ValueError`. Conversely, any model with "claude" in a custom name routes to Anthropic regardless of the configured provider.
+
+Fix: branch on `entry.provider` first, fall back to string heuristic only when provider is unset.
+
+---
+
+**SEC-B5: `ModelRegistry.set()` silently drops `vllm_base_url`, `gguf_path`, `max_images_per_call`**
+**File:** [vlm_photo_editor/config/registry.py:78-85](vlm_photo_editor/config/registry.py#L78)
+
+```python
+self._entries[role] = ModelEntry(
+    model, existing.provider, existing.hf_repo, existing.loader
+)
+```
+
+`vllm_base_url`, `gguf_path`, and `max_images_per_call` are silently reset to defaults. A vLLM entry with a non-default `base_url` loses it on the first `set()` call.
+
+Fix: use `dataclasses.replace(existing, model_id=model)`.
+
+---
+
+### Security & Data-Integrity Risks
+
+**SEC-D1: `DebugSettings.vlm_prompt_debug = True` by default**
+**File:** [vlm_photo_editor/config/settings.py:32](vlm_photo_editor/config/settings.py#L32)
+
+VLM prompts may contain file paths, personal photo descriptions, and other user-supplied context. With debug mode enabled by default, this content is logged in every deployment. A user who never touches settings ships with prompt logging active.
+
+Fix: default to `False`; enable explicitly in dev.
+
+---
+
+**SEC-D2: Module-level singletons shared across Streamlit sessions**
+**Files:** [vlm_photo_editor/config/registry.py:95](vlm_photo_editor/config/registry.py#L95), [vlm_photo_editor/config/settings.py:22](vlm_photo_editor/config/settings.py#L22), [vlm_photo_editor/config/settings.py:34](vlm_photo_editor/config/settings.py#L34)
+
+`_registry`, `_settings`, and `_debug` are module-level objects. In a Streamlit multi-session process (one process, multiple threads), a call to `registry.set("planner", "new-model")` in one session mutates the object for all sessions. A user changing their preferred model in one browser tab affects all concurrent users.
+
+Fix: store these in `st.session_state` rather than at module level, or make `get_registry()` / `get_settings()` session-aware.
+
+---
+
+**SEC-D3: API key passed as keyword arg — traceback leakage risk**
+**File:** [vlm_photo_editor/models/registry.py:67](vlm_photo_editor/models/registry.py#L67)
+
+```python
+return ChatAnthropic(model=model_id, api_key=api_key)
+```
+
+If `ChatAnthropic.__init__` raises (e.g., network error during validation), Python may include kwargs in the traceback or exception repr, exposing the raw key. Structlog's redaction filter runs on log output, not on exception repr.
+
+Fix: wrap the constructor call in a try/except, log only the sanitized error message, and re-raise without the original exception chain (`raise ... from None`) or with a sanitized message.
+
+---
+
+### Code Smells / Maintainability
+
+**SEC-C1: `logger` defined but never used in `store.py`**
+**File:** [vlm_photo_editor/secrets/store.py:6](vlm_photo_editor/secrets/store.py#L6)
+
+Dead import and name. Remove to avoid confusion about whether secret operations are being logged.
+
+---
+
+**SEC-C2: `mask()` reveals 80 % of a 5-character key**
+**File:** [vlm_photo_editor/secrets/store.py:57-60](vlm_photo_editor/secrets/store.py#L57)
+
+`mask("ABCDE")` → `"*BCDE"`. The guard `if len(key) <= 4` does not protect 5-char keys. In practice, real API keys are longer, but if the function is ever called on a short token it gives a false sense of masking.
+
+Fix: `if len(key) <= 8: return "****"` (or similar minimum hiding threshold).
+
+---
+
+**SEC-C3: `_entries` accessed as public attribute from outside**
+**File:** [vlm_photo_editor/models/registry.py:95](vlm_photo_editor/models/registry.py#L95)
+
+```python
+for entry in registry._entries.values():
+```
+
+The underscore-prefix convention signals private. The `ModelRegistry` class should expose an `entries()` method returning an appropriate view.
+
+---
+
+**SEC-C4: Redaction filter not guaranteed to run before first log call**
+
+`install_redaction_filter()` must be called at application startup. Nothing enforces that it is called before any log output. If a module logs at import time (before `main.py` starts), those records skip redaction.
+
+Fix: call `install_redaction_filter()` at the top of `secrets/redaction.py` itself (module-level side effect), or document clearly that it must be the very first call in `app/main.py`.
+
+---
+
+### Performance
+
+**SEC-P1: `_vllm_reachable()` makes HTTP requests on every call, no caching**
+**File:** [vlm_photo_editor/models/registry.py:90-110](vlm_photo_editor/models/registry.py#L90)
+
+`available_loaders()` calls `_vllm_reachable()`, which does two HTTP probes with a 1-second timeout each. If `available_loaders()` is called on every Streamlit UI refresh (e.g., in `settings.py` to populate a dropdown), this adds up to 2 s of blocking I/O per rerender.
+
+Fix: cache the result with `functools.lru_cache(maxsize=1)` and a TTL, or run the probe once at startup.
+
+---
+
+### Over-engineered / Unjustified Functionality
+
+**SEC-O1: `install_loader_deps()` runs pip at runtime**
+**File:** [vlm_photo_editor/models/registry.py:129-137](vlm_photo_editor/models/registry.py#L129)
+
+Installing packages from within a running app is fragile (pip may upgrade transitive deps, break the running process, require write access to site-packages). This is a setup-time concern, not a runtime one.
+
+Fix: remove `install_loader_deps()` from this module; provide a `scripts/install_loader.sh` or document the pip command in README. If a UI button must trigger it, limit its scope to a clearly labeled "Developer" section and warn the user about the restart requirement.
+
+---
+
+### Summary — Batch 2 additions
+
+| # | Severity | File | Issue |
+|---|----------|------|-------|
+| SEC-B1 | Critical | redaction.py:6 | Anthropic API keys (`sk-ant-*`) not redacted — pattern misses hyphens in key body |
+| SEC-B3 | High | policy.py | `PolicyMode` and `_OP_SETS` disconnected — `allowed_ops_for_mode("auto")` raises `KeyError` |
+| SEC-B4 | High | models/registry.py:59 | `build_client` ignores `entry.provider`; routes by model name string match |
+| SEC-D1 | High | settings.py:32 | `vlm_prompt_debug = True` by default — VLM prompts logged in production |
+| SEC-B2 | Medium | redaction.py:11 | `record.args = ()` before format — `TypeError` on `%`-style log calls |
+| SEC-B5 | Medium | config/registry.py:78 | `ModelRegistry.set()` silently drops `vllm_base_url`, `gguf_path`, `max_images_per_call` |
+| SEC-D2 | Medium | registry.py:95, settings.py:22 | Module-level singletons mutated across Streamlit sessions |
+| SEC-D3 | Medium | models/registry.py:67 | API key in constructor kwarg — exposed in exception repr/traceback |
+| SEC-C4 | Medium | redaction.py | `install_redaction_filter()` not auto-called; logs before startup skip redaction |
+| SEC-P1 | Low | models/registry.py:90 | `_vllm_reachable()` makes HTTP probes on every call, no cache |
+| SEC-C1 | Low | secrets/store.py:6 | `logger` defined but never used |
+| SEC-C2 | Low | secrets/store.py:57 | `mask()` reveals 80% of 5-char key |
+| SEC-C3 | Low | models/registry.py:95 | `_entries` accessed as public attribute from outside |
+| SEC-O1 | Low | models/registry.py:129 | `install_loader_deps()` runs pip at runtime — setup concern, not runtime |
