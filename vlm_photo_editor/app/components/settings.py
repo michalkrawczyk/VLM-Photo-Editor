@@ -13,6 +13,13 @@ import socket
 
 import streamlit as st
 
+_LOADER_DESCRIPTIONS: dict[str, str] = {
+    "ollama": "Local Ollama server (CPU/GPU, quantized models)",
+    "transformers": "HuggingFace Transformers pipeline (GPU recommended)",
+    "llamacpp": "llama.cpp GGUF files inline (CPU-friendly, no server needed)",
+    "vllm": "vLLM server — OpenAI-compatible endpoint (GPU, highest throughput)",
+}
+
 from vlm_photo_editor.app import state
 from vlm_photo_editor.app.stubs import AVAILABLE_MODELS, LOCAL_MODEL_IDS, MODEL_ROLES, PROVIDERS
 from vlm_photo_editor.config.registry import AGGREGATOR_PRESETS, CRITIC_PRESETS, get_registry
@@ -144,3 +151,54 @@ def render() -> None:
             st.warning(
                 "Photoshop not connected. " "Install the PS plugin or switch to 'auto' mode."
             )
+
+    with st.expander("Local Model Backends", expanded=False):
+
+        @st.cache_data(ttl=60)
+        def _loader_status() -> set[str]:
+            from vlm_photo_editor.models.registry import available_loaders
+
+            return set(available_loaders())
+
+        ready = _loader_status()
+        for loader, desc in _LOADER_DESCRIPTIONS.items():
+            col1, col2, col3 = st.columns([2, 4, 1])
+            with col1:
+                st.write(f"**{loader}**")
+            with col2:
+                st.caption(desc)
+            with col3:
+                if loader == "vllm":
+                    badge_text = "ready" if loader in ready else "server unreachable"
+                else:
+                    badge_text = "ready" if loader in ready else "not installed"
+                badge_color = "green" if badge_text == "ready" else "red"
+                st.markdown(
+                    f"<span style='color:{badge_color};font-weight:bold'>{badge_text}</span>",
+                    unsafe_allow_html=True,
+                )
+
+            if loader == "vllm":
+                vllm_url = st.text_input(
+                    "vLLM server URL",
+                    value="http://localhost:8000/v1",
+                    key="vllm_base_url",
+                )
+                if st.button("Ping", key="vllm_ping"):
+                    from vlm_photo_editor.models.registry import _vllm_reachable
+
+                    if _vllm_reachable():
+                        st.success("Server reachable.")
+                    else:
+                        st.error(f"Cannot reach {vllm_url}")
+            elif badge_text == "not installed":
+                if st.button("Install", key=f"install_{loader}"):
+                    with st.spinner(f"Installing {loader} deps…"):
+                        from vlm_photo_editor.models.registry import install_loader_deps
+
+                        ok = install_loader_deps(loader)
+                    _loader_status.clear()
+                    if ok:
+                        st.success("Installed. Reload the page to refresh status.")
+                    else:
+                        st.error("Install failed — check the terminal for details.")

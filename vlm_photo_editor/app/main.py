@@ -11,6 +11,7 @@ from vlm_photo_editor.secrets.redaction import install_redaction_filter
 install_redaction_filter()
 
 from vlm_photo_editor.app import state  # noqa: E402
+from vlm_photo_editor.app.components import batch_review  # noqa: E402
 from vlm_photo_editor.app.components import canvas  # noqa: E402
 from vlm_photo_editor.app.components import plan_view  # noqa: E402
 from vlm_photo_editor.app.components import prefs_panel  # noqa: E402
@@ -80,6 +81,8 @@ def _build_framing_intent(framing_val: str) -> FramingIntent:
 
 def _do_generate_plan() -> None:
     from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.pipeline.job_queue import run_job
+    from vlm_photo_editor.pipeline.plan_cache import get_plan_cache
     from vlm_photo_editor.planner.compiler import Compiler, CompilerError
 
     container = state.get("container")
@@ -89,10 +92,30 @@ def _do_generate_plan() -> None:
 
     framing_val = state.get("framing_mode")
     fi = _build_framing_intent(framing_val) if framing_val else None
+
+    cache = get_plan_cache()
+    cache_key = cache.key(container, mode, prefs)
+    cached_plan = cache.get(cache_key)
+
     try:
-        plan = Planner().plan(container, intent, prefs, mode, fi)
+        _progress = None
+        if cached_plan is not None:
+            plan = cached_plan
+            state.log_intent("plan_cache_hit", {"key": cache_key})
+        else:
+            _progress = st.progress(0.0, text="Generating plan…")
+            planner = Planner()
+            plan = run_job(planner.plan, container, intent, prefs, mode, fi)
+            _progress.progress(0.5, text="Compiling…")
+
         result = Compiler().compile(plan, mode)
         _validate_crop_bounds(result.op_graph, container.width, container.height)
+
+        if cached_plan is None:
+            cache.set(cache_key, result.plan)
+        if _progress is not None:
+            _progress.progress(1.0, text="Done.")
+
         state.set("current_plan", result.plan)
         state.set("current_opgraph", result.op_graph)
         state.set("initial_plan", result.plan)
@@ -146,6 +169,7 @@ def _do_revise_plan(change: str) -> None:
 
 def _do_execute() -> None:
     from vlm_photo_editor.ops.executor import Executor
+    from vlm_photo_editor.pipeline.job_queue import run_job
     from vlm_photo_editor.schema.ops import OpGraph
 
     container = state.get("container")
@@ -172,7 +196,14 @@ def _do_execute() -> None:
         op_graph = op_graph.model_copy(update={"ops": patched_ops})
 
     try:
-        result = Executor().apply(container, op_graph)
+        _exec_progress = st.progress(0.0, text="Applying edits…")
+        executor = Executor()
+        result = run_job(
+            executor.apply,
+            container,
+            op_graph,
+            on_progress=lambda p: _exec_progress.progress(p, text="Applying edits…"),
+        )
         state.set("edited_container", result.container)
         state.set("ui_phase", "done")
         state.set("error", None)
@@ -228,6 +259,120 @@ def _do_aggregate() -> None:
         st.info(f"{len(candidates)} new preference candidate(s) ready for review.")
 
 
+def _render_batch_panel(files: list) -> None:
+    import anyio
+
+    from vlm_photo_editor.pipeline.batch import run_batch
+    from vlm_photo_editor.schema.batch import BatchImageRecord, ImageStatus
+
+    st.subheader(f"Batch Processing — {len(files)} images")
+
+    intent = st.text_area(
+        "What would you like to do with these images?",
+        height=80,
+        key="batch_intent_input",
+    )
+    state.set("intent", intent)
+
+    _edit_mode = state.get("edit_mode") or "full"
+    col_full, col_bg, col_frame = st.columns(3)
+    with col_full:
+        if st.button(
+            "Full Edit",
+            use_container_width=True,
+            type="primary" if _edit_mode == "full" else "secondary",
+            key="batch_mode_btn_full",
+        ):
+            state.set("edit_mode", "full")
+            st.rerun()
+    with col_bg:
+        if st.button(
+            "Background",
+            use_container_width=True,
+            type="primary" if _edit_mode == "background" else "secondary",
+            key="batch_mode_btn_bg",
+        ):
+            state.set("edit_mode", "background")
+            st.rerun()
+    with col_frame:
+        if st.button(
+            "Reframe Only",
+            use_container_width=True,
+            type="primary" if _edit_mode == "frame" else "secondary",
+            key="batch_mode_btn_frame",
+        ):
+            state.set("edit_mode", "frame")
+            st.rerun()
+
+    records: list[BatchImageRecord] | None = state.get("batch_records")
+
+    # Handle retry for a single image
+    retry_id = state.get("batch_retry_id")
+    if retry_id and records:
+        record = next((r for r in records if r.image_id == retry_id), None)
+        if record:
+            state.set("batch_retry_id", None)
+            with st.spinner(f"Re-planning {record.filename}…"):
+                anyio.run(
+                    run_batch,
+                    [record],
+                    state.get("intent") or "",
+                    state.get("prefs"),
+                    state.get("edit_mode") or "full",
+                    None,
+                    AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value),
+                    3,
+                    None,
+                )
+            st.rerun()
+
+    if st.button(
+        "Start Batch Processing",
+        key="start_batch_btn",
+        disabled=not intent,
+        type="primary",
+    ):
+        with st.spinner("Loading images…"):
+            new_records: list[BatchImageRecord] = []
+            for f in files:
+                container = _load_uploaded(f)
+                new_records.append(BatchImageRecord(filename=f.name, container=container))
+        state.set("batch_records", new_records)
+        records = new_records
+
+        completed: list[int] = [0]
+        overall_bar = st.progress(0.0, text="Planning images…")
+
+        def _on_image_done(image_id: str) -> None:
+            completed[0] += 1
+            overall_bar.progress(
+                completed[0] / len(records),
+                text=f"Planned {completed[0]}/{len(records)} images…",
+            )
+
+        accept_mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)
+        framing_val = state.get("framing_mode")
+        fi = _build_framing_intent(framing_val) if framing_val else None
+
+        anyio.run(
+            run_batch,
+            records,
+            intent,
+            state.get("prefs"),
+            state.get("edit_mode") or "full",
+            fi,
+            accept_mode,
+            3,
+            _on_image_done,
+        )
+        overall_bar.progress(1.0, text="Done.")
+        state.set("batch_records", records)
+        st.rerun()
+
+    if records:
+        batch_review.render(records)
+
+
 def _do_save() -> None:
     from vlm_photo_editor.imageio.savers import save as _save
     from vlm_photo_editor.recipe.store import RecipeStore
@@ -281,6 +426,9 @@ if isinstance(_widget_val, list):
         uploaded_file = None
 else:
     uploaded_file = _widget_val or state.get("uploaded_file")
+
+_is_batch = isinstance(_widget_val, list) and len(_widget_val) > 1
+state.set("batch_mode", _is_batch)
 if uploaded_file is not None:
     state.set("uploaded_file", uploaded_file)
 
@@ -373,154 +521,161 @@ with sidebar_col:
     settings_component.render()
 
 with main_col:
-    # Error banner
-    if state.get("error"):
-        st.error(state.get("error"))
+    if state.get("batch_mode") and isinstance(_widget_val, list) and len(_widget_val) > 1:
+        _render_batch_panel(_widget_val)
+    else:
+        # ── Single-image flow ──────────────────────────────────────────────────
 
-    ui_phase = state.get("ui_phase") or "idle"
+        # Error banner
+        if state.get("error"):
+            st.error(state.get("error"))
 
-    # Before/after preview — shown first so intent area appears beneath the image
-    container = state.get("container")
-    edited = state.get("edited_container")
-    preview.render(
-        before=container.pixels if container else None,
-        after=edited.pixels if edited else None,
-    )
+        ui_phase = state.get("ui_phase") or "idle"
 
-    # Intent input + plan generation (below preview)
-    if ui_phase in ("has_image", "plan_ready", "done"):
-        st.divider()
-
-        # Quick-mode prefill buttons (U2): set edit_mode and populate intent from template.
-        from vlm_photo_editor import templates as prompt_templates
-
-        _edit_mode = state.get("edit_mode") or "full"
-        col_full, col_bg, col_frame = st.columns(3)
-        with col_full:
-            if st.button(
-                "Full Edit",
-                use_container_width=True,
-                type="primary" if _edit_mode == "full" else "secondary",
-                key="mode_btn_full",
-            ):
-                st.session_state["intent_input"] = prompt_templates.load("full_edit")
-                state.set("edit_mode", "full")
-                state.set("_last_auto_gen_key", "")
-                state.log_intent("mode_change", {"mode": "full"})
-                st.rerun()
-        with col_bg:
-            if st.button(
-                "Background",
-                use_container_width=True,
-                type="primary" if _edit_mode == "background" else "secondary",
-                key="mode_btn_bg",
-            ):
-                st.session_state["intent_input"] = prompt_templates.load("background")
-                state.set("edit_mode", "background")
-                state.set("_last_auto_gen_key", "")
-                state.log_intent("mode_change", {"mode": "background"})
-                st.rerun()
-        with col_frame:
-            if st.button(
-                "Reframe Only",
-                use_container_width=True,
-                type="primary" if _edit_mode == "frame" else "secondary",
-                key="mode_btn_frame",
-            ):
-                st.session_state["intent_input"] = prompt_templates.load("frame")
-                state.set("edit_mode", "frame")
-                state.set("_last_auto_gen_key", "")
-                state.log_intent("mode_change", {"mode": "frame"})
-                st.rerun()
-
-        _edit_mode = state.get("edit_mode") or "full"
-
-        # Framing mode selector — always visible
-        _framing_mode = state.get("framing_mode") or FramingMode.RULE_OF_THIRDS.value
-        _framing_opts = [m.value for m in FramingMode]
-        _framing_idx = _framing_opts.index(_framing_mode) if _framing_mode in _framing_opts else 0
-        _framing_mode = st.selectbox(
-            "Composition:",
-            options=_framing_opts,
-            index=_framing_idx,
-            key="framing_mode_select",
+        # Before/after preview — shown first so intent area appears beneath the image
+        container = state.get("container")
+        edited = state.get("edited_container")
+        preview.render(
+            before=container.pixels if container else None,
+            after=edited.pixels if edited else None,
         )
-        state.set("framing_mode", _framing_mode)
 
-        if _framing_mode == FramingMode.RECOMMEND_BEST.value:
-            st.text_input("Framing guidance (optional)", key="framing_hint")
+        # Intent input + plan generation (below preview)
+        if ui_phase in ("has_image", "plan_ready", "done"):
+            st.divider()
 
-        # Auto-generate when Reframe Only + non-Custom composition (U3).
-        # Any change in framing_mode triggers a new plan without a button press.
-        _is_frame_auto = _edit_mode == "frame" and _framing_mode != FramingMode.CUSTOM.value
-        _auto_gen_key = f"frame:{_framing_mode}" if _is_frame_auto else ""
-        if _is_frame_auto and state.get("_last_auto_gen_key") != _auto_gen_key:
-            state.set("_last_auto_gen_key", _auto_gen_key)
-            with st.spinner(f"Generating plan for {_framing_mode}…"):
-                _do_generate_plan()
-            st.rerun()
+            # Quick-mode prefill buttons (U2): set edit_mode and populate intent from template.
+            from vlm_photo_editor import templates as prompt_templates
 
-        # Intent text area + Generate button — hidden when frame auto-generates (U3)
-        if not _is_frame_auto:
-            intent = st.text_area(
-                "What would you like to do with this image?",
-                height=120,
-                key="intent_input",
+            _edit_mode = state.get("edit_mode") or "full"
+            col_full, col_bg, col_frame = st.columns(3)
+            with col_full:
+                if st.button(
+                    "Full Edit",
+                    use_container_width=True,
+                    type="primary" if _edit_mode == "full" else "secondary",
+                    key="mode_btn_full",
+                ):
+                    st.session_state["intent_input"] = prompt_templates.load("full_edit")
+                    state.set("edit_mode", "full")
+                    state.set("_last_auto_gen_key", "")
+                    state.log_intent("mode_change", {"mode": "full"})
+                    st.rerun()
+            with col_bg:
+                if st.button(
+                    "Background",
+                    use_container_width=True,
+                    type="primary" if _edit_mode == "background" else "secondary",
+                    key="mode_btn_bg",
+                ):
+                    st.session_state["intent_input"] = prompt_templates.load("background")
+                    state.set("edit_mode", "background")
+                    state.set("_last_auto_gen_key", "")
+                    state.log_intent("mode_change", {"mode": "background"})
+                    st.rerun()
+            with col_frame:
+                if st.button(
+                    "Reframe Only",
+                    use_container_width=True,
+                    type="primary" if _edit_mode == "frame" else "secondary",
+                    key="mode_btn_frame",
+                ):
+                    st.session_state["intent_input"] = prompt_templates.load("frame")
+                    state.set("edit_mode", "frame")
+                    state.set("_last_auto_gen_key", "")
+                    state.log_intent("mode_change", {"mode": "frame"})
+                    st.rerun()
+
+            _edit_mode = state.get("edit_mode") or "full"
+
+            # Framing mode selector — always visible
+            _framing_mode = state.get("framing_mode") or FramingMode.RULE_OF_THIRDS.value
+            _framing_opts = [m.value for m in FramingMode]
+            _framing_idx = (
+                _framing_opts.index(_framing_mode) if _framing_mode in _framing_opts else 0
             )
-            state.set("intent", intent)
+            _framing_mode = st.selectbox(
+                "Composition:",
+                options=_framing_opts,
+                index=_framing_idx,
+                key="framing_mode_select",
+            )
+            state.set("framing_mode", _framing_mode)
 
-            generate_label = "Generate Plan" if ui_phase == "has_image" else "Regenerate Plan"
-            if st.button(generate_label, key="generate_plan_btn", disabled=not intent):
-                with st.spinner("Generating plan…"):
+            if _framing_mode == FramingMode.RECOMMEND_BEST.value:
+                st.text_input("Framing guidance (optional)", key="framing_hint")
+
+            # Auto-generate when Reframe Only + non-Custom composition (U3).
+            # Any change in framing_mode triggers a new plan without a button press.
+            _is_frame_auto = _edit_mode == "frame" and _framing_mode != FramingMode.CUSTOM.value
+            _auto_gen_key = f"frame:{_framing_mode}" if _is_frame_auto else ""
+            if _is_frame_auto and state.get("_last_auto_gen_key") != _auto_gen_key:
+                state.set("_last_auto_gen_key", _auto_gen_key)
+                with st.spinner(f"Generating plan for {_framing_mode}…"):
                     _do_generate_plan()
                 st.rerun()
 
-    st.divider()
+            # Intent text area + Generate button — hidden when frame auto-generates (U3)
+            if not _is_frame_auto:
+                intent = st.text_area(
+                    "What would you like to do with this image?",
+                    height=120,
+                    key="intent_input",
+                )
+                state.set("intent", intent)
 
-    # BBox canvas — show when image is loaded
-    if ui_phase in ("has_image", "plan_ready", "done"):
-        canvas.render(background_pixels=container.pixels if container else None)
+                generate_label = "Generate Plan" if ui_phase == "has_image" else "Regenerate Plan"
+                if st.button(generate_label, key="generate_plan_btn", disabled=not intent):
+                    with st.spinner("Generating plan…"):
+                        _do_generate_plan()
+                    st.rerun()
+
         st.divider()
 
-    # Plan view + accept/change flow
-    current_plan = state.get("current_plan")
-    current_opgraph = state.get("current_opgraph")
+        # BBox canvas — show when image is loaded
+        if ui_phase in ("has_image", "plan_ready", "done"):
+            canvas.render(background_pixels=container.pixels if container else None)
+            st.divider()
 
-    if ui_phase in ("plan_ready", "done") and current_plan is not None:
-        plan_view.render(current_plan, current_opgraph, executed=(ui_phase == "done"))
+        # Plan view + accept/change flow
+        current_plan = state.get("current_plan")
+        current_opgraph = state.get("current_opgraph")
 
-        # Handle Accept Plan
-        if state.get("plan_approved") and ui_phase != "done":
-            with st.spinner("Executing plan…"):
-                _do_execute()
-            state.set("plan_approved", False)
-            if state.get("ui_phase") == "done" and state.get("critic_enabled"):
-                with st.spinner("Critic verifying…"):
-                    if not _do_critic_check():
-                        st.rerun()
+        if ui_phase in ("plan_ready", "done") and current_plan is not None:
+            plan_view.render(current_plan, current_opgraph, executed=(ui_phase == "done"))
+
+            # Handle Accept Plan
+            if state.get("plan_approved") and ui_phase != "done":
+                with st.spinner("Executing plan…"):
+                    _do_execute()
+                state.set("plan_approved", False)
+                if state.get("ui_phase") == "done" and state.get("critic_enabled"):
+                    with st.spinner("Critic verifying…"):
+                        if not _do_critic_check():
+                            st.rerun()
+                st.rerun()
+
+            # Handle Change Request
+            change = state.get("change_request") or ""
+            if change:
+                with st.spinner("Revising plan…"):
+                    _do_revise_plan(change)
+                st.rerun()
+
+        # Handle aggregation (runs after execution or on manual trigger from prefs panel)
+        if state.get("run_aggregation"):
+            with st.spinner("Summarizing preferences…"):
+                _do_aggregate()
+            state.set("run_aggregation", False)
             st.rerun()
 
-        # Handle Change Request
-        change = state.get("change_request") or ""
-        if change:
-            with st.spinner("Revising plan…"):
-                _do_revise_plan(change)
-            st.rerun()
+        elif ui_phase == "idle":
+            st.info("Upload an image to begin.")
 
-    # Handle aggregation (runs after execution or on manual trigger from prefs panel)
-    if state.get("run_aggregation"):
-        with st.spinner("Summarizing preferences…"):
-            _do_aggregate()
-        state.set("run_aggregation", False)
-        st.rerun()
-
-    elif ui_phase == "idle":
-        st.info("Upload an image to begin.")
-
-    st.divider()
-    prefs = state.get("prefs") or PreferenceStore().load()
-    state.set("prefs", prefs)
-    prefs_panel.render(prefs)
+        st.divider()
+        prefs = state.get("prefs") or PreferenceStore().load()
+        state.set("prefs", prefs)
+        prefs_panel.render(prefs)
 
 # ── Save button ───────────────────────────────────────────────────────────────
 st.divider()

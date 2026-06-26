@@ -10,6 +10,10 @@ _DEFAULTS: dict[str, Any] = {
     "uploaded_file": None,
     "uploaded_files": None,
     "current_file_index": 0,
+    "batch_mode": False,
+    "batch_records": None,
+    "batch_review_index": 0,
+    "batch_retry_id": None,
     "output_format": "same",
     "container": None,  # ImageContainer after loading the uploaded file
     "edited_container": None,  # ImageContainer after Executor.apply()
