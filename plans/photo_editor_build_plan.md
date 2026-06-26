@@ -258,16 +258,16 @@ Existing `"transformers"` and `"ollama"` loaders are unaffected and remain the d
 **User-facing result.** Responsive on large files, cheaper to run, reliable.
 
 **Definition of Done.**
-- [ ] A large RAW processes without blocking the UI (progress shown).
-- [ ] A cache hit avoids re-planning.
-- [ ] The redaction audit finds zero key leakage across logs and errors.
-- [ ] `build_client()` with `loader="vllm"` returns `ChatOpenAI` pointed at `vllm_base_url`; unit test with mock confirms `base_url` and `model` forwarding.
-- [ ] `build_client()` with `loader="llamacpp"` and a valid `gguf_path` returns `ChatLlamaCpp`; unit test confirms `model_path` forwarding.
-- [ ] `build_client()` with `loader="llamacpp"` and `gguf_path=None` raises `ValueError` with a clear message.
-- [ ] `available_loaders()` returns only loaders whose packages are importable (+ server reachable for vLLM); unit test mocks `find_spec` and HTTP probe.
-- [ ] `install_loader_deps("llamacpp")` runs `pip install -r requirements-llamacpp.txt` via `sys.executable`; unit test patches `subprocess.run` and confirms correct args.
-- [ ] `install_loader_deps("unknown")` raises `ValueError`.
-- [ ] Settings UI shows correct badge state per loader; Install button triggers install and refreshes status.
+- [x] A large RAW processes without blocking the UI (progress shown).
+- [x] A cache hit avoids re-planning.
+- [x] The redaction audit finds zero key leakage across logs and errors.
+- [x] `build_client()` with `loader="vllm"` returns `ChatOpenAI` pointed at `vllm_base_url`; unit test with mock confirms `base_url` and `model` forwarding.
+- [x] `build_client()` with `loader="llamacpp"` and a valid `gguf_path` returns `ChatLlamaCpp`; unit test confirms `model_path` forwarding.
+- [x] `build_client()` with `loader="llamacpp"` and `gguf_path=None` raises `ValueError` with a clear message.
+- [x] `available_loaders()` returns only loaders whose packages are importable (+ server reachable for vLLM); unit test mocks `find_spec` and HTTP probe.
+- [x] `install_loader_deps("llamacpp")` runs `pip install -r requirements-llamacpp.txt` via `sys.executable`; unit test patches `subprocess.run` and confirms correct args.
+- [x] `install_loader_deps("unknown")` raises `ValueError`.
+- [x] Settings UI shows correct badge state per loader; Install button triggers install and refreshes status.
 
 ---
 
@@ -290,12 +290,12 @@ Existing `"transformers"` and `"ollama"` loaders are unaffected and remain the d
 **User-facing result.** Upload a folder of images, review AI plans in bulk, save accepted edits — without waiting for one image to finish before the next starts.
 
 **Definition of Done.**
-- [ ] N images are planned concurrently; total wall time < N × single-image time.
-- [ ] A simulated HTTP 429 triggers back-off and retry; the image eventually succeeds.
-- [ ] Progress bar advances per image, not just at the end.
-- [ ] `auto` mode auto-executes low-risk images and queues high-risk ones; summary banner reflects the split.
-- [ ] "Save All Accepted" writes N new files; originals byte-identical.
-- [ ] Rejected images do not produce output files.
+- [x] N images are planned concurrently; total wall time < N × single-image time.
+- [x] A simulated HTTP 429 triggers back-off and retry; the image eventually succeeds.
+- [x] Progress bar advances per image, not just at the end.
+- [x] `auto` mode auto-executes low-risk images and queues high-risk ones; summary banner reflects the split.
+- [x] "Save All Accepted" writes N new files; originals byte-identical.
+- [x] Rejected images do not produce output files.
 
 ---
 
