@@ -1,7 +1,17 @@
 from .batch import BatchImageRecord, ImageStatus
-from .ops import Backend, BoundingBox, FramingMode, Op, OpGraph, OpName, RiskTier
+from .ops import (
+    AcceptMode,
+    Backend,
+    BoundingBox,
+    FramingIntent,
+    FramingMode,
+    Op,
+    OpGraph,
+    OpName,
+    RiskTier,
+)
 from .plan import CompilerResult, HumanPlan, HumanStep
-from .prefs import ExplicitRule, LearnedRule, Preferences
+from .prefs import EditDelta, ExplicitRule, LearnedRule, Preferences
 from .recipe import GenAIOp, Recipe
 
 __all__ = [
@@ -11,6 +21,8 @@ __all__ = [
     "Backend",
     "RiskTier",
     "FramingMode",
+    "FramingIntent",
+    "AcceptMode",
     "BoundingBox",
     "HumanPlan",
     "HumanStep",
@@ -20,6 +32,7 @@ __all__ = [
     "Preferences",
     "ExplicitRule",
     "LearnedRule",
+    "EditDelta",
     "BatchImageRecord",
     "ImageStatus",
 ]

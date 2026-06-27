@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import uuid
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ImageStatus(str, Enum):
@@ -29,3 +30,10 @@ class BatchImageRecord(BaseModel):
     op_graph: Any = None  # OpGraph | None
     error: str | None = None
     retry_count: int = 0
+
+    @field_validator("filename")
+    @classmethod
+    def _sanitise_filename(cls, v: str) -> str:
+        if "\x00" in v:
+            raise ValueError("filename must not contain null bytes")
+        return Path(v).name  # strips leading path components, prevents traversal
