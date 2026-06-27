@@ -129,7 +129,6 @@ def composite(
     # too small to have safe territory (e.g., small unit test fixtures).
     safe_outside = ~binary_dilation(mask, iterations=feather_px * 3)
     if safe_outside.any():
-        assert np.all(
-            result.pixels[safe_outside] == source.pixels[safe_outside]
-        ), "composite: subject pixels outside feather zone were modified"
+        if not np.all(result.pixels[safe_outside] == source.pixels[safe_outside]):
+            raise RuntimeError("composite: subject pixels outside feather zone were modified")
     return result

@@ -23,6 +23,8 @@ class EditState(TypedDict):
     op_graph: OpGraph | None
     feedback: str | None
     approved: bool
+    edited_container: Any  # ExecutionResult.container at runtime
+    genai_ops: list  # ExecutionResult.genai_ops at runtime
 
 
 # --- nodes ---
@@ -56,8 +58,10 @@ def _await_human(state: EditState) -> dict:
 
 
 def _execute(state: EditState) -> dict:
-    # Wired in P7.
-    return {}
+    from vlm_photo_editor.ops.executor import Executor
+
+    result = Executor().apply(state["container"], state["op_graph"])
+    return {"edited_container": result.container, "genai_ops": result.genai_ops}
 
 
 # --- routing ---

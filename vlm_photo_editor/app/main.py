@@ -165,6 +165,7 @@ def _do_revise_plan(change: str) -> None:
         state.set("plan_approved", _can_auto_approve(result.op_graph, _mode))
     except Exception as exc:
         state.set("error", str(exc))
+        state.set("change_request", "")
 
 
 def _do_execute() -> None:
