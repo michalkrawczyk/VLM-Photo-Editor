@@ -1,22 +1,31 @@
 from __future__ import annotations
 
 import socket
+import time
 
-from vlm_photo_editor.config.policy import allowed_ops_for_mode
+from vlm_photo_editor.config.policy import EditMode, allowed_ops_for_mode
 from vlm_photo_editor.ops.validator import validate_op_graph
 from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
 from vlm_photo_editor.schema.plan import CompilerResult, HumanPlan
 
 _PS_MCP_HOST = "127.0.0.1"
 _PS_MCP_PORT = 8080
+_PS_CACHE_TTL = 5.0
+_ps_cache: tuple[float, bool] | None = None
 
 
 def _ps_available() -> bool:
+    global _ps_cache
+    now = time.monotonic()
+    if _ps_cache is not None and now - _ps_cache[0] < _PS_CACHE_TTL:
+        return _ps_cache[1]
     try:
         with socket.create_connection((_PS_MCP_HOST, _PS_MCP_PORT), timeout=0.2):
-            return True
+            result = True
     except OSError:
-        return False
+        result = False
+    _ps_cache = (now, result)
+    return result
 
 
 _OP_RISK: dict[OpName, RiskTier] = {
@@ -45,7 +54,7 @@ class CompilerError(ValueError):
 
 
 class Compiler:
-    def compile(self, plan: HumanPlan, mode: str) -> CompilerResult:
+    def compile(self, plan: HumanPlan, mode: EditMode | str) -> CompilerResult:
         from vlm_photo_editor.config.settings import get_settings
 
         settings = get_settings()
@@ -87,9 +96,15 @@ class Compiler:
                 else:
                     backend = _OP_DEFAULT_BACKEND.get(op_name, Backend.PIL)
 
-                # no_genai safety net: redirect GENAI inpaint ops to OPENCV
-                if no_genai and backend == Backend.GENAI and op_name in _INPAINT_OPS:
-                    backend = Backend.OPENCV
+                # no_genai safety net: block all GENAI ops; redirect inpaint to OPENCV
+                if no_genai and backend == Backend.GENAI:
+                    if op_name in _INPAINT_OPS:
+                        backend = Backend.OPENCV
+                    else:
+                        raise CompilerError(
+                            f"Step {step.step_id!r}: op {op_name.value!r} requires Backend.GENAI "
+                            "but GenAI is disabled (no_genai=True)."
+                        )
 
                 ops.append(
                     Op(
