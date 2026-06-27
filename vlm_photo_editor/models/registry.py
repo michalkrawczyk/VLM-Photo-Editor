@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING
 
 from vlm_photo_editor.config.registry import get_registry
@@ -88,8 +89,16 @@ _LOADER_REQS: dict[str, str] = {
     "llamacpp": "requirements-llamacpp.txt",
 }
 
+_VLLM_CACHE_TTL = 30.0
+_vllm_cache: tuple[float, bool] | None = None
+
 
 def _vllm_reachable() -> bool:
+    global _vllm_cache
+    now = time.monotonic()
+    if _vllm_cache is not None and now - _vllm_cache[0] < _VLLM_CACHE_TTL:
+        return _vllm_cache[1]
+
     import urllib.request
 
     registry = get_registry()
@@ -98,18 +107,20 @@ def _vllm_reachable() -> bool:
         if getattr(entry, "loader", None) == "vllm":
             base_url = entry.vllm_base_url
             break
-    # Try /v1/models then /health
     probes = [
         base_url.rstrip("/") + "/models",
         base_url.rstrip("/").removesuffix("/v1") + "/health",
     ]
+    result = False
     for url in probes:
         try:
             with urllib.request.urlopen(url, timeout=1):
-                return True
+                result = True
+                break
         except Exception:
             pass
-    return False
+    _vllm_cache = (now, result)
+    return result
 
 
 def available_loaders() -> list[str]:
