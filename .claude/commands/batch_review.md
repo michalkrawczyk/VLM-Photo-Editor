@@ -8,7 +8,7 @@ For each file, document findings in this order:
 4. Performance optimizations
 5. Over-engineered or unjustified functionality
 
-Append the results to plans/issues.md.
+Merge the results to plans/issues.md.
 
 When done, mark the batch in plan_review.md as [DONE] by appending 
 it to the batch's ## heading.

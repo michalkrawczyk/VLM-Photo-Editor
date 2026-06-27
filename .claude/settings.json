@@ -1,17 +1,4 @@
 {
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash /media/tk/Programming1/Python/VLM-Photo-Editor/agent_notes/utility_scripts/cleanup.sh 2>/dev/null || true",
-            "statusMessage": "Running session cleanup..."
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "Bash(python -m pytest tests*)",
@@ -32,7 +19,22 @@
       "Bash(python3 -m pytest tests/unit/ -v)",
       "Bash(pip install *)",
       "Bash(.venv/bin/python -m pytest *)",
-      "Bash(.venv/bin/pytest *)"
+      "Bash(.venv/bin/pytest *)",
+      "Bash(pytest -x -q)",
+      "Bash(python -c ' *)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /media/tk/Programming1/Python/VLM-Photo-Editor/agent_notes/utility_scripts/cleanup.sh 2>/dev/null || true",
+            "statusMessage": "Running session cleanup..."
+          }
+        ]
+      }
     ]
   }
 }
