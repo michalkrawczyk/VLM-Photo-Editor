@@ -34,8 +34,8 @@ _RATIO: dict[FramingMode, str | None] = {
 
 
 def focus_instruction(mode: FramingMode) -> str:
-    return _FOCUS.get(mode, "")
+    return _FOCUS[mode]
 
 
 def frame_ratio_str(mode: FramingMode) -> str | None:
-    return _RATIO.get(mode)
+    return _RATIO[mode]

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from vlm_photo_editor.config.policy import allowed_ops_for_mode
+from vlm_photo_editor.config.policy import EditMode, allowed_ops_for_mode
 from vlm_photo_editor.schema.ops import FramingIntent, FramingMode
 from vlm_photo_editor.schema.prefs import Preferences
+from vlm_photo_editor.templates import framing as _framing
 
 
 def build_system_prompt(
-    mode: str,
+    mode: EditMode | str,
     prefs: Preferences | None,
     framing_intent: FramingIntent | None,
     target_size: tuple[int, int] | None,
@@ -120,7 +121,9 @@ def _specific_framing_lines(
     target_size: tuple[int, int] | None,
 ) -> list[str]:
     mode_val = framing_intent.mode.value
-    ratio = framing_intent.frame_ratio or ""
+    ratio = framing_intent.frame_ratio or _framing.frame_ratio_str(framing_intent.mode) or ""
+    focus = framing_intent.focus_instruction or _framing.focus_instruction(framing_intent.mode)
+
     lines = ["", "FRAMING INSTRUCTIONS:"]
     if ratio:
         lines.append(f"  Composition: {mode_val}  →  Frame ratio: {ratio}")
@@ -129,8 +132,8 @@ def _specific_framing_lines(
     if target_size:
         tw, th = target_size
         lines.append(f"  Target crop: {tw}×{th} px")
-    if framing_intent.focus_instruction:
-        lines.append(f"  Focus: {framing_intent.focus_instruction}")
+    if focus:
+        lines.append(f"  Focus: {focus}")
     lines.append("  - Output exactly one 'crop' step.")
     if target_size:
         tw, th = target_size
