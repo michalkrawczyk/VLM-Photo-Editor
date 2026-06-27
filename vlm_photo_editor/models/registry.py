@@ -56,7 +56,7 @@ def build_client(role: str) -> "BaseChatModel":
         hf_repo = entry.hf_repo or model_id
         return HuggingFacePipeline.from_model_id(model_id=hf_repo, task="text-generation")  # type: ignore[return-value]
 
-    if "claude" in model_id or "anthropic" in model_id:
+    if entry.provider == "anthropic":
         try:
             from langchain_anthropic import ChatAnthropic
         except ImportError as exc:
@@ -66,7 +66,7 @@ def build_client(role: str) -> "BaseChatModel":
         api_key = SecretStore.get("anthropic")
         return ChatAnthropic(model=model_id, api_key=api_key)  # type: ignore[call-arg]
 
-    if "gpt" in model_id:
+    if entry.provider == "openai":
         try:
             from langchain_openai import ChatOpenAI
         except ImportError as exc:
@@ -76,7 +76,9 @@ def build_client(role: str) -> "BaseChatModel":
         api_key = SecretStore.get("openai")
         return ChatOpenAI(model=model_id, api_key=api_key)  # type: ignore[call-arg]
 
-    raise ValueError(f"Cannot determine provider for model: {model_id!r}")
+    raise ValueError(
+        f"No client for role {role!r}: model={model_id!r}, provider={entry.provider!r}"
+    )
 
 
 _LOADER_REQS: dict[str, str] = {
