@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import logging
 import os
-
-logger = logging.getLogger(__name__)
 
 _KEYRING_SERVICE = "vlm_photo_editor"
 
@@ -55,6 +52,6 @@ class SecretStore:
 
     @classmethod
     def mask(cls, key: str) -> str:
-        if len(key) <= 4:
+        if len(key) <= 8:
             return "****"
         return f"{'*' * (len(key) - 4)}{key[-4:]}"

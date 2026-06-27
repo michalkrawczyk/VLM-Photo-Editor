@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 
-_KEY_PATTERN = re.compile(r"(?:sk-|r8_)[A-Za-z0-9]{20,}")
+_KEY_PATTERN = re.compile(r"(?:sk-ant-|sk-|r8_)[A-Za-z0-9\-]{20,}")
 
 
 class RedactionFilter(logging.Filter):
