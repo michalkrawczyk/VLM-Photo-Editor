@@ -79,7 +79,7 @@ VLM Photo Editor: Streamlit app (~65 source files, ~17 test files) with a layere
 
 ---
 
-## Batch 6: Agents
+## Batch 6: Agents [DONE]
 
 **Files:**
 - `vlm_photo_editor/agents/planner.py`
@@ -93,7 +93,7 @@ VLM Photo Editor: Streamlit app (~65 source files, ~17 test files) with a layere
 
 ---
 
-## Batch 7: Recipe & Preferences
+## Batch 7: Recipe & Preferences [DONE]
 
 **Files:**
 - `vlm_photo_editor/recipe/session.py`
