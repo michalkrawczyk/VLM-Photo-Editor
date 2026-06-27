@@ -136,20 +136,14 @@ def frame_target_size(w: int, h: int, composition: str) -> tuple[int, int] | Non
 def _frame(container: ImageContainer, params: dict) -> ImageContainer:
     mode = str(params.get("mode", "rule_of_thirds"))
     h, w = container.pixels.shape[:2]
-    aspect = _FRAME_ASPECT.get(mode, (4, 3))
-    if aspect == (0, 0):
+    target = frame_target_size(w, h, mode)
+    if target is None:
         return container.copy()
-    tw, th = aspect
-    if w / h > tw / th:
-        new_w = int(h * tw / th)
-        left = (w - new_w) // 2
-        right = left + new_w
-        top, bottom = 0, h
-    else:
-        new_h = int(w * th / tw)
-        top = (h - new_h) // 2
-        bottom = top + new_h
-        left, right = 0, w
+    target_w, target_h = target
+    left = (w - target_w) // 2
+    top = (h - target_h) // 2
+    right = left + target_w
+    bottom = top + target_h
     result = container.copy()
     result.pixels = container.pixels[top:bottom, left:right]
     return result
