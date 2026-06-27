@@ -170,10 +170,11 @@ def test_compiler_rejects_op_not_in_mode(op_name, mode, params):
 # ---------------------------------------------------------------------------
 
 
-def test_compiler_rejects_unknown_op_name():
-    step = _step(["sharpen"], [{}])
-    with pytest.raises(CompilerError, match="unknown op"):
-        Compiler().compile(_plan(step), "full")
+def test_schema_rejects_unknown_op_name():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        HumanStep(step_id="s1", index=1, title="t", why="w", op_names=["sharpen"])
 
 
 def test_compiler_unknown_mode_raises_key_error():
