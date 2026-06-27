@@ -73,6 +73,16 @@ def test_specific_mode_prompt_includes_focus_and_ratio():
     assert "outpaint_needed" in prompt
 
 
+def test_specific_framing_lines_uses_lookup_when_fields_empty():
+    """D14: focus and ratio from lookup tables when FramingIntent fields are default-empty."""
+    fi = FramingIntent(mode=FramingMode.RULE_OF_THIRDS)  # focus_instruction="" and frame_ratio=None
+    prompt = build_system_prompt("frame", None, fi, None)
+    # Lookup table value: "Place subject at a rule-of-thirds intersection; avoid centering."
+    assert "rule-of-thirds intersection" in prompt
+    # Lookup table ratio: "4:3"
+    assert "4:3" in prompt
+
+
 # ---------------------------------------------------------------------------
 # DoD #5 — preferences in RECOMMEND_BEST
 # ---------------------------------------------------------------------------

@@ -127,6 +127,25 @@ def test_compiler_pads_missing_params_validator_catches():
 
 
 # ---------------------------------------------------------------------------
+# T4 — crop out-of-bounds validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "params,match",
+    [
+        ({"left": 100, "top": 0, "right": 50, "bottom": 80}, "left.*<.*right"),
+        ({"left": 0, "top": 80, "right": 100, "bottom": 40}, "top.*<.*bottom"),
+        ({"left": -1, "top": 0, "right": 100, "bottom": 80}, "non-negative"),
+    ],
+)
+def test_crop_out_of_bounds_raises(params, match):
+    step = _step(["crop"], [params])
+    with pytest.raises(CompilerError, match=match):
+        Compiler().compile(_plan(step), "full")
+
+
+# ---------------------------------------------------------------------------
 # Compiler — mode enforcement
 # ---------------------------------------------------------------------------
 
@@ -231,6 +250,21 @@ def test_compiler_no_genai_does_not_affect_non_inpaint_ops():
     ):
         result = Compiler().compile(_plan(step), "full")
     assert result.op_graph.ops[0].backend == Backend.PIL
+
+
+def test_compiler_no_genai_raises_for_non_inpaint_genai_op():
+    """PLN-B4: explicit backend=genai on a non-inpaint op must raise when no_genai=True."""
+    from unittest.mock import patch
+
+    from vlm_photo_editor.config.settings import AppSettings
+
+    step = _step(["exposure"], [{"ev": 0.5, "backend": "genai"}])
+    with patch(
+        "vlm_photo_editor.config.settings.get_settings",
+        return_value=AppSettings(no_genai=True),
+    ):
+        with pytest.raises(CompilerError, match="GenAI is disabled"):
+            Compiler().compile(_plan(step), "full")
 
 
 def test_compiler_result_preserves_plan():

@@ -142,3 +142,47 @@ def test_explicit_rule_overrides_by_priority():
     prefs = Preferences(explicit=[explicit], learned=[learned])
     assert prefs.explicit[0].description == "warm tones"
     assert prefs.learned[0].description == "cool tones"
+
+
+# ---------------------------------------------------------------------------
+# S-D1 — BatchImageRecord.filename path-traversal sanitisation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("normal.jpg", "normal.jpg"),
+        ("../etc/passwd", "passwd"),
+        ("/absolute/path/file.jpg", "file.jpg"),
+        ("subdir/image.png", "image.png"),
+    ],
+)
+def test_batch_filename_sanitisation(raw: str, expected: str) -> None:
+    from vlm_photo_editor.schema.batch import BatchImageRecord
+
+    record = BatchImageRecord(filename=raw)
+    assert record.filename == expected
+
+
+def test_batch_filename_rejects_null_bytes() -> None:
+    from pydantic import ValidationError
+
+    from vlm_photo_editor.schema.batch import BatchImageRecord
+
+    with pytest.raises((ValueError, ValidationError)):
+        BatchImageRecord(filename="evil\x00file.jpg")
+
+
+# ---------------------------------------------------------------------------
+# S-B2 — schema __init__ exports AcceptMode, FramingIntent, EditDelta
+# ---------------------------------------------------------------------------
+
+
+def test_schema_init_exports() -> None:
+    import vlm_photo_editor.schema as schema
+    from vlm_photo_editor.schema import AcceptMode, EditDelta, FramingIntent  # noqa: F401
+
+    assert "AcceptMode" in schema.__all__
+    assert "FramingIntent" in schema.__all__
+    assert "EditDelta" in schema.__all__

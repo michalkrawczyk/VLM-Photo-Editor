@@ -90,7 +90,8 @@ def test_secret_store_from_keyring(monkeypatch):
         ("sk-abc1234", "******1234"),
         ("ab", "****"),
         ("abcd", "****"),
-        ("abcde", "*bcde"),
+        ("abcde", "****"),
+        ("abcdefghi", "*****fghi"),
     ],
 )
 def test_secret_store_mask(key: str, expected: str) -> None:

@@ -88,3 +88,26 @@ def test_raw_16bit() -> None:
     container = load(Path("tests/fixtures/images/sample.nef"))
     assert container.bit_depth == 16
     assert container.pixels.dtype == np.uint16
+
+
+def test_16bit_jpeg_raises_valueerror(tmp_path: Path) -> None:
+    """IO-B1: 16-bit save to JPEG must raise ValueError instead of silently truncating."""
+    src = tmp_path / "source.png"
+    _make_rgb_png(src)
+    base = load(src)
+    pixels_16 = base.pixels.astype(np.uint16) * 257
+    c16 = ImageContainer(pixels=pixels_16, bit_depth=16, source_path=src)
+    with pytest.raises(ValueError, match="TIFF"):
+        save(c16, tmp_path / "out.jpg")
+
+
+def test_rgba_jpeg_saves_as_rgb(tmp_path: Path) -> None:
+    """IO-B2: RGBA container saved to JPEG must not raise; alpha channel is dropped."""
+    pixels_rgba = np.full((32, 32, 4), 128, dtype=np.uint8)
+    src = tmp_path / "source_rgba.png"
+    Image.fromarray(pixels_rgba, "RGBA").save(src)
+    container = ImageContainer(pixels=pixels_rgba, bit_depth=8, source_path=src)
+    dest = tmp_path / "out.jpg"
+    save(container, dest)
+    loaded = load(dest)
+    assert loaded.pixels.shape[2] == 3

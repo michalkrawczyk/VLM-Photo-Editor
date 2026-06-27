@@ -128,8 +128,14 @@ def test_manual_mode_approve_first_pass():
     assert result["op_graph"] is op_graph
 
     # Resume: user approves
-    with patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls2:
+    with (
+        patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls2,
+        patch("vlm_photo_editor.ops.executor.Executor") as mock_executor_cls,
+    ):
         mock_compiler_cls2.return_value.compile.return_value = _compile_result(op_graph)
+        mock_executor_cls.return_value.apply.return_value = MagicMock(
+            container=_make_container(), genai_ops=[]
+        )
         final = graph.invoke(Command(resume={"approved": True}), thread)
 
     assert final["approved"] is True
@@ -163,8 +169,14 @@ def test_manual_mode_revise_then_approve():
         mock_planner_cls.return_value.revise.assert_called_once()
 
     # Final approval
-    with patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls2:
+    with (
+        patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls2,
+        patch("vlm_photo_editor.ops.executor.Executor") as mock_executor_cls,
+    ):
         mock_compiler_cls2.return_value.compile.return_value = _compile_result(op_graph)
+        mock_executor_cls.return_value.apply.return_value = MagicMock(
+            container=_make_container(), genai_ops=[]
+        )
         final = graph.invoke(Command(resume={"approved": True}), thread)
 
     assert final["approved"] is True
@@ -184,9 +196,13 @@ def test_auto_mode_low_risk_skips_human():
     with (
         patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
         patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+        patch("vlm_photo_editor.ops.executor.Executor") as mock_executor_cls,
     ):
         mock_planner_cls.return_value.plan.return_value = plan
         mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+        mock_executor_cls.return_value.apply.return_value = MagicMock(
+            container=_make_container(), genai_ops=[]
+        )
 
         # Should run to END without any interrupt
         final = graph.invoke(_initial_state(AcceptMode.AUTO_LOW), thread)
@@ -235,15 +251,83 @@ def test_full_auto_mode_skips_human_regardless_of_risk():
     with (
         patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
         patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+        patch("vlm_photo_editor.ops.executor.Executor") as mock_executor_cls,
     ):
         mock_planner_cls.return_value.plan.return_value = plan
         mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+        mock_executor_cls.return_value.apply.return_value = MagicMock(
+            container=_make_container(), genai_ops=[]
+        )
 
         # Should run to END without any interrupt, even for high-risk ops
         final = graph.invoke(_initial_state(AcceptMode.FULL_AUTO), thread)
 
     assert final["op_graph"] is op_graph
     assert graph.get_state(thread).next == ()  # at END
+
+
+# ---------------------------------------------------------------------------
+# T3 — AUTO_MEDIUM mode coverage
+# ---------------------------------------------------------------------------
+
+
+def test_auto_medium_skips_human_for_medium_risk():
+    plan = _plan(_step(["region_edit"], [{"prompt": "blur"}]))
+    op_graph = _medium_risk_op_graph()
+    thread = {"configurable": {"thread_id": "t_am1"}}
+    graph = build_edit_graph()
+
+    with (
+        patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
+        patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+        patch("vlm_photo_editor.ops.executor.Executor") as mock_executor_cls,
+    ):
+        mock_planner_cls.return_value.plan.return_value = plan
+        mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+        mock_executor_cls.return_value.apply.return_value = MagicMock(
+            container=_make_container(), genai_ops=[]
+        )
+
+        final = graph.invoke(_initial_state(AcceptMode.AUTO_MEDIUM), thread)
+
+    assert final["op_graph"] is op_graph
+    assert final.get("approved") is False  # never visited await_human
+
+
+def test_auto_medium_requires_human_for_high_risk():
+    plan = _plan(_step(["background_replace"], [{"prompt": "forest"}]))
+    op_graph = _high_risk_op_graph()
+    thread = {"configurable": {"thread_id": "t_am2"}}
+    graph = build_edit_graph()
+
+    with (
+        patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
+        patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+    ):
+        mock_planner_cls.return_value.plan.return_value = plan
+        mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+
+        graph.invoke(_initial_state(AcceptMode.AUTO_MEDIUM), thread)
+
+    assert graph.get_state(thread).next == ("await_human",)
+
+
+def test_auto_low_requires_human_for_medium_risk():
+    plan = _plan(_step(["region_edit"], [{"prompt": "blur"}]))
+    op_graph = _medium_risk_op_graph()
+    thread = {"configurable": {"thread_id": "t_am3"}}
+    graph = build_edit_graph()
+
+    with (
+        patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
+        patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+    ):
+        mock_planner_cls.return_value.plan.return_value = plan
+        mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+
+        graph.invoke(_initial_state(AcceptMode.AUTO_LOW), thread)
+
+    assert graph.get_state(thread).next == ("await_human",)
 
 
 # ---------------------------------------------------------------------------
@@ -302,10 +386,14 @@ def test_auto_approve_after_revision(accept_mode, op_graph_fn, expect_interrupt)
     with (
         patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
         patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+        patch("vlm_photo_editor.ops.executor.Executor") as mock_executor_cls,
     ):
         mock_planner_cls.return_value.plan.return_value = plan_v1
         mock_planner_cls.return_value.revise.return_value = plan_v2
         mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+        mock_executor_cls.return_value.apply.return_value = MagicMock(
+            container=_make_container(), genai_ops=[]
+        )
 
         # Force the graph through await_human regardless of accept_mode on the first pass
         # by using MANUAL for the first invoke, then resume with feedback to trigger revision.
