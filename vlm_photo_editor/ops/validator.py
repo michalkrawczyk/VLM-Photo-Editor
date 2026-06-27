@@ -45,6 +45,18 @@ def validate_op(op: Op, allowed_ops: set[OpName] | None = None) -> None:
             if not (lo <= val <= hi):
                 raise ValueError(f"Param {key!r}={val} out of bounds [{lo}, {hi}]")
 
+    if op.op_name == OpName.CROP:
+        left = op.params["left"]
+        top = op.params["top"]
+        right = op.params["right"]
+        bottom = op.params["bottom"]
+        if left < 0 or top < 0:
+            raise ValueError(f"Crop: coordinates must be non-negative, got left={left} top={top}")
+        if left >= right:
+            raise ValueError(f"Crop: left ({left}) must be < right ({right})")
+        if top >= bottom:
+            raise ValueError(f"Crop: top ({top}) must be < bottom ({bottom})")
+
     if op.bbox is not None and op.op_name in _SIZE_CHANGING_OPS:
         raise ValueError(f"Op {op.op_name!r} changes image size; bbox not allowed")
 
