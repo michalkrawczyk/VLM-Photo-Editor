@@ -45,7 +45,10 @@ def _ps_strict_lines() -> list[str]:
 
 
 def _base_lines(mode: str, no_genai: bool = False) -> list[str]:
-    allowed = sorted(op.value for op in allowed_ops_for_mode(mode))
+    try:
+        allowed = sorted(op.value for op in allowed_ops_for_mode(mode))
+    except KeyError as exc:
+        raise ValueError(f"Unknown edit mode for prompt builder: {mode!r}") from exc
     lines = [
         "You are a photo-editing planner. Produce a concise human-readable editing plan.",
         "",
