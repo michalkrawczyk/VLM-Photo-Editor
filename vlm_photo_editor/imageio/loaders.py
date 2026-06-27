@@ -8,6 +8,7 @@ from .container import ImageContainer
 
 RAW_EXTENSIONS = {".nef", ".cr2", ".cr3", ".arw", ".dng", ".raf", ".orf", ".rw2", ".pef", ".srw"}
 PIL_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
+assert not (RAW_EXTENSIONS & PIL_EXTENSIONS), "Extension sets overlap"
 
 
 def load(path: Path | str) -> ImageContainer:
