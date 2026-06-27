@@ -20,7 +20,7 @@ VLM Photo Editor: Streamlit app (~65 source files, ~17 test files) with a layere
 
 ---
 
-## Batch 2: Security & Configuration
+## Batch 2: Security & Configuration [DONE]
 
 **Files:**
 - `vlm_photo_editor/secrets/store.py`
@@ -36,7 +36,7 @@ VLM Photo Editor: Streamlit app (~65 source files, ~17 test files) with a layere
 
 ---
 
-## Batch 3: Image I/O
+## Batch 3: Image I/O [DONE]
 
 **Files:**
 - `vlm_photo_editor/imageio/container.py`
@@ -49,7 +49,7 @@ VLM Photo Editor: Streamlit app (~65 source files, ~17 test files) with a layere
 
 ---
 
-## Batch 4: Ops Execution
+## Batch 4: Ops Execution [DONE]
 
 **Files:**
 - `vlm_photo_editor/ops/executor.py`
@@ -66,7 +66,7 @@ VLM Photo Editor: Streamlit app (~65 source files, ~17 test files) with a layere
 
 ---
 
-## Batch 5: Planner & Templates
+## Batch 5: Planner & Templates [DONE]
 
 **Files:**
 - `vlm_photo_editor/planner/compiler.py`
