@@ -8,9 +8,7 @@ from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 from vlm_photo_editor.schema.recipe import GenAIOp
 
-# Ops whose backends manage the mask internally (cannot use the generic apply→mask flow)
-_INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
-
+from .constants import INPAINT_OPS as _INPAINT_OPS
 from .mask import bbox_to_mask
 from .validator import validate_op_graph
 

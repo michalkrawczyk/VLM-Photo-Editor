@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 
+from .constants import INPAINT_OPS as _INPAINT_OPS
+
 _REQUIRED_PARAMS: dict[OpName, list[str]] = {
     OpName.CROP: ["left", "top", "right", "bottom"],
     OpName.ROTATE: ["angle"],
@@ -13,9 +15,6 @@ _REQUIRED_PARAMS: dict[OpName, list[str]] = {
     OpName.BACKGROUND_REPLACE: ["prompt"],
     OpName.FRAME: ["mode"],
 }
-
-# prompt is only meaningful for GENAI; CV/PS backends do pixel-space inpainting
-_INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
 
 _PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "ev": (-10.0, 10.0),
