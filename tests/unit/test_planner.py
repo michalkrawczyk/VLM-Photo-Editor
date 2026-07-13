@@ -315,7 +315,11 @@ def test_compiler_assigns_default_backend(op_name, expected_backend):
     elif op_name == "exposure":
         params = {"ev": 1.0}
     step = _step([op_name], [params])
-    result = Compiler().compile(_plan(step), "full")
+    with patch(
+        "vlm_photo_editor.planner.compiler.available_genai_providers",
+        return_value=["replicate", "openai", "google", "huggingface"],
+    ):
+        result = Compiler().compile(_plan(step), "full")
     assert result.op_graph.ops[0].backend == expected_backend
 
 
@@ -374,6 +378,29 @@ def test_compiler_no_genai_raises_for_non_inpaint_genai_op():
     ):
         with pytest.raises(CompilerError, match="GenAI is disabled"):
             Compiler().compile(_plan(step), "full")
+
+
+def test_compiler_genai_op_raises_when_provider_key_missing():
+    """Compiler must raise CompilerError when genai op's provider key is absent."""
+    step = _step(["region_edit"], [{"prompt": "blur background"}])
+    with patch(
+        "vlm_photo_editor.planner.compiler.available_genai_providers",
+        return_value=[],
+    ):
+        with pytest.raises(CompilerError, match="replicate"):
+            Compiler().compile(_plan(step), "full")
+
+
+def test_compiler_genai_op_passes_when_provider_key_present():
+    """Compiler must accept genai op when provider key is available."""
+    step = _step(["region_edit"], [{"prompt": "blur background"}])
+    with patch(
+        "vlm_photo_editor.planner.compiler.available_genai_providers",
+        return_value=["replicate"],
+    ):
+        result = Compiler().compile(_plan(step), "full")
+    genai_ops = [op for op in result.op_graph.ops if op.op_name.value == "region_edit"]
+    assert len(genai_ops) == 1
 
 
 def test_compiler_result_preserves_plan():

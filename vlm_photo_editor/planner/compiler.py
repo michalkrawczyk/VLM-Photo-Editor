@@ -3,6 +3,11 @@ from __future__ import annotations
 import socket
 import time
 
+from vlm_photo_editor.background.providers import (
+    available_genai_providers,
+    provider_env_hint,
+    provider_name_for,
+)
 from vlm_photo_editor.config.policy import EditMode, allowed_ops_for_mode
 from vlm_photo_editor.ops.validator import validate_op_graph
 from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
@@ -45,6 +50,8 @@ _OP_DEFAULT_BACKEND: dict[OpName, Backend] = {
     OpName.BACKGROUND_REPLACE: Backend.GENAI,
     OpName.REGION_EDIT: Backend.GENAI,
 }
+
+_DEFAULT_GENAI_MODEL = "black-forest-labs/flux-fill-dev"
 
 _INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
 
@@ -109,6 +116,17 @@ class Compiler:
                         raise CompilerError(
                             f"Step {step.step_id!r}: op {op_name.value!r} requires Backend.GENAI "
                             "but GenAI is disabled (no_genai=True)."
+                        )
+
+                # Key/deps gate: fail early with a clear message rather than at execution time.
+                if backend == Backend.GENAI:
+                    model = params.get("model", _DEFAULT_GENAI_MODEL)
+                    prov = provider_name_for(model)
+                    if prov not in available_genai_providers():
+                        hint = provider_env_hint(prov)
+                        raise CompilerError(
+                            f"Step {step.step_id!r}: op {op_name.value!r} needs provider "
+                            f"'{prov}' but no key/deps found. {hint}"
                         )
 
                 ops.append(
