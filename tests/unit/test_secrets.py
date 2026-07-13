@@ -133,3 +133,24 @@ def test_redaction_filter_formats_percent_args():
     assert "[REDACTED]" in record.msg
     assert "sk-ant-" not in record.msg
     assert record.args == ()
+
+
+def test_model_registry_set_preserves_extra_fields():
+    """SEC-B5: set() must not drop vllm_base_url, gguf_path, max_images_per_call."""
+    from vlm_photo_editor.config.registry import ModelEntry
+
+    reg = ModelRegistry()
+    entry = ModelEntry(
+        model_id="old-model",
+        provider="local",
+        loader="vllm",
+        vllm_base_url="http://my-server:9000/v1",
+        max_images_per_call=4,
+    )
+    reg.set_entry("planner", entry)
+    reg.set("planner", "new-model")
+    updated = reg.get_entry("planner")
+    assert updated.model_id == "new-model"
+    assert updated.vllm_base_url == "http://my-server:9000/v1"
+    assert updated.max_images_per_call == 4
+    assert updated.loader == "vllm"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 
@@ -78,9 +78,7 @@ class ModelRegistry:
     def set(self, role: str, model: str) -> None:
         existing = self._entries.get(role)
         if existing is not None:
-            self._entries[role] = ModelEntry(
-                model, existing.provider, existing.hf_repo, existing.loader
-            )
+            self._entries[role] = replace(existing, model_id=model)
         else:
             self._entries[role] = ModelEntry(model)
 
