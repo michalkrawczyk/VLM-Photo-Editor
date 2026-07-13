@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -80,14 +81,16 @@ def test_icc_profile_preserved(tmp_path: Path) -> None:
     assert loaded2.icc_profile == srgb_bytes
 
 
-@pytest.mark.skipif(
-    not Path("tests/fixtures/images/sample.nef").exists(),
-    reason="No RAW fixture — skipped",
-)
-def test_raw_16bit() -> None:
-    container = load(Path("tests/fixtures/images/sample.nef"))
+def test_raw_16bit_loader() -> None:
+    """T5: verify _load_raw builds a 16-bit container without a real RAW fixture."""
+    pixels = np.ones((10, 10, 3), dtype=np.uint16) * 32768
+    mock_cm = MagicMock()
+    mock_cm.__enter__.return_value.postprocess.return_value = pixels
+    with patch("rawpy.imread", return_value=mock_cm):
+        container = load(Path("fake.nef"))
     assert container.bit_depth == 16
     assert container.pixels.dtype == np.uint16
+    np.testing.assert_array_equal(container.pixels, pixels)
 
 
 def test_16bit_jpeg_raises_valueerror(tmp_path: Path) -> None:
