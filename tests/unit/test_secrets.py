@@ -57,6 +57,27 @@ def test_secret_store_from_env(monkeypatch):
     assert key == "sk-testkey1234567890abcdef"
 
 
+def test_secret_store_replicate_reads_token_env(monkeypatch):
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_testtoken1234567890abcdef")
+    monkeypatch.delenv("REPLICATE_API_KEY", raising=False)
+    key = SecretStore.get("replicate")
+    assert key == "r8_testtoken1234567890abcdef"
+
+
+def test_secret_store_has_returns_true_when_key_present(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-present1234567890abcdef")
+    assert SecretStore.has("anthropic") is True
+
+
+def test_secret_store_has_returns_false_when_key_absent(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with (
+        patch("keyring.get_password", return_value=None),
+        patch("dotenv.find_dotenv", return_value=""),
+    ):
+        assert SecretStore.has("anthropic") is False
+
+
 def test_secret_store_env_takes_priority_over_keyring(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-value-1234567890abcd")
     with patch("keyring.get_password", return_value="sk-keyring-value-should-not-win"):
