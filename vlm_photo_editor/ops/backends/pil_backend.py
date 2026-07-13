@@ -15,6 +15,7 @@ def apply(container: ImageContainer, op: Op) -> ImageContainer:
         OpName.EXPOSURE: _exposure,
         OpName.DENOISE: _denoise,
         OpName.FRAME: _frame,
+        OpName.MASK: _mask,
     }
     fn = dispatch.get(op.op_name)
     if fn is None:
@@ -106,6 +107,15 @@ def _denoise(container: ImageContainer, params: dict) -> ImageContainer:
     img = _to_pil_8bit(container)
     img = img.filter(ImageFilter.MedianFilter(size=3))
     return _from_pil(img, container)
+
+
+def _mask(container: ImageContainer, params: dict) -> ImageContainer:
+    fill = int(params.get("fill", 0))
+    max_val = 65535 if container.bit_depth == 16 else 255
+    fill = max(0, min(fill, max_val))
+    result = container.copy()
+    result.pixels = np.full_like(container.pixels, fill)
+    return result
 
 
 _FRAME_ASPECT: dict[str, tuple[int, int]] = {
