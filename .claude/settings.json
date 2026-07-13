@@ -21,7 +21,24 @@
       "Bash(.venv/bin/python -m pytest *)",
       "Bash(.venv/bin/pytest *)",
       "Bash(pytest -x -q)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(cd /media/tk/Programming1/Python/VLM-Photo-Editor *)",
+      "Skill(idea-reviewer)",
+      "Skill(idea-reviewer:*)",
+      "Bash(auto)",
+      "Bash(grep -n -i \"three accept\\\\|`auto`\" /media/tk/Programming1/Python/VLM-Photo-Editor/agent_notes/goal.md /media/tk/Programming1/Python/VLM-Photo-Editor/agent_notes/description.md)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('vlm_photo_editor/app/main.py'\\).read\\(\\)\\); ast.parse\\(open\\('vlm_photo_editor/app/components/plan_view.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(git status *)",
+      "Bash(python3 -)",
+      "Bash(python3)",
+      "Bash(awk '/^diff --git a\\\\/tests\\\\/unit\\\\/test_planner.py/,0' /tmp/tests2.diff)",
+      "Bash(cp /tmp/test_planner_v0.py /tmp/test_planner_final.py)",
+      "Bash(patch /tmp/test_planner_final.py)",
+      "Bash(git -C /media/tk/Programming1/Python/VLM-Photo-Editor hash-object /tmp/test_planner_final.py)",
+      "Bash(git -C /media/tk/Programming1/Python/VLM-Photo-Editor log --all --oneline -- tests/unit/test_planner.py)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
     ]
   },
   "hooks": {
