@@ -6,7 +6,7 @@ from skimage.filters import sobel
 from vlm_photo_editor.imageio.container import ImageContainer
 
 from .composite import composite
-from .generator import Candidate, Generator
+from .providers.base import Candidate, GenAIProvider
 
 
 def seam_metric(composited: ImageContainer, mask: np.ndarray) -> float:
@@ -42,7 +42,7 @@ def select_best(
     mask: np.ndarray,
     threshold: float = 10.0,
     extra_seeds: int = 2,
-    generator: Generator | None = None,
+    provider: GenAIProvider | None = None,
     feather_px: int = 20,
 ) -> tuple[ImageContainer, Candidate, bool]:
     """Pick the candidate with the lowest seam metric.
@@ -67,10 +67,10 @@ def select_best(
     if best_metric < threshold:
         return best_comp, best_cand, False
 
-    # Threshold not met; try extra seeds if a generator is available
-    if generator is not None and extra_seeds > 0:
+    # Threshold not met; try extra seeds if a provider is available
+    if provider is not None and extra_seeds > 0:
         first = candidates[0]
-        extras = generator.generate(
+        extras = provider.generate(
             source,
             mask,
             prompt=first.genai_op.prompt,

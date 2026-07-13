@@ -11,6 +11,14 @@ from PIL import Image
 from vlm_photo_editor.background import run_background_pipeline
 from vlm_photo_editor.background.composite import color_match, composite, grain_match, seam_blend
 from vlm_photo_editor.background.generator import Candidate, Generator
+from vlm_photo_editor.background.providers import (
+    GoogleProvider,
+    HuggingFaceProvider,
+    OpenAIProvider,
+    ReplicateProvider,
+    get_provider,
+    provider_name_for,
+)
 from vlm_photo_editor.background.quality import seam_metric, select_best
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.recipe import GenAIOp
@@ -55,6 +63,25 @@ def _mock_replicate(output_pixels: np.ndarray):
     client = MagicMock()
     client.run.return_value = [output_obj]
     return client
+
+
+# ---------------------------------------------------------------------------
+# Provider routing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model,expected_name,expected_type",
+    [
+        ("black-forest-labs/flux-fill-dev", "replicate", ReplicateProvider),
+        ("hf:black-forest-labs/FLUX.1-Fill-dev", "huggingface", HuggingFaceProvider),
+        ("openai:gpt-image-1", "openai", OpenAIProvider),
+        ("google:imagen-3.0-generate-002", "google", GoogleProvider),
+    ],
+)
+def test_provider_routing(model, expected_name, expected_type):
+    assert provider_name_for(model) == expected_name
+    assert isinstance(get_provider(model), expected_type)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +300,7 @@ def test_seam_gate_reroll() -> None:
 
     # threshold=0.0 forces the first candidate to fail so extra seeds are requested.
     _, _, needs_manual = select_best(
-        source, [bad_cand], mask, threshold=0.0, extra_seeds=1, generator=generator
+        source, [bad_cand], mask, threshold=0.0, extra_seeds=1, provider=generator
     )
 
     assert mock_client.run.called
@@ -290,7 +317,7 @@ def test_seam_gate_flag_for_manual() -> None:
     ]
 
     _, _, needs_manual = select_best(
-        source, cands, mask, threshold=0.0, extra_seeds=0, generator=None
+        source, cands, mask, threshold=0.0, extra_seeds=0, provider=None
     )
 
     assert needs_manual is True
@@ -318,7 +345,7 @@ def test_replay_deterministic() -> None:
         step_id="s1",
         n_candidates=1,
         seed=77,
-        generator=gen,
+        provider=gen,
     )
     result2, op2, _ = run_background_pipeline(
         source,
@@ -328,7 +355,7 @@ def test_replay_deterministic() -> None:
         step_id="s1",
         n_candidates=1,
         seed=77,
-        generator=gen,
+        provider=gen,
     )
 
     assert op1.seed == op2.seed == 77
@@ -363,7 +390,7 @@ def test_pipeline_with_fixture_image() -> None:
         model="test-model",
         step_id="s1",
         n_candidates=2,
-        generator=gen,
+        provider=gen,
     )
 
     assert result.pixels.shape == container.pixels.shape

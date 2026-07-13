@@ -5,7 +5,8 @@ import numpy as np
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.recipe import GenAIOp
 
-from .generator import Candidate, Generator
+from .providers import GenAIProvider, get_provider
+from .providers.base import Candidate
 from .quality import select_best
 
 
@@ -18,18 +19,19 @@ def run_background_pipeline(
     n_candidates: int = 3,
     seed: int | None = None,
     threshold: float = 10.0,
-    generator: Generator | None = None,
+    provider: GenAIProvider | None = None,
     feather_px: int = 20,
     **kwargs,
 ) -> tuple[ImageContainer, GenAIOp, bool]:
     """Generate, composite, and gate N background candidates.
 
     Returns (best_composited, genai_op, needs_manual_review).
+    provider defaults to get_provider(model) when None.
     """
-    if generator is None:
-        generator = Generator()
+    if provider is None:
+        provider = get_provider(model)
 
-    candidates: list[Candidate] = generator.generate(
+    candidates: list[Candidate] = provider.generate(
         container,
         mask,
         prompt=prompt,
@@ -45,7 +47,7 @@ def run_background_pipeline(
         candidates=candidates,
         mask=mask,
         threshold=threshold,
-        generator=generator,
+        provider=provider,
         feather_px=feather_px,
     )
     return best_comp, best_cand.genai_op, needs_manual
