@@ -59,7 +59,7 @@ def _base_lines(mode: str, no_genai: bool = False) -> list[str]:
         "  plan_id: UUID string",
         "  mode: must equal ACTIVE MODE",
         "  steps: list of HumanStep:",
-        "    step_id: UUID string (stable)",
+        "    step_id: UUID v4 string — hex digits 0-9 and a-f ONLY, no g-z (stable)",
         "    index: 1-based int",
         "    title: ≤8 words",
         "    why: one sentence visual reason",

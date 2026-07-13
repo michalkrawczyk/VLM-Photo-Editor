@@ -31,7 +31,16 @@ def _make_record(filename: str) -> BatchImageRecord:
 def _fake_plan():
     from vlm_photo_editor.schema.plan import HumanPlan, HumanStep
 
-    return HumanPlan(steps=[HumanStep(step_id="s1", index=0, title="Expose", why="brighten")])
+    return HumanPlan(
+        steps=[
+            HumanStep(
+                step_id="00000000-0000-0000-0000-000000000001",
+                index=0,
+                title="Expose",
+                why="brighten",
+            )
+        ]
+    )
 
 
 def _fake_compile_result(risk_tier: RiskTier = RiskTier.LOW):

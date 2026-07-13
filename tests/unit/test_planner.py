@@ -3,6 +3,9 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
+_UUID1 = "00000000-0000-0000-0000-000000000001"
+_UUID2 = "00000000-0000-0000-0000-000000000002"
+
 import numpy as np
 import pytest
 
@@ -89,12 +92,12 @@ def test_allowed_ops_for_mode_unknown_raises():
     ],
 )
 def test_compiler_happy_path(op_name, params):
-    step = _step([op_name], [params], step_id="s1")
+    step = _step([op_name], [params], step_id=_UUID1)
     result = Compiler().compile(_plan(step), "full")
     assert isinstance(result, CompilerResult)
     assert len(result.op_graph.ops) == 1
     assert result.op_graph.ops[0].op_name.value == op_name
-    assert result.op_graph.ops[0].step_id == "s1"
+    assert result.op_graph.ops[0].step_id == _UUID1
     assert result.op_graph.ops[0].params == params
 
 
@@ -104,14 +107,14 @@ def test_compiler_happy_path(op_name, params):
 
 
 def test_compiler_step_id_linkage():
-    s1 = _step(["exposure", "rotate"], [{"ev": 0.5}, {"angle": 45.0}], step_id="step-001", index=1)
+    s1 = _step(["exposure", "rotate"], [{"ev": 0.5}, {"angle": 45.0}], step_id=_UUID1, index=1)
     s2 = _step(
-        ["crop"], [{"left": 0, "top": 0, "right": 200, "bottom": 150}], step_id="step-002", index=2
+        ["crop"], [{"left": 0, "top": 0, "right": 200, "bottom": 150}], step_id=_UUID2, index=2
     )
     result = Compiler().compile(_plan(s1, s2), "full")
-    assert result.op_graph.ops[0].step_id == "step-001"
-    assert result.op_graph.ops[1].step_id == "step-001"
-    assert result.op_graph.ops[2].step_id == "step-002"
+    assert result.op_graph.ops[0].step_id == _UUID1
+    assert result.op_graph.ops[1].step_id == _UUID1
+    assert result.op_graph.ops[2].step_id == _UUID2
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +183,7 @@ def test_schema_rejects_unknown_op_name():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        HumanStep(step_id="s1", index=1, title="t", why="w", op_names=["sharpen"])
+        HumanStep(step_id=_UUID1, index=1, title="t", why="w", op_names=["sharpen"])
 
 
 def test_compiler_unknown_mode_raises_key_error():
@@ -287,7 +290,7 @@ def test_compiler_result_preserves_plan():
 
 def test_compiler_params_are_shallow_copied():
     original_params = {"ev": 1.0}
-    step = _step(["exposure"], [original_params], step_id="s1")
+    step = _step(["exposure"], [original_params], step_id=_UUID1)
     result = Compiler().compile(_plan(step), "full")
     result.op_graph.ops[0].params["ev"] = 999.0
     assert original_params["ev"] == 1.0  # step params not mutated
@@ -300,7 +303,7 @@ def test_compiler_params_are_shallow_copied():
 
 def test_human_step_op_params_round_trip():
     step = HumanStep(
-        step_id="s1",
+        step_id=_UUID1,
         index=1,
         title="t",
         why="w",
@@ -313,7 +316,7 @@ def test_human_step_op_params_round_trip():
 
 
 def test_human_step_op_params_defaults_empty():
-    step = HumanStep(step_id="s1", index=1, title="t", why="w", op_names=[])
+    step = HumanStep(step_id=_UUID1, index=1, title="t", why="w", op_names=[])
     assert step.op_params == []
 
 

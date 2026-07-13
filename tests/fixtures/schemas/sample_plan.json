@@ -2,7 +2,7 @@
   "plan_id": "plan-001",
   "steps": [
     {
-      "step_id": "step-001",
+      "step_id": "00000000-0000-0000-0000-000000000001",
       "index": 1,
       "title": "Crop to 4:3",
       "why": "Remove distracting edges",
@@ -10,7 +10,7 @@
       "op_params": [{"left": 0, "top": 0, "right": 800, "bottom": 600}]
     },
     {
-      "step_id": "step-002",
+      "step_id": "00000000-0000-0000-0000-000000000002",
       "index": 2,
       "title": "Brighten slightly",
       "why": "Subject is underexposed",

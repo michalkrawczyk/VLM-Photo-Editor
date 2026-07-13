@@ -1,7 +1,9 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from vlm_photo_editor.schema.ops import (
     Backend,
@@ -31,9 +33,9 @@ def test_plan_fixture():
     data = json.loads((FIXTURES / "sample_plan.json").read_text())
     plan = HumanPlan.model_validate(data)
     assert len(plan.steps) == 2
-    assert plan.steps[0].step_id == "step-001"
+    assert plan.steps[0].step_id == "00000000-0000-0000-0000-000000000001"
     assert plan.steps[0].title == "Crop to 4:3"
-    assert plan.steps[1].step_id == "step-002"
+    assert plan.steps[1].step_id == "00000000-0000-0000-0000-000000000002"
 
 
 def test_recipe_fixture():
@@ -89,21 +91,22 @@ def test_bounding_box_rejects_negative_origin():
 
 
 def test_compiler_result_round_trip():
+    _sid = "00000000-0000-0000-0000-000000000001"
     plan = HumanPlan(
-        steps=[HumanStep(step_id="s1", index=1, title="Crop", why="Better composition")]
+        steps=[HumanStep(step_id=_sid, index=1, title="Crop", why="Better composition")]
     )
     graph = OpGraph(
         ops=[
             Op(
                 op_name=OpName.CROP,
                 params={"left": 0, "top": 0, "right": 400, "bottom": 300},
-                step_id="s1",
+                step_id=_sid,
             )
         ]
     )
     result = CompilerResult(plan=plan, op_graph=graph)
     restored = CompilerResult.model_validate(result.model_dump())
-    assert restored.plan.steps[0].step_id == "s1"
+    assert restored.plan.steps[0].step_id == _sid
     assert restored.op_graph.ops[0].op_name == OpName.CROP
 
 
@@ -177,6 +180,49 @@ def test_batch_filename_rejects_null_bytes() -> None:
 # ---------------------------------------------------------------------------
 # S-B2 — schema __init__ exports AcceptMode, FramingIntent, EditDelta
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# PLN-B6 — step_id must be a valid UUID string
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "",
+        "s1",
+        "step-001",
+        "not-a-uuid",
+        "123",
+        "c2f5e813-22b4-5d9g-0f7e-3g4b1d6c8e90",  # VLM hallucination pattern
+    ],
+)
+def test_human_step_coerces_non_uuid_step_id(bad_id: str) -> None:
+    step = HumanStep(step_id=bad_id, index=1, title="t", why="w")
+    assert re.match(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        step.step_id,
+        re.IGNORECASE,
+    )
+    assert step.step_id != bad_id
+
+
+def test_human_step_accepts_valid_uuid_step_id() -> None:
+    import uuid
+
+    sid = str(uuid.uuid4())
+    step = HumanStep(step_id=sid, index=1, title="t", why="w")
+    assert step.step_id == sid
+
+
+def test_human_step_default_step_id_is_valid_uuid() -> None:
+    step = HumanStep(index=1, title="t", why="w")
+    assert re.match(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        step.step_id,
+        re.IGNORECASE,
+    )
 
 
 def test_schema_init_exports() -> None:
