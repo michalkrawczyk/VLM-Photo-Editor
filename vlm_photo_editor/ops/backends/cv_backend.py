@@ -34,6 +34,8 @@ def apply_inpaint(container: ImageContainer, op: Op) -> ImageContainer:
 
     radius = int(op.params.get("inpaint_radius", 5))
     method_name = op.params.get("method", "telea")
+    if method_name not in {"telea", "ns"}:
+        raise ValueError(f"inpaint method {method_name!r} must be 'telea' or 'ns'")
     flags = cv2.INPAINT_NS if method_name == "ns" else cv2.INPAINT_TELEA
 
     inpainted_8 = cv2.inpaint(pixels_8, mask_uint8, radius, flags)

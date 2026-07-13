@@ -17,6 +17,8 @@ class AppSettings:
     no_genai: bool = False
     # PS mode: "auto" = normal, "strict" = PS-expressible ops only, "none" = no PS backend.
     ps_mode: Literal["auto", "strict", "none"] = "auto"
+    # Default model for GENAI inpaint/background ops (can be overridden per-op via params["model"]).
+    genai_model: str = "black-forest-labs/flux-fill-dev"
 
 
 _settings = AppSettings()

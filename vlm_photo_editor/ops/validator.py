@@ -21,6 +21,7 @@ _PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "angle": (-360.0, 360.0),
     "temperature": (1000.0, 20000.0),
     "strength": (0.0, 1.0),
+    "inpaint_radius": (1, 100),
 }
 
 # Ops that change image dimensions cannot be confined to a bbox.

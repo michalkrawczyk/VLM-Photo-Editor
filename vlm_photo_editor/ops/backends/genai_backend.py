@@ -6,7 +6,6 @@ from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.ops import Op
 from vlm_photo_editor.schema.recipe import GenAIOp
 
-_DEFAULT_MODEL = "black-forest-labs/flux-fill-dev"
 _KNOWN_OP_KEYS = {"prompt", "model", "n", "seed"}
 
 
@@ -22,11 +21,17 @@ def apply(container: ImageContainer, op: Op) -> tuple[ImageContainer, GenAIOp]:
 
     extra_kwargs = {k: v for k, v in op.params.items() if k not in _KNOWN_OP_KEYS}
 
+    prompt = op.params.get("prompt")
+    if not prompt:
+        raise ValueError(f"Op {op.op_name!r} with GENAI backend requires 'prompt' in params")
+
+    from vlm_photo_editor.config.settings import get_settings
+
     result, genai_op, _ = run_background_pipeline(
         container,
         mask,
-        prompt=op.params["prompt"],
-        model=op.params.get("model", _DEFAULT_MODEL),
+        prompt=prompt,
+        model=op.params.get("model") or get_settings().genai_model,
         step_id=op.step_id,
         n_candidates=op.params.get("n", 3),
         seed=op.params.get("seed"),

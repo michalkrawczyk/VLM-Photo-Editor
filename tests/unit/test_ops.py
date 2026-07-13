@@ -302,6 +302,92 @@ def test_cv_inpaint_raises_without_bbox() -> None:
         apply_inpaint(container, op)
 
 
+# ---------------------------------------------------------------------------
+# OPS-B3 — bbox_to_mask rejects negative origin
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "x,y",
+    [(-1, 0), (0, -1), (-5, -3)],
+)
+def test_bbox_to_mask_rejects_negative_origin(x: int, y: int) -> None:
+    container = _container()
+    bbox = BoundingBox(x=max(x, 0), y=max(y, 0), width=10, height=10)
+    # Directly construct a bbox-like object with negative coords to bypass Pydantic
+    from vlm_photo_editor.schema.ops import BoundingBox as BB
+
+    class _BadBox(BB):
+        model_config = {"arbitrary_types_allowed": True}
+
+        @classmethod
+        def _bad(cls, x: int, y: int) -> "BB":
+            obj = cls.__new__(cls)
+            object.__setattr__(obj, "x", x)
+            object.__setattr__(obj, "y", y)
+            object.__setattr__(obj, "width", 10)
+            object.__setattr__(obj, "height", 10)
+            return obj
+
+    bad_bbox = _BadBox._bad(x, y)
+    with pytest.raises(ValueError, match="non-negative"):
+        bbox_to_mask(container, bad_bbox)
+
+
+# ---------------------------------------------------------------------------
+# OPS-B4 — genai_backend raises ValueError (not KeyError) for missing prompt
+# ---------------------------------------------------------------------------
+
+
+def test_genai_backend_raises_valueerror_for_missing_prompt() -> None:
+    from vlm_photo_editor.ops.backends.genai_backend import apply
+
+    container = _container()
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={},  # no prompt
+        backend=Backend.GENAI,
+        step_id="s1",
+    )
+    with pytest.raises(ValueError, match="requires 'prompt'"):
+        apply(container, op)
+
+
+# ---------------------------------------------------------------------------
+# OPS-D2 — inpaint_radius bounds; method validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "radius",
+    [0, 101, -1],
+)
+def test_validator_rejects_inpaint_radius_out_of_bounds(radius: int) -> None:
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={"inpaint_radius": radius},
+        backend=Backend.OPENCV,
+        step_id="s1",
+    )
+    with pytest.raises(ValueError, match="out of bounds"):
+        validate_op(op)
+
+
+def test_cv_inpaint_rejects_invalid_method() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_inpaint
+
+    container, bbox = _container_with_spot()
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={"method": "biharmonic"},
+        bbox=bbox,
+        backend=Backend.OPENCV,
+        step_id="s1",
+    )
+    with pytest.raises(ValueError, match="'telea' or 'ns'"):
+        apply_inpaint(container, op)
+
+
 def test_cv_inpaint_via_executor_end_to_end() -> None:
     container, bbox = _container_with_spot(spot_value=0)
     op = Op(
