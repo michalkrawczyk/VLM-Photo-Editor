@@ -119,10 +119,16 @@ def test_compiler_step_id_linkage():
 # ---------------------------------------------------------------------------
 
 
-def test_compiler_pads_missing_params_validator_catches():
-    # crop needs left/top/right/bottom; op_params omitted → padded with {} → validator rejects
-    step = _step(["crop"], [])
-    with pytest.raises(CompilerError, match="missing required param"):
+@pytest.mark.parametrize(
+    "op_names,op_params",
+    [
+        (["crop"], []),  # fewer params than names
+        (["exposure"], [{"ev": 1.0}, {"ev": 2.0}]),  # more params than names
+    ],
+)
+def test_compiler_rejects_mismatched_op_params_length(op_names, op_params):
+    step = _step(op_names, op_params)
+    with pytest.raises(CompilerError, match="op_params length"):
         Compiler().compile(_plan(step), "full")
 
 

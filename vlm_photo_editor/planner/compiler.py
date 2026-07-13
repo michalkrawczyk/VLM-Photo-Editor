@@ -72,7 +72,12 @@ class Compiler:
 
         for step in plan.steps:
             n = len(step.op_names)
-            params_list = list(step.op_params) + [{}] * max(0, n - len(step.op_params))
+            if len(step.op_params) != n:
+                raise CompilerError(
+                    f"Step {step.step_id!r}: op_params length ({len(step.op_params)}) "
+                    f"does not match op_names length ({n})"
+                )
+            params_list = list(step.op_params)
 
             for op_name_str, params in zip(step.op_names, params_list):
                 try:
