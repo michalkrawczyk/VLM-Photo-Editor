@@ -74,11 +74,6 @@ edit_graph = build_edit_graph()
 
 ### T2: No test for revision error path in UI (uncovers B2)
 
-### T5: `test_raw_16bit` always skipped — no RAW fixture in repo
-**File:** [tests/unit/test_imageio.py:83-88](tests/unit/test_imageio.py#L83)
-
-The only test verifying 16-bit RAW handling is permanently skipped because the fixture file doesn't exist. This means the entire RAW codepath is untested in CI.
-
 ---
 
 ## DESIGN ISSUES (continued)
@@ -221,42 +216,6 @@ Fix: remove the field or populate it from `subprocess.check_output(["git", "bran
 ## Batch 2 Review — Security & Configuration
 
 Review date: 2026-06-26. Files: `secrets/store.py`, `secrets/redaction.py`, `config/policy.py`, `config/registry.py`, `config/settings.py`, `models/registry.py`.
-
----
-
-### Bugs & Correctness
-
-**SEC-B2: `record.args = ()` breaks log formatting when `msg` has `%` placeholders**
-**File:** [vlm_photo_editor/secrets/redaction.py:11-12](vlm_photo_editor/secrets/redaction.py#L11)
-
-```python
-record.msg = _KEY_PATTERN.sub("[REDACTED]", str(record.msg))
-record.args = ()
-```
-
-If a logger is called with `logger.info("key=%s value=%s", key, val)`, `record.msg` is `"key=%s value=%s"` and `record.args` is `(key, val)`. Clearing `args` to `()` before the `Formatter` calls `msg % args` causes a `TypeError` (too few args). The `[REDACTED]` substitution also runs on the unformatted template, not the rendered string.
-
-Fix: format first, then redact:
-```python
-record.msg = _KEY_PATTERN.sub("[REDACTED]", record.getMessage())
-record.args = ()
-```
-
----
-
-
-**SEC-B5: `ModelRegistry.set()` silently drops `vllm_base_url`, `gguf_path`, `max_images_per_call`**
-**File:** [vlm_photo_editor/config/registry.py:78-85](vlm_photo_editor/config/registry.py#L78)
-
-```python
-self._entries[role] = ModelEntry(
-    model, existing.provider, existing.hf_repo, existing.loader
-)
-```
-
-`vllm_base_url`, `gguf_path`, and `max_images_per_call` are silently reset to defaults. A vLLM entry with a non-default `base_url` loses it on the first `set()` call.
-
-Fix: use `dataclasses.replace(existing, model_id=model)`.
 
 ---
 
@@ -404,36 +363,6 @@ Fix: document as a known limitation; log a warning when `bit_depth == 16`; consi
 
 ---
 
-**OPS-B3: `mask.py` — negative `bbox.x` / `bbox.y` silently wraps via numpy indexing**
-**File:** [vlm_photo_editor/ops/mask.py:11-14](vlm_photo_editor/ops/mask.py#L11)
-
-```python
-mask[bbox.y : y2, bbox.x : x2] = True
-```
-
-If `bbox.x` or `bbox.y` is negative, numpy treats it as an offset from the end of the axis, producing an incorrect (possibly off-by-dimension) mask with no error. No check exists in `bbox_to_mask` or in the `BoundingBox` schema that `x ≥ 0` and `y ≥ 0`.
-
-Fix: add early guard:
-```python
-if bbox.x < 0 or bbox.y < 0:
-    raise ValueError(f"BoundingBox origin ({bbox.x}, {bbox.y}) must be non-negative")
-```
-
----
-
-**OPS-B4: `genai_backend.apply` raises bare `KeyError` for GENAI ops without a `prompt`**
-**File:** [vlm_photo_editor/ops/backends/genai_backend.py:28](vlm_photo_editor/ops/backends/genai_backend.py#L28)
-
-```python
-prompt=op.params["prompt"],
-```
-
-`validate_op` only requires `prompt` for ops in `_INPAINT_OPS` with GENAI backend. Any other op set to `Backend.GENAI` (e.g. `EXPOSURE` with GENAI backend — a planner error or crafted input) reaches `genai_backend.apply` and raises a bare `KeyError("prompt")` with no actionable error message.
-
-Fix: add a validator rule that `Backend.GENAI` always requires `prompt`, or use `op.params.get("prompt")` with a prior `if not prompt: raise ValueError(...)`.
-
----
-
 ### Security & Data Integrity
 
 **OPS-D1: `genai_backend` forwards arbitrary `op.params` as `**extra_kwargs` to pipeline**
@@ -447,21 +376,6 @@ result, genai_op, _ = run_background_pipeline(..., **extra_kwargs)
 Any key in `op.params` not in `_KNOWN_OP_KEYS` is forwarded directly to `run_background_pipeline`. An untrusted or planner-generated op with unexpected keys (e.g. `"mask"`) can override internal pipeline arguments without triggering validation. The filter is also fragile: `_KNOWN_OP_KEYS` must be manually synchronised with `_REQUIRED_PARAMS` in validator.py.
 
 Fix: raise `ValueError` for any key not in an explicit allowlist of passthrough kwargs rather than forwarding unknowns silently.
-
----
-
-**OPS-D2: `cv_backend.apply_inpaint` — `inpaint_radius` unbounded, `method` silently accepts invalid values**
-**File:** [vlm_photo_editor/ops/backends/cv_backend.py:35-37](vlm_photo_editor/ops/backends/cv_backend.py#L35)
-
-```python
-radius = int(op.params.get("inpaint_radius", 5))
-method_name = op.params.get("method", "telea")
-flags = cv2.INPAINT_NS if method_name == "ns" else cv2.INPAINT_TELEA
-```
-
-`inpaint_radius` has no upper bound. A value of e.g. `10000` causes cv2.inpaint to explore an enormous neighborhood, exhausting memory or running for minutes. `method` silently falls back to TELEA for any invalid string (typos are swallowed).
-
-Fix: add `"inpaint_radius": (1, 100)` to `_PARAM_BOUNDS` in validator.py; validate `method` against `{"telea", "ns"}` with an explicit `ValueError` for other values.
 
 ---
 
@@ -513,19 +427,6 @@ Fix: move the `allowed_ops_for_mode` call inside the try block, or catch `KeyErr
 
 ---
 
-**PLN-B2: `op_params` shorter than `op_names` silently padded with empty dicts**
-**File:** [vlm_photo_editor/planner/compiler.py:66](vlm_photo_editor/planner/compiler.py#L66)
-
-```python
-params_list = list(step.op_params) + [{}] * max(0, n - len(step.op_params))
-```
-
-When the LLM returns a step with fewer `op_params` entries than `op_names`, the compiler silently pads the shortfall with empty dicts and continues. The resulting ops have no params and fail later at `validate_op_graph` with `"missing required param"` — an error that doesn't identify the plan step as the source of the mismatch. This also masks schema violation S-B1 (`op_names`/`op_params` parity validator).
-
-Fix: raise `CompilerError` immediately if `len(step.op_params) != len(step.op_names)`. Schema validator S-B1 should catch this earlier; the compiler should not silently paper over it.
-
----
-
 **PLN-B3: `_INPAINT_OPS` defined a third time in `compiler.py`**
 **File:** [vlm_photo_editor/planner/compiler.py:40](vlm_photo_editor/planner/compiler.py#L40)
 
@@ -535,15 +436,6 @@ Fix: define once in `ops/constants.py` and import in all three files.
 
 ---
 
-
-**PLN-B6: Step-ID stability not enforced — LLM can omit `step_id` and Pydantic silently generates new UUID**
-**File:** [vlm_photo_editor/schema/plan.py:12](vlm_photo_editor/schema/plan.py#L12)
-
-`step_id: str = Field(default_factory=lambda: str(uuid.uuid4()))` makes the field optional from the LLM's perspective. If the model returns a step without `step_id`, Pydantic silently generates a fresh UUID. During revision, every step in the new response gets a new UUID regardless of whether it changed, breaking the stable ID linkage between compiled ops and plan steps (Principle 3). There is no mechanism to re-use prior step IDs across revisions.
-
-Fix: add a post-parse validator that requires `step_id` to be a non-empty UUID-format string. For revisions, pass the existing step IDs to the LLM in the prompt and verify returned IDs match for unchanged steps.
-
----
 
 ### Security & Data Integrity
 
@@ -883,25 +775,17 @@ All issues across all batches, sorted by severity.
 | D7 | Medium | quality.py:47 | `seam_metric` threshold 10× `AppSettings` default; setting never read |
 | D13 | Medium | — | FRAME op planner–executor coordination undefined |
 | D15 | Medium | — | Save path UX undefined; no native dialog or structured tmp layout |
-| T5 | Medium | test_imageio.py:83 | `test_raw_16bit` permanently skipped; RAW codepath untested |
 | S-C1 | Medium | ops.py:67 | `Op.params: dict[str, Any]` — type erasure, no per-op validation |
 | S-D2 | Medium | recipe.py:11 | `GenAIOp.prompt`/`model` accept empty strings |
 | S-D3 | Medium | recipe.py:20 | `source_path` unvalidated bare string — replay path risk |
-| SEC-B2 | Medium | redaction.py:11 | `record.args = ()` before format — `TypeError` on `%`-style log calls |
-| SEC-B5 | Medium | config/registry.py:78 | `ModelRegistry.set()` silently drops `vllm_base_url`, `gguf_path`, `max_images_per_call` |
 | SEC-D2 | Medium | registry.py:95, settings.py:22 | Module-level singletons mutated across Streamlit sessions |
 | SEC-D3 | Medium | models/registry.py:67 | API key in constructor kwarg — exposed in exception repr/traceback |
 | SEC-C4 | Medium | redaction.py | `install_redaction_filter()` not auto-called; logs before startup skip redaction |
 | IO-B3 | Medium | container.py:11 | `bit_depth` and `pixels.dtype` can be inconsistent — no validation |
 | IO-D1 | Medium | loaders.py:45 | PIL file handle not closed — fd leak under batch load |
 | IO-D2 | Medium | loaders.py:33 | RAW loader discards ICC profile and EXIF; container fields always empty for RAW |
-| OPS-B3 | Medium | mask.py:11 | Negative `bbox.x`/`bbox.y` silently wraps via numpy indexing — wrong mask |
-| OPS-B4 | Medium | genai_backend.py:28 | Bare `KeyError` for GENAI ops without `prompt` — no actionable error |
 | OPS-D1 | Medium | genai_backend.py:23 | Arbitrary `op.params` forwarded as `**extra_kwargs` — injection risk |
-| OPS-D2 | Medium | cv_backend.py:35 | `inpaint_radius` unbounded — OOM/hang risk; `method` silently accepts invalid values |
-| PLN-B2 | Medium | compiler.py:66 | `op_params` shorter than `op_names` silently padded with `{}` — masks schema violation S-B1, generates unhelpful errors |
 | PLN-B3 | Medium | compiler.py:40 | `_INPAINT_OPS` defined third time (also executor.py:12, validator.py:18) — three-way silent divergence risk |
-| PLN-B6 | Medium | plan.py:12 | `step_id` has `default_factory` — LLM can omit it, Pydantic silently generates new UUID; step-ID stability not enforced across revisions |
 | PLN-D2 | Medium | compiler.py:48 | Caller-supplied `mode` never checked against `plan.mode` — full-mode permissions can apply to a background-mode plan |
 | S-C3 | Low | plan.py:23 | `HumanPlan.mode` and `EditDelta.mode` unvalidated bare strings |
 | S-C5 | Low | prefs.py:24 | `Preferences.version` uses UUID — no ordering or migration semantics |
