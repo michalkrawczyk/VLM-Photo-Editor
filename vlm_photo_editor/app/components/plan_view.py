@@ -35,6 +35,20 @@ def render(plan: HumanPlan, op_graph: OpGraph | None = None, *, executed: bool =
                         f" via {op.backend.value} [{op.risk_tier.value} risk]"
                     )
 
+    if op_graph:
+        from vlm_photo_editor.ops.constants import INPAINT_OPS as _INPAINT_OPS
+        from vlm_photo_editor.schema.ops import Backend as _Backend
+
+        opencv_inpaint = any(
+            op.backend == _Backend.OPENCV and op.op_name in _INPAINT_OPS for op in op_graph.ops
+        )
+        bbox = state.get("bbox")
+        if opencv_inpaint and not (bbox and bbox.get("width", 0) > 0):
+            st.warning(
+                "This plan requires a bounding box (OpenCV inpaint). "
+                "Expand 'Region Selection (BBox)' above and draw a rectangle before accepting."
+            )
+
     st.divider()
     col_acc, col_chg = st.columns(2)
     with col_acc:

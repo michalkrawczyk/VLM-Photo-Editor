@@ -226,6 +226,20 @@ def _do_execute() -> None:
     op_graph: OpGraph = state.get("current_opgraph")
     bbox_raw = state.get("bbox")
 
+    from vlm_photo_editor.ops.constants import INPAINT_OPS as _INPAINT_OPS
+    from vlm_photo_editor.schema.ops import Backend as _Backend
+
+    needs_bbox = any(
+        op.backend == _Backend.OPENCV and op.op_name in _INPAINT_OPS for op in op_graph.ops
+    )
+    if needs_bbox and not (bbox_raw and bbox_raw.get("width", 0) > 0):
+        state.set(
+            "error",
+            "This plan uses the OpenCV inpaint backend for region editing, which requires a "
+            "bounding box. Expand 'Region Selection (BBox)' and draw a rectangle before applying.",
+        )
+        return
+
     # Inject bbox into region-targeted ops if one was drawn.
     # bbox_raw stores normalized coords [0, 1]; scale to image pixels here.
     if bbox_raw and bbox_raw.get("width", 0) > 0 and bbox_raw.get("height", 0) > 0:
