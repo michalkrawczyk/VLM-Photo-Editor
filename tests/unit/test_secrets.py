@@ -123,3 +123,13 @@ def test_model_registry_all_roles():
     roles = reg.all_roles()
     assert "planner" in roles
     assert "critic" in roles
+
+
+def test_redaction_filter_formats_percent_args():
+    """SEC-B2: key in args must be redacted after getMessage() formats the string."""
+    key = "sk-ant-abc123abcdefghij"
+    record = logging.LogRecord("test", logging.INFO, "", 0, "api key=%s", (key,), None)
+    RedactionFilter().filter(record)
+    assert "[REDACTED]" in record.msg
+    assert "sk-ant-" not in record.msg
+    assert record.args == ()

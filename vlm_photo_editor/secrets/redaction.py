@@ -8,7 +8,11 @@ _KEY_PATTERN = re.compile(r"(?:sk-ant-|sk-|r8_)[A-Za-z0-9\-]{20,}")
 
 class RedactionFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = _KEY_PATTERN.sub("[REDACTED]", str(record.msg))
+        try:
+            formatted = record.getMessage()
+        except TypeError:
+            formatted = str(record.msg)
+        record.msg = _KEY_PATTERN.sub("[REDACTED]", formatted)
         record.args = ()
         return True
 
