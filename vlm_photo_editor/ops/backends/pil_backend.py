@@ -150,8 +150,19 @@ def _frame(container: ImageContainer, params: dict) -> ImageContainer:
     if target is None:
         return container.copy()
     target_w, target_h = target
-    left = (w - target_w) // 2
-    top = (h - target_h) // 2
+
+    focus_keys = ("focus_x", "focus_y", "focus_w", "focus_h")
+    if all(k in params for k in focus_keys):
+        cx = float(params["focus_x"]) + float(params["focus_w"]) / 2
+        cy = float(params["focus_y"]) + float(params["focus_h"]) / 2
+        left = int(round(cx - target_w / 2))
+        top = int(round(cy - target_h / 2))
+    else:
+        left = (w - target_w) // 2
+        top = (h - target_h) // 2
+
+    left = max(0, min(left, w - target_w))
+    top = max(0, min(top, h - target_h))
     right = left + target_w
     bottom = top + target_h
     result = container.copy()

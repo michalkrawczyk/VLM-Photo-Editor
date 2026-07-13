@@ -10,6 +10,7 @@ _log = logging.getLogger(__name__)
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from vlm_photo_editor.models.registry import build_client
+from vlm_photo_editor.schema.detection import DetectedSubject
 from vlm_photo_editor.schema.ops import FramingIntent, FramingMode
 from vlm_photo_editor.schema.plan import HumanPlan
 from vlm_photo_editor.schema.prefs import Preferences
@@ -32,6 +33,7 @@ class Planner:
         prefs: Preferences | None = None,
         mode: str = "full",
         framing_intent: FramingIntent | None = None,
+        detected_subject: DetectedSubject | None = None,
     ) -> HumanPlan:
         from vlm_photo_editor.config.settings import get_debug_settings
         from vlm_photo_editor.ops.backends.pil_backend import frame_target_size
@@ -40,8 +42,16 @@ class Planner:
             framing_intent, container.width, container.height, frame_target_size
         )
         messages = [
-            SystemMessage(content=build_system_prompt(mode, prefs, framing_intent, target_size)),
-            HumanMessage(content=self._user_content(container, intent, composition, target_size)),
+            SystemMessage(
+                content=build_system_prompt(
+                    mode, prefs, framing_intent, target_size, detected_subject
+                )
+            ),
+            HumanMessage(
+                content=self._user_content(
+                    container, intent, composition, target_size, detected_subject
+                )
+            ),
         ]
         if get_debug_settings().vlm_prompt_debug:
             _log.debug("vlm_prompt system=%s user_text=%s", messages[0].content, intent)
@@ -57,6 +67,7 @@ class Planner:
         prefs: Preferences | None = None,
         mode: str = "full",
         framing_intent: FramingIntent | None = None,
+        detected_subject: DetectedSubject | None = None,
     ) -> HumanPlan:
         from vlm_photo_editor.config.settings import get_debug_settings
         from vlm_photo_editor.ops.backends.pil_backend import frame_target_size
@@ -70,9 +81,15 @@ class Planner:
             "Revise to incorporate feedback. Keep step_ids stable where step is unchanged."
         )
         messages = [
-            SystemMessage(content=build_system_prompt(mode, prefs, framing_intent, target_size)),
+            SystemMessage(
+                content=build_system_prompt(
+                    mode, prefs, framing_intent, target_size, detected_subject
+                )
+            ),
             HumanMessage(
-                content=self._user_content(container, user_text, composition, target_size)
+                content=self._user_content(
+                    container, user_text, composition, target_size, detected_subject
+                )
             ),
         ]
         if get_debug_settings().vlm_prompt_debug:
@@ -100,12 +117,20 @@ class Planner:
         intent: str,
         composition: str | None = None,
         target_size: tuple[int, int] | None = None,
+        detected_subject: DetectedSubject | None = None,
     ) -> list:
         b64 = self._encode_image(container)
         text = f"Image dimensions: {container.width}x{container.height} pixels\n"
         if composition and target_size:
             tw, th = target_size
             text += f"Target frame: {tw}x{th} px (composition: {composition})\n"
+        if detected_subject is not None:
+            b = detected_subject.bbox
+            text += (
+                f"Detected subject: {detected_subject.label} "
+                f"bbox=({b.x},{b.y},{b.width},{b.height}) "
+                f"confidence={detected_subject.confidence:.2f}\n"
+            )
         text += f"Edit intent: {intent}"
         return [
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},

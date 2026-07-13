@@ -20,6 +20,22 @@ _LOADER_DESCRIPTIONS: dict[str, str] = {
     "vllm": "vLLM server — OpenAI-compatible endpoint (GPU, highest throughput)",
 }
 
+_CHAR_FOCUS_DESCRIPTIONS: dict[str, str] = {
+    "mediapipe": "MediaPipe Object Detector (.tflite, CPU-friendly)",
+    "yolo_onnx": "YOLO via ONNX Runtime (.onnx, manual pre/post-processing)",
+    "u2netp": "U2-Netp salient-object detector (.onnx, class-agnostic)",
+}
+_CHAR_FOCUS_PATH_ATTR: dict[str, str] = {
+    "mediapipe": "mediapipe_model_path",
+    "yolo_onnx": "yolo_onnx_model_path",
+    "u2netp": "u2netp_model_path",
+}
+_CHAR_FOCUS_REQ_NAME: dict[str, str] = {
+    "mediapipe": "mediapipe",
+    "yolo_onnx": "onnxruntime",
+    "u2netp": "onnxruntime",
+}
+
 from vlm_photo_editor.app import state
 from vlm_photo_editor.app.stubs import AVAILABLE_MODELS, LOCAL_MODEL_IDS, MODEL_ROLES, PROVIDERS
 from vlm_photo_editor.config.registry import AGGREGATOR_PRESETS, CRITIC_PRESETS, get_registry
@@ -202,3 +218,49 @@ def render() -> None:
                         st.success("Installed. Reload the page to refresh status.")
                     else:
                         st.error("Install failed — check the terminal for details.")
+
+    with st.expander("Character Focus", expanded=False):
+        st.caption(
+            "Local subject detection (zero API cost). Each backend needs its package "
+            "installed and a model file path configured below — no auto-download."
+        )
+
+        @st.cache_data(ttl=60)
+        def _cf_status() -> set[str]:
+            from vlm_photo_editor.detection import available_backends
+
+            return set(available_backends())
+
+        cf_installed = _cf_status()
+        cf_settings = get_settings()
+        for backend, desc in _CHAR_FOCUS_DESCRIPTIONS.items():
+            col1, col2, col3 = st.columns([2, 4, 1])
+            with col1:
+                st.write(f"**{backend}**")
+            with col2:
+                st.caption(desc)
+
+            path_attr = _CHAR_FOCUS_PATH_ATTR[backend]
+            current_path = getattr(cf_settings, path_attr) or ""
+            with col3:
+                if backend not in cf_installed:
+                    badge_text, badge_color = "package missing", "red"
+                elif not current_path:
+                    badge_text, badge_color = "path not set", "orange"
+                else:
+                    badge_text, badge_color = "ready", "green"
+                st.markdown(
+                    f"<span style='color:{badge_color};font-weight:bold'>{badge_text}</span>",
+                    unsafe_allow_html=True,
+                )
+
+            if backend not in cf_installed:
+                st.code(f"pip install -r requirements-{_CHAR_FOCUS_REQ_NAME[backend]}.txt")
+            else:
+                new_path = st.text_input(
+                    f"{backend} model path",
+                    value=current_path,
+                    key=f"cf_path_{backend}",
+                )
+                if new_path != current_path:
+                    setattr(cf_settings, path_attr, new_path or None)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from vlm_photo_editor.config.policy import EditMode, allowed_ops_for_mode
+from vlm_photo_editor.schema.detection import DetectedSubject
 from vlm_photo_editor.schema.ops import FramingIntent, FramingMode
 from vlm_photo_editor.schema.prefs import Preferences
 from vlm_photo_editor.templates import framing as _framing
@@ -11,6 +12,7 @@ def build_system_prompt(
     prefs: Preferences | None,
     framing_intent: FramingIntent | None,
     target_size: tuple[int, int] | None,
+    detected_subject: DetectedSubject | None = None,
 ) -> str:
     from vlm_photo_editor.config.settings import get_settings
 
@@ -20,6 +22,7 @@ def build_system_prompt(
     if settings.ps_mode == "strict":
         lines += _ps_strict_lines()
     lines += _framing_lines(framing_intent, target_size, prefs)
+    lines += _subject_detection_lines(detected_subject)
     lines += _prefs_lines(prefs, framing_intent)
     return "\n".join(lines)
 
@@ -173,6 +176,20 @@ def _recommend_best_lines(
             lines.append("  FRAMING PREFERENCES (soft constraints):")
             lines += [f"    - {d}" for d in all_prefs]
     return lines
+
+
+def _subject_detection_lines(detected_subject: DetectedSubject | None) -> list[str]:
+    if detected_subject is None:
+        return []
+    b = detected_subject.bbox
+    return [
+        "",
+        "SUBJECT DETECTION:",
+        f"  Label: {detected_subject.label}  "
+        f"(confidence {detected_subject.confidence:.2f}, source: {detected_subject.source})",
+        f"  Bounding box (px): x={b.x} y={b.y} width={b.width} height={b.height}",
+        "  Anchor framing/crop/region-edit reasoning on this box — it is verified, not a guess.",
+    ]
 
 
 def _prefs_lines(prefs: Preferences | None, framing_intent: FramingIntent | None) -> list[str]:

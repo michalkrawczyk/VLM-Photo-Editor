@@ -21,6 +21,10 @@ class AppSettings:
     genai_model: str = "black-forest-labs/flux-fill-dev"
     # Retries after first crop-bounds failure (not counting initial attempt).
     max_crop_retries: int = 3
+    # Character Focus (P13) detector model files — no auto-download, user supplies the path.
+    mediapipe_model_path: str | None = None
+    yolo_onnx_model_path: str | None = None
+    u2netp_model_path: str | None = None
 
 
 _settings = AppSettings()

@@ -1,8 +1,10 @@
 from .batch import BatchImageRecord, ImageStatus
+from .detection import DetectedSubject
 from .ops import (
     AcceptMode,
     Backend,
     BoundingBox,
+    CharacterFocusBackend,
     FramingIntent,
     FramingMode,
     Op,
@@ -24,6 +26,8 @@ __all__ = [
     "FramingIntent",
     "AcceptMode",
     "BoundingBox",
+    "CharacterFocusBackend",
+    "DetectedSubject",
     "HumanPlan",
     "HumanStep",
     "CompilerResult",

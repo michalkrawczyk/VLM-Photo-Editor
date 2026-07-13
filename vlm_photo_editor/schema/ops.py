@@ -54,6 +54,13 @@ class AcceptMode(str, Enum):
     FULL_AUTO = "full_auto"  # always auto-approve
 
 
+class CharacterFocusBackend(str, Enum):
+    OFF = "off"
+    MEDIAPIPE = "mediapipe"
+    YOLO_ONNX = "yolo_onnx"
+    U2NETP = "u2netp"
+
+
 class BoundingBox(BaseModel):
     x: int = Field(ge=0)
     y: int = Field(ge=0)

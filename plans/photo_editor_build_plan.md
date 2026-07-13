@@ -328,3 +328,78 @@ Existing `"transformers"` and `"ollama"` loaders are unaffected and remain the d
 - [ ] `FramingIntent.user_instruction` with unsafe content is blocked before the planner call.
 - [ ] When the classification model is absent, denylist still runs and a `structlog` warning is emitted.
 
+---
+
+## Step P13 — Character Focus (Local Subject Detection)
+
+**What.** A user-toggleable "Character Focus" setting — `Off` (default), `MediaPipe`,
+`YOLO (ONNX)`, or `U2-Netp` — that runs a local, zero-API-cost detector to find the
+primary subject's bounding box before planning, and feeds it to both the planner
+(as verified prompt context) and the `FRAME` executor (as a real crop anchor).
+
+**Why.** Closes D13 (`plans/issues.md`): today `_frame()` center-crops with no subject
+awareness, and the planner guesses pixel coordinates purely from prose over the image.
+A local detector gives ground-truth geometry for framing/cropping at zero added
+latency-sensitive API cost, without making any detection library a hard dependency.
+
+**Key functionality.**
+- New `CharacterFocusBackend` enum (`schema/ops.py`): `off` / `mediapipe` / `yolo_onnx` / `u2netp`.
+- New `DetectedSubject` model (`schema/detection.py`): `bbox`, `label`, `confidence`, `source`.
+- New `vlm_photo_editor/detection/` module (shape mirrors `background/providers/`):
+  `available_backends()` — probes `importlib.util.find_spec("mediapipe")` /
+  `find_spec("onnxruntime")`, same pattern as `models/registry.py::available_loaders()`
+  — and `detect_subject(container, backend)` dispatching to one backend file per
+  option. MediaPipe uses `mediapipe.tasks.python.vision.ObjectDetector`; YOLO uses
+  `onnxruntime.InferenceSession` with manual preprocessing (letterbox resize,
+  normalize, NCHW) and `cv2.dnn.NMSBoxes` postprocessing — bbox-only now, a future
+  `-seg` export slots in as a new backend file with no interface change; U2-Netp also
+  runs via `onnxruntime`, returning the bbox of the largest salient-mask component.
+- Each backend's model file is located via a new `AppSettings` path field
+  (`mediapipe_model_path`, `yolo_onnx_model_path`, `u2netp_model_path` — same
+  "no auto-download, user supplies the path" precedent as the existing `gguf_path`
+  field). A backend whose package is installed but whose path is unset/missing fails
+  loudly with a clear error — never a silent fallback to another backend.
+- UI: a "Character Focus" selectbox next to the existing Composition selectbox in
+  `app/main.py`; its options are `["off"] + available_backends()` — unavailable
+  backends are absent from the list entirely, not shown disabled. A matching
+  "Character Focus" expander in `app/components/settings.py` (same shape as the
+  existing "Local Model Backends" expander) shows per-backend install/path status.
+- Planner integration: `Planner.plan`/`revise` (`agents/planner.py`) and `EditState`
+  (`agents/edit_flow.py`) gain an optional `detected_subject: DetectedSubject | None`
+  parameter. `templates/planner.py` adds a `SUBJECT DETECTION` prompt block (label,
+  pixel bbox, source, confidence, and an instruction to anchor framing/crop/region-edit
+  reasoning on it) alongside the existing `FRAMING INSTRUCTIONS` block; the bbox is
+  also surfaced in the user-facing image message next to `target_size`.
+  Detection is a deterministic pre-pass run once before planning — not exposed to the
+  planner as a callable tool — since exactly one detection per image is always useful
+  context and an agentic tool call would add latency/nondeterminism for no benefit.
+- Executor integration: `Compiler.compile()` (`planner/compiler.py`) gains an optional
+  `detected_subject` parameter; when set, it injects `focus_x/y/w/h` into a `FRAME`
+  op's `params` if the plan didn't already set them (plain params, not `Op.bbox` —
+  that field is reserved for region-confined ops and is already rejected on
+  size-changing ops by the validator). `pil_backend._frame()` centers the crop window
+  on the focus bbox's centroid (clamped to bounds) when present, falling back to
+  today's pure image-center crop when absent — so `character_focus="off"` is a no-op
+  change to existing behavior.
+
+**User-facing result.** Pick a Character Focus backend (only ones actually installed
+are selectable) and framing/cropping snaps to the real subject instead of the image
+center; the planner's reasoning is anchored to a verified box instead of a guess.
+
+**Definition of Done.**
+- [x] `available_backends()` returns only backends whose packages are importable.
+- [x] `character_focus="off"` (default): no detection runs, no `SUBJECT DETECTION`
+      block in the planner prompt, `_frame()` behavior unchanged.
+- [x] `detect_subject()` for mediapipe and yolo_onnx returns a bbox clamped inside
+      image bounds on a fixture with one obvious subject.
+- [x] An installed-but-unconfigured backend (model path missing) raises a clear error
+      naming the missing setting — no silent fallback.
+- [x] `build_system_prompt()` includes the `SUBJECT DETECTION` block (label, bbox,
+      source, confidence) when a `DetectedSubject` is supplied.
+- [x] `Compiler.compile(..., detected_subject=...)` injects `focus_x/y/w/h` into a
+      `FRAME` op's params when the planner didn't already set them.
+- [x] `pil_backend._frame()` anchors the crop on the focus bbox centroid when present;
+      unchanged center-crop when absent (regression test against P5 fixtures).
+- [x] Character Focus selectbox lists only "Off" plus installed backends.
+- [x] Settings "Character Focus" expander shows per-backend install/path status.
+

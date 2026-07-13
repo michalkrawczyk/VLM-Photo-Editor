@@ -27,13 +27,20 @@ class EditState(TypedDict):
     genai_ops: list  # ExecutionResult.genai_ops at runtime
     crop_retry_count: int  # incremented each time crop bounds validation fails
     crop_error: str | None  # set on crop-bounds failure, cleared on success
+    detected_subject: Any | None  # DetectedSubject at runtime; from a Character Focus pre-pass
 
 
 # --- nodes ---
 
 
 def _generate_plan(state: EditState) -> dict:
-    plan = Planner().plan(state["container"], state["intent"], state.get("prefs"), state["mode"])
+    plan = Planner().plan(
+        state["container"],
+        state["intent"],
+        state.get("prefs"),
+        state["mode"],
+        detected_subject=state.get("detected_subject"),
+    )
     return {"plan": plan, "feedback": None, "approved": False}
 
 
@@ -44,6 +51,7 @@ def _revise_plan(state: EditState) -> dict:
         state["feedback"],
         state.get("prefs"),
         state["mode"],
+        detected_subject=state.get("detected_subject"),
     )
     return {"plan": plan, "feedback": None, "approved": False}
 

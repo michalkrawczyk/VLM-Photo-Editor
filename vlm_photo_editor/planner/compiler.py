@@ -10,6 +10,7 @@ from vlm_photo_editor.background.providers import (
 )
 from vlm_photo_editor.config.policy import EditMode, allowed_ops_for_mode
 from vlm_photo_editor.ops.validator import validate_op_graph
+from vlm_photo_editor.schema.detection import DetectedSubject
 from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
 from vlm_photo_editor.schema.plan import CompilerResult, HumanPlan
 
@@ -61,7 +62,12 @@ class CompilerError(ValueError):
 
 
 class Compiler:
-    def compile(self, plan: HumanPlan, mode: EditMode | str) -> CompilerResult:
+    def compile(
+        self,
+        plan: HumanPlan,
+        mode: EditMode | str,
+        detected_subject: DetectedSubject | None = None,
+    ) -> CompilerResult:
         from vlm_photo_editor.config.settings import get_settings
 
         settings = get_settings()
@@ -138,6 +144,27 @@ class Compiler:
                         risk_tier=_OP_RISK.get(op_name, RiskTier.LOW),
                     )
                 )
+
+        if detected_subject is not None:
+            b = detected_subject.bbox
+            ops = [
+                (
+                    op.model_copy(
+                        update={
+                            "params": {
+                                **op.params,
+                                "focus_x": b.x,
+                                "focus_y": b.y,
+                                "focus_w": b.width,
+                                "focus_h": b.height,
+                            }
+                        }
+                    )
+                    if op.op_name == OpName.FRAME and "focus_x" not in op.params
+                    else op
+                )
+                for op in ops
+            ]
 
         graph = OpGraph(ops=ops)
         try:
