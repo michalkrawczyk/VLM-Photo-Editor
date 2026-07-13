@@ -8,21 +8,18 @@ MOCK_PLAN = HumanPlan(
     plan_id="mock-plan-001",
     steps=[
         HumanStep(
-            step_id="step-001",
             index=1,
             title="Replace background",
             why="Current background is distracting",
             op_names=["background_replace"],
         ),
         HumanStep(
-            step_id="step-002",
             index=2,
             title="Adjust exposure",
             why="Subject is slightly underexposed",
             op_names=["exposure"],
         ),
         HumanStep(
-            step_id="step-003",
             index=3,
             title="Apply portrait framing",
             why="Better composition with rule of thirds",
@@ -94,3 +91,18 @@ LOCAL_MODEL_IDS: frozenset[str] = frozenset(
         "LiquidAI/LFM2.5-VL-1.6B",
     }
 )
+
+_MODEL_ID_TO_PROVIDER: dict[str, str] = {
+    "claude-sonnet-4-6": "anthropic",
+    "claude-haiku-4-5-20251001": "anthropic",
+    "claude-opus-4-8": "anthropic",
+    "gpt-4o": "openai",
+    "gpt-4o-mini": "openai",
+    "gpt-4.1-mini": "openai",
+    "LiquidAI/LFM2.5-1.2B-Instruct": "local",
+}
+
+
+def provider_for_model(model_id: str) -> str:
+    """Return provider string for a model_id in AVAILABLE_MODELS. Defaults to 'anthropic'."""
+    return _MODEL_ID_TO_PROVIDER.get(model_id, "anthropic")

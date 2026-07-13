@@ -37,10 +37,21 @@ _CHAR_FOCUS_REQ_NAME: dict[str, str] = {
 }
 
 from vlm_photo_editor.app import state
-from vlm_photo_editor.app.stubs import AVAILABLE_MODELS, LOCAL_MODEL_IDS, MODEL_ROLES, PROVIDERS
-from vlm_photo_editor.config.registry import AGGREGATOR_PRESETS, CRITIC_PRESETS, get_registry
+from vlm_photo_editor.app.stubs import (
+    AVAILABLE_MODELS,
+    LOCAL_MODEL_IDS,
+    MODEL_ROLES,
+    PROVIDERS,
+    provider_for_model,
+)
+from vlm_photo_editor.config.registry import (
+    AGGREGATOR_PRESETS,
+    CRITIC_PRESETS,
+    ModelEntry,
+    get_registry,
+)
 from vlm_photo_editor.config.settings import get_settings
-from vlm_photo_editor.secrets.store import SecretStore
+from vlm_photo_editor.secrets.store import SecretStore, _env_key
 
 _PS_MCP_HOST = "127.0.0.1"
 _PS_MCP_PORT = 8080
@@ -60,10 +71,15 @@ def render() -> None:
     with st.expander("API Keys", expanded=False):
         st.caption("Keys saved to OS keyring. Never stored in session state.")
         for provider in PROVIDERS:
+            already_set = SecretStore.has(provider)
+            if already_set:
+                st.caption(f"✓ {provider.capitalize()} key already set in keyring")
             key_input = st.text_input(
                 f"{provider.capitalize()} API Key",
                 type="password",
-                placeholder=f"Enter {provider} API key...",
+                placeholder=(
+                    "Enter new key to update" if already_set else f"Enter {provider} API key..."
+                ),
                 key=f"api_key_{provider}",
             )
             if key_input:
@@ -76,69 +92,179 @@ def render() -> None:
                     st.warning(f"Keyring unavailable: {exc}. Key valid for this session only.")
                     import os
 
-                    os.environ[f"{provider.upper()}_API_KEY"] = key_input
+                    os.environ[_env_key(provider)] = key_input
                     state.log_intent("api_key_env_fallback", {"provider": provider})
 
     with st.expander("Model Selection", expanded=True):
         registry = get_registry()
         model_roles: dict[str, str] = state.get("model_roles") or {}
-        _aggregator_options = list(AGGREGATOR_PRESETS.keys())
-        _critic_options = list(CRITIC_PRESETS.keys())
+
+        from vlm_photo_editor.models.registry import model_entry_available
 
         for role in MODEL_ROLES:
             if role == "preference_aggregator":
-                current_preset = state.get("aggregator_preset") or _aggregator_options[0]
-                try:
-                    idx = _aggregator_options.index(current_preset)
-                except ValueError:
-                    idx = 0
-                selected_preset = st.selectbox(
-                    "Preference Aggregator:",
-                    options=_aggregator_options,
-                    index=idx,
-                    key="model_preference_aggregator",
-                )
-                if selected_preset != current_preset:
-                    registry.set_entry(role, AGGREGATOR_PRESETS[selected_preset])
-                    state.set("aggregator_preset", selected_preset)
-                    state.log_intent("model_selected", {"role": role, "preset": selected_preset})
+                _avail: list[str] = []
+                _unavail: dict[str, str] = {}
+                for name, entry in AGGREGATOR_PRESETS.items():
+                    ok, reason = model_entry_available(entry)
+                    if ok:
+                        _avail.append(name)
+                    else:
+                        _unavail[name] = reason
+
+                current_preset = state.get("aggregator_preset") or (_avail[0] if _avail else "")
+                if current_preset not in _avail and _avail:
+                    st.warning(
+                        f"'{current_preset}' unavailable"
+                        f" ({_unavail.get(current_preset, 'unknown reason')})."
+                        " Select a working model."
+                    )
+                    current_preset = _avail[0]
+                    state.set("aggregator_preset", current_preset)
+
+                if _avail:
+                    selected_preset = st.selectbox(
+                        "Preference Aggregator:",
+                        options=_avail,
+                        index=_avail.index(current_preset) if current_preset in _avail else 0,
+                        key="model_preference_aggregator",
+                    )
+                    if selected_preset != current_preset:
+                        registry.set_entry(role, AGGREGATOR_PRESETS[selected_preset])
+                        state.set("aggregator_preset", selected_preset)
+                        state.log_intent(
+                            "model_selected", {"role": role, "preset": selected_preset}
+                        )
+                else:
+                    st.error(
+                        "No aggregator models available. Add an API key or install a local backend."
+                    )
+
+                if _unavail:
+                    st.caption(
+                        "Not available: " + ", ".join(f"{n} ({r})" for n, r in _unavail.items())
+                    )
 
             elif role == "critic":
-                current_preset = state.get("critic_preset") or _critic_options[0]
-                try:
-                    idx = _critic_options.index(current_preset)
-                except ValueError:
-                    idx = 0
-                selected_preset = st.selectbox(
-                    "Critic:",
-                    options=_critic_options,
-                    index=idx,
-                    key="model_critic",
-                )
-                if selected_preset != current_preset:
-                    registry.set_entry(role, CRITIC_PRESETS[selected_preset])
-                    state.set("critic_preset", selected_preset)
-                    state.log_intent("model_selected", {"role": role, "preset": selected_preset})
+                _avail2: list[str] = []
+                _unavail2: dict[str, str] = {}
+                for name, entry in CRITIC_PRESETS.items():
+                    ok, reason = model_entry_available(entry)
+                    if ok:
+                        _avail2.append(name)
+                    else:
+                        _unavail2[name] = reason
+
+                current_preset = state.get("critic_preset") or (_avail2[0] if _avail2 else "")
+                if current_preset not in _avail2 and _avail2:
+                    st.warning(
+                        f"'{current_preset}' unavailable"
+                        f" ({_unavail2.get(current_preset, 'unknown reason')})."
+                        " Select a working model."
+                    )
+                    current_preset = _avail2[0]
+                    state.set("critic_preset", current_preset)
+
+                if _avail2:
+                    selected_preset = st.selectbox(
+                        "Critic:",
+                        options=_avail2,
+                        index=_avail2.index(current_preset) if current_preset in _avail2 else 0,
+                        key="model_critic",
+                    )
+                    if selected_preset != current_preset:
+                        registry.set_entry(role, CRITIC_PRESETS[selected_preset])
+                        state.set("critic_preset", selected_preset)
+                        state.log_intent(
+                            "model_selected", {"role": role, "preset": selected_preset}
+                        )
+                else:
+                    st.error(
+                        "No critic models available. Add an API key or install a local backend."
+                    )
+
+                if _unavail2:
+                    st.caption(
+                        "Not available: " + ", ".join(f"{n} ({r})" for n, r in _unavail2.items())
+                    )
 
             else:
-                current = model_roles.get(role, AVAILABLE_MODELS[0])
-                try:
-                    idx = AVAILABLE_MODELS.index(current)
-                except ValueError:
-                    idx = 0
-                selected = st.selectbox(
-                    f"{role.replace('_', ' ').title()}:",
-                    options=AVAILABLE_MODELS,
-                    format_func=lambda m: f"{m} (local)" if m in LOCAL_MODEL_IDS else m,
-                    index=idx,
-                    key=f"model_{role}",
-                )
-                if selected != model_roles.get(role):
-                    registry.set(role, selected)
-                    model_roles[role] = selected
-                    state.log_intent("model_selected", {"role": role, "model": selected})
+                _avail_m: list[str] = []
+                _unavail_m: dict[str, str] = {}
+                for m in AVAILABLE_MODELS:
+                    provider = provider_for_model(m)
+                    me = ModelEntry(
+                        m,
+                        provider=provider,  # type: ignore[arg-type]
+                        loader="transformers" if m in LOCAL_MODEL_IDS else None,
+                    )
+                    ok, reason = model_entry_available(me)
+                    if ok:
+                        _avail_m.append(m)
+                    else:
+                        _unavail_m[m] = reason
+
+                current = model_roles.get(role, _avail_m[0] if _avail_m else "")
+                if current not in _avail_m and _avail_m:
+                    st.warning(
+                        f"'{current}' unavailable"
+                        f" ({_unavail_m.get(current, 'unknown reason')})."
+                        " Select a working model."
+                    )
+                    current = _avail_m[0]
+
+                if _avail_m:
+                    selected = st.selectbox(
+                        f"{role.replace('_', ' ').title()}:",
+                        options=_avail_m,
+                        format_func=lambda m: f"{m} (local)" if m in LOCAL_MODEL_IDS else m,
+                        index=_avail_m.index(current) if current in _avail_m else 0,
+                        key=f"model_{role}",
+                    )
+                    if selected != current:
+                        registry.set(role, selected)
+                        model_roles[role] = selected
+                        state.log_intent("model_selected", {"role": role, "model": selected})
+                else:
+                    st.error(
+                        f"No models available for {role!r}. Add API keys or install a local backend."
+                    )
+
+                if _unavail_m:
+                    st.caption(
+                        "Not available: "
+                        + ", ".join(
+                            f"{'(local) ' if m in LOCAL_MODEL_IDS else ''}{m} ({r})"
+                            for m, r in _unavail_m.items()
+                        )
+                    )
 
         state.set("model_roles", model_roles)
+
+        st.divider()
+        _GENAI_IMAGE_PRESETS = [
+            "black-forest-labs/flux-fill-dev",
+            "stability-ai/stable-diffusion-inpainting",
+            "openai:dall-e-3",
+            "openai:gpt-image-1",
+            "google:imagen-3.0-generate-002",
+            "hf:stabilityai/stable-diffusion-2-inpainting",
+        ]
+        settings = get_settings()
+        current_genai = settings.genai_model
+        try:
+            genai_idx = _GENAI_IMAGE_PRESETS.index(current_genai)
+        except ValueError:
+            genai_idx = 0
+        selected_genai = st.selectbox(
+            "GenAI Image Model:",
+            options=_GENAI_IMAGE_PRESETS,
+            index=genai_idx,
+            key="genai_image_model",
+        )
+        if selected_genai != current_genai:
+            settings.genai_model = selected_genai
+            state.log_intent("model_selected", {"role": "genai_image", "model": selected_genai})
 
     with st.expander("Photoshop Mode", expanded=False):
         _PS_LABELS = {

@@ -5,7 +5,7 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
-from vlm_photo_editor.config.registry import get_registry
+from vlm_photo_editor.config.registry import ModelEntry, get_registry
 from vlm_photo_editor.secrets.store import SecretStore
 
 if TYPE_CHECKING:
@@ -137,6 +137,20 @@ def available_loaders() -> list[str]:
     if importlib.util.find_spec("langchain_openai") and _vllm_reachable():
         result.append("vllm")
     return result
+
+
+def model_entry_available(entry: ModelEntry) -> tuple[bool, str]:
+    """Return (True, "") if usable now, or (False, reason) if not."""
+    if entry.provider == "local":
+        loader = entry.loader or "transformers"
+        if loader not in available_loaders():
+            if loader == "vllm":
+                return False, "vLLM server unreachable"
+            return False, f"{loader} not installed"
+        return True, ""
+    if not SecretStore.has(entry.provider):
+        return False, f"{entry.provider} API key missing"
+    return True, ""
 
 
 def install_loader_deps(loader: str) -> bool:
