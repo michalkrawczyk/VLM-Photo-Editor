@@ -63,6 +63,15 @@ def _build_framing_intent(framing_val: str) -> FramingIntent:
     return fi
 
 
+def _detect_subject_if_enabled(container: "ImageContainer"):  # type: ignore[name-defined]
+    cf_val = state.get("character_focus") or "off"
+    if cf_val == "off":
+        return None
+    from vlm_photo_editor.detection import detect_subject
+
+    return detect_subject(container, cf_val)
+
+
 def _do_generate_plan() -> None:
     from vlm_photo_editor.agents.planner import Planner
     from vlm_photo_editor.config.settings import get_settings
@@ -78,6 +87,7 @@ def _do_generate_plan() -> None:
 
     framing_val = state.get("framing_mode")
     fi = _build_framing_intent(framing_val) if framing_val else None
+    detected_subject = _detect_subject_if_enabled(container)
 
     cache = get_plan_cache()
     cache_key = cache.key(container, mode, prefs)
@@ -92,12 +102,12 @@ def _do_generate_plan() -> None:
         else:
             _progress = st.progress(0.0, text="Generating plan…")
             planner = Planner()
-            plan = run_job(planner.plan, container, intent, prefs, mode, fi)
+            plan = run_job(planner.plan, container, intent, prefs, mode, fi, detected_subject)
             _progress.progress(0.5, text="Compiling…")
 
         max_retries = get_settings().max_crop_retries
         for _attempt in range(max_retries + 1):
-            result = Compiler().compile(plan, mode)
+            result = Compiler().compile(plan, mode, detected_subject=detected_subject)
             try:
                 validate_crop_bounds(result.op_graph, container.width, container.height)
                 break
@@ -114,6 +124,7 @@ def _do_generate_plan() -> None:
                     prefs,
                     mode,
                     fi,
+                    detected_subject,
                 )
 
         if cached_plan is None:
@@ -162,23 +173,26 @@ def _do_revise_plan(change: str) -> None:
 
     framing_val = state.get("framing_mode")
     fi = _build_framing_intent(framing_val) if framing_val else None
+    detected_subject = _detect_subject_if_enabled(container)
     try:
         log_ = state.get("change_requests_log") or []
         log_.append(change)
         state.set("change_requests_log", log_)
         planner = Planner()
-        plan = planner.revise(container, previous_plan, change, prefs, mode, fi)
+        plan = planner.revise(container, previous_plan, change, prefs, mode, fi, detected_subject)
 
         max_retries = get_settings().max_crop_retries
         for _attempt in range(max_retries + 1):
-            result = Compiler().compile(plan, mode)
+            result = Compiler().compile(plan, mode, detected_subject=detected_subject)
             try:
                 validate_crop_bounds(result.op_graph, container.width, container.height)
                 break
             except ValueError as crop_err:
                 if _attempt >= max_retries:
                     raise
-                plan = planner.revise(container, plan, str(crop_err), prefs, mode, fi)
+                plan = planner.revise(
+                    container, plan, str(crop_err), prefs, mode, fi, detected_subject
+                )
 
         state.set("current_plan", result.plan)
         state.set("current_opgraph", result.op_graph)
@@ -640,6 +654,21 @@ with main_col:
 
             if _framing_mode == FramingMode.RECOMMEND_BEST.value:
                 st.text_input("Framing guidance (optional)", key="framing_hint")
+
+            # Character Focus selector — local subject detection, off by default.
+            from vlm_photo_editor.detection import available_backends
+
+            _cf_opts = ["off"] + available_backends()
+            _cf_current = state.get("character_focus") or "off"
+            if _cf_current not in _cf_opts:
+                _cf_current = "off"
+            _character_focus = st.selectbox(
+                "Character Focus:",
+                options=_cf_opts,
+                index=_cf_opts.index(_cf_current),
+                key="character_focus_select",
+            )
+            state.set("character_focus", _character_focus)
 
             # Auto-generate when Reframe Only + non-Custom composition (U3).
             # Any change in framing_mode triggers a new plan without a button press.
