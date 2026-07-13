@@ -40,6 +40,11 @@ def render(plan: HumanPlan, op_graph: OpGraph | None = None, *, executed: bool =
     with col_acc:
         if executed:
             st.success("Executed ✓")
+        elif op_graph is None:
+            st.warning(
+                "Plan could not be compiled — see error above. "
+                "Use 'Request Changes' to revise, or fix the issue and Regenerate."
+            )
         elif st.button("Accept Plan", type="primary", key="accept_plan_btn"):
             state.set("plan_approved", True)
             state.log_intent("accept_plan", {"plan_id": plan.plan_id})

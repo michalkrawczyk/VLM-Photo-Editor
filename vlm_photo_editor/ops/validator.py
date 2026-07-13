@@ -64,3 +64,32 @@ def validate_op(op: Op, allowed_ops: set[OpName] | None = None) -> None:
 def validate_op_graph(graph: OpGraph, allowed_ops: set[OpName] | None = None) -> None:
     for op in graph.ops:
         validate_op(op, allowed_ops=allowed_ops)
+
+
+def validate_crop_bounds(op_graph: OpGraph, w: int, h: int) -> None:
+    """Raise ValueError if any CROP op exceeds the image dimensions."""
+    for op in op_graph.ops:
+        if op.op_name != OpName.CROP:
+            continue
+        p = op.params
+        left, top, right, bottom = int(p["left"]), int(p["top"]), int(p["right"]), int(p["bottom"])
+        violations = []
+        if left < 0:
+            violations.append(f"left={left} < 0")
+        if top < 0:
+            violations.append(f"top={top} < 0")
+        if right > w:
+            violations.append(f"right={right} > image width {w}")
+        if bottom > h:
+            violations.append(f"bottom={bottom} > image height {h}")
+        if right <= left:
+            violations.append(f"right={right} <= left={left}")
+        if bottom <= top:
+            violations.append(f"bottom={bottom} <= top={top}")
+        if violations:
+            raise ValueError(
+                f"Crop out of bounds for {w}x{h} image "
+                f"(left={left} top={top} right={right} bottom={bottom}): "
+                + "; ".join(violations)
+                + f". Revise crop to fit within [0,{w}] x [0,{h}]."
+            )

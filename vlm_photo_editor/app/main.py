@@ -51,22 +51,6 @@ def _load_uploaded(file) -> "ImageContainer":  # type: ignore[name-defined]
     return load(tmp_path)
 
 
-def _validate_crop_bounds(op_graph: "OpGraph", w: int, h: int) -> None:  # type: ignore[name-defined]
-    from vlm_photo_editor.schema.ops import OpName
-
-    for op in op_graph.ops:
-        if op.op_name != OpName.CROP:
-            continue
-        p = op.params
-        left, top, right, bottom = int(p["left"]), int(p["top"]), int(p["right"]), int(p["bottom"])
-        if left < 0 or top < 0 or right > w or bottom > h or right <= left or bottom <= top:
-            raise ValueError(
-                f"Planner proposed out-of-bounds crop "
-                f"(left={left} top={top} right={right} bottom={bottom}) "
-                f"for {w}x{h} image. Re-generate plan."
-            )
-
-
 def _build_framing_intent(framing_val: str) -> FramingIntent:
     mode = FramingMode(framing_val)
     fi = FramingIntent(
@@ -81,6 +65,8 @@ def _build_framing_intent(framing_val: str) -> FramingIntent:
 
 def _do_generate_plan() -> None:
     from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
     from vlm_photo_editor.pipeline.job_queue import run_job
     from vlm_photo_editor.pipeline.plan_cache import get_plan_cache
     from vlm_photo_editor.planner.compiler import Compiler, CompilerError
@@ -98,6 +84,7 @@ def _do_generate_plan() -> None:
     cached_plan = cache.get(cache_key)
 
     try:
+        planner = None
         _progress = None
         if cached_plan is not None:
             plan = cached_plan
@@ -108,8 +95,26 @@ def _do_generate_plan() -> None:
             plan = run_job(planner.plan, container, intent, prefs, mode, fi)
             _progress.progress(0.5, text="Compiling…")
 
-        result = Compiler().compile(plan, mode)
-        _validate_crop_bounds(result.op_graph, container.width, container.height)
+        max_retries = get_settings().max_crop_retries
+        for _attempt in range(max_retries + 1):
+            result = Compiler().compile(plan, mode)
+            try:
+                validate_crop_bounds(result.op_graph, container.width, container.height)
+                break
+            except ValueError as crop_err:
+                if _attempt >= max_retries:
+                    raise
+                if planner is None:
+                    planner = Planner()
+                plan = run_job(
+                    planner.revise,
+                    container,
+                    plan,
+                    str(crop_err),
+                    prefs,
+                    mode,
+                    fi,
+                )
 
         if cached_plan is None:
             cache.set(cache_key, result.plan)
@@ -132,6 +137,13 @@ def _do_generate_plan() -> None:
             )
         if result.plan.outpaint_needed:
             st.warning("This framing requires outpainting — switching to background mode.")
+    except CompilerError as exc:
+        state.set("current_plan", plan)
+        state.set("current_opgraph", None)
+        state.set("change_requests_log", [])
+        state.set("ui_phase", "plan_ready")
+        state.set("plan_approved", False)
+        state.set("error", str(exc))
     except Exception as exc:
         state.set("error", str(exc))
         state.set("ui_phase", "has_image")
@@ -139,7 +151,9 @@ def _do_generate_plan() -> None:
 
 def _do_revise_plan(change: str) -> None:
     from vlm_photo_editor.agents.planner import Planner
-    from vlm_photo_editor.planner.compiler import Compiler
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+    from vlm_photo_editor.planner.compiler import Compiler, CompilerError
 
     container = state.get("container")
     previous_plan = state.get("current_plan")
@@ -152,17 +166,38 @@ def _do_revise_plan(change: str) -> None:
         log_ = state.get("change_requests_log") or []
         log_.append(change)
         state.set("change_requests_log", log_)
-        plan = Planner().revise(container, previous_plan, change, prefs, mode, fi)
-        result = Compiler().compile(plan, mode)
-        _validate_crop_bounds(result.op_graph, container.width, container.height)
+        planner = Planner()
+        plan = planner.revise(container, previous_plan, change, prefs, mode, fi)
+
+        max_retries = get_settings().max_crop_retries
+        for _attempt in range(max_retries + 1):
+            result = Compiler().compile(plan, mode)
+            try:
+                validate_crop_bounds(result.op_graph, container.width, container.height)
+                break
+            except ValueError as crop_err:
+                if _attempt >= max_retries:
+                    raise
+                plan = planner.revise(container, plan, str(crop_err), prefs, mode, fi)
+
         state.set("current_plan", result.plan)
         state.set("current_opgraph", result.op_graph)
+        state.set("ui_phase", "plan_ready")
+        state.set("edited_container", None)
         state.set("change_request", "")
         state.set("error", None)
         from vlm_photo_editor.agents.edit_flow import _can_auto_approve
 
         _mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)
         state.set("plan_approved", _can_auto_approve(result.op_graph, _mode))
+    except CompilerError as exc:
+        state.set("current_plan", plan)
+        state.set("current_opgraph", None)
+        state.set("ui_phase", "plan_ready")
+        state.set("edited_container", None)
+        state.set("change_request", "")
+        state.set("plan_approved", False)
+        state.set("error", str(exc))
     except Exception as exc:
         state.set("error", str(exc))
         state.set("change_request", "")

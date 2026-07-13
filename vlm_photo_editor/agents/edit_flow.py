@@ -25,6 +25,8 @@ class EditState(TypedDict):
     approved: bool
     edited_container: Any  # ExecutionResult.container at runtime
     genai_ops: list  # ExecutionResult.genai_ops at runtime
+    crop_retry_count: int  # incremented each time crop bounds validation fails
+    crop_error: str | None  # set on crop-bounds failure, cleared on success
 
 
 # --- nodes ---
@@ -47,8 +49,19 @@ def _revise_plan(state: EditState) -> dict:
 
 
 def _compile(state: EditState) -> dict:
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+
     result = Compiler().compile(state["plan"], state["mode"])
-    return {"op_graph": result.op_graph}
+    container = state["container"]
+    try:
+        validate_crop_bounds(result.op_graph, container.width, container.height)
+    except ValueError as exc:
+        return {
+            "crop_error": str(exc),
+            "feedback": str(exc),
+            "crop_retry_count": state.get("crop_retry_count", 0) + 1,
+        }
+    return {"op_graph": result.op_graph, "crop_error": None}
 
 
 def _await_human(state: EditState) -> dict:
@@ -80,6 +93,12 @@ def _can_auto_approve(op_graph: OpGraph | None, mode: AcceptMode) -> bool:
 
 
 def _route_after_compile(state: EditState) -> str:
+    from vlm_photo_editor.config.settings import get_settings
+
+    if state.get("crop_error"):
+        if state.get("crop_retry_count", 0) <= get_settings().max_crop_retries:
+            return "revise_plan"
+        return "await_human"  # retries exhausted; surface crop_error to user
     if _can_auto_approve(state.get("op_graph"), state.get("accept_mode")):
         return "execute"
     return "await_human"

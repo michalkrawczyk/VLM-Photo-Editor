@@ -154,6 +154,105 @@ def test_crop_out_of_bounds_raises(params, match):
         Compiler().compile(_plan(step), "full")
 
 
+@pytest.mark.parametrize(
+    "params,w,h,match",
+    [
+        # bottom exceeds image height (exact failing case from user report)
+        (
+            {"left": 0, "top": 0, "right": 992, "bottom": 798},
+            1408,
+            768,
+            "bottom=798 > image height 768",
+        ),
+        # right exceeds image width
+        (
+            {"left": 0, "top": 0, "right": 1500, "bottom": 100},
+            1408,
+            768,
+            "right=1500 > image width 1408",
+        ),
+        # both right and bottom exceed bounds
+        (
+            {"left": 0, "top": 0, "right": 2000, "bottom": 1000},
+            1408,
+            768,
+            "right=2000 > image width 1408",
+        ),
+    ],
+)
+def test_validate_crop_bounds_raises(params, w, h, match):
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+
+    step = _step(["crop"], [params])
+    result = Compiler().compile(_plan(step), "full")
+    with pytest.raises(ValueError, match=match):
+        validate_crop_bounds(result.op_graph, w, h)
+
+
+def test_validate_crop_bounds_passes_when_within_image():
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+
+    step = _step(["crop"], [{"left": 0, "top": 0, "right": 100, "bottom": 80}])
+    result = Compiler().compile(_plan(step), "full")
+    validate_crop_bounds(result.op_graph, 200, 200)  # no exception
+
+
+@pytest.mark.parametrize("fail_count", [1, 2, 3])
+def test_validate_crop_bounds_retry_calls_revise(fail_count):
+    """Retry loop calls revise exactly fail_count times before succeeding."""
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+    from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
+
+    def _make_graph(right: int, w: int) -> OpGraph:
+        return OpGraph(
+            ops=[
+                Op(
+                    op_name=OpName.CROP,
+                    params={"left": 0, "top": 0, "right": right, "bottom": 50},
+                    backend=Backend.PIL,
+                    risk_tier=RiskTier.LOW,
+                    step_id="s1",
+                )
+            ]
+        )
+
+    w, h = 100, 80
+    bad_graph = _make_graph(right=200, w=w)  # right > w → fails
+    good_graph = _make_graph(right=80, w=w)  # right < w → passes
+
+    graphs = [bad_graph] * fail_count + [good_graph]
+    graph_iter = iter(graphs)
+
+    revise_feedbacks: list[str] = []
+
+    planner = MagicMock()
+    planner.revise.side_effect = lambda c, p, fb, *a, **kw: (revise_feedbacks.append(fb), p)[1]
+
+    container = MagicMock()
+    container.width = w
+    container.height = h
+    plan = MagicMock()
+    max_retries = 3
+
+    for _attempt in range(max_retries + 1):
+        op_graph = next(graph_iter)
+        try:
+            validate_crop_bounds(op_graph, container.width, container.height)
+            break
+        except ValueError as crop_err:
+            if _attempt >= max_retries:
+                raise
+            plan = planner.revise(container, plan, str(crop_err), None, "full", None)
+
+    assert planner.revise.call_count == fail_count
+    for fb in revise_feedbacks:
+        assert "right=200 > image width 100" in fb
+        assert "Revise crop to fit within" in fb
+
+
 # ---------------------------------------------------------------------------
 # Compiler — mode enforcement
 # ---------------------------------------------------------------------------
