@@ -505,3 +505,88 @@ def test_cv_inpaint_via_executor_end_to_end() -> None:
     np.testing.assert_array_equal(
         result.container.pixels[outside_mask], container.pixels[outside_mask]
     )
+
+
+# ---------------------------------------------------------------------------
+# CV blur (region_edit, method="blur")
+# ---------------------------------------------------------------------------
+
+
+def _container_with_checkerboard() -> tuple[ImageContainer, BoundingBox]:
+    """64x64 mid-gray image with a high-contrast checkerboard in a 20x20 bbox at (20,20)."""
+    pixels = np.full((64, 64, 3), 128, dtype=np.uint8)
+    row, col = np.indices((20, 20))
+    checker = ((row + col) % 2 * 255).astype(np.uint8)
+    pixels[20:40, 20:40, :] = checker[..., None]
+    container = ImageContainer(pixels=pixels, bit_depth=8, source_path=_FAKE_SRC)
+    bbox = BoundingBox(x=20, y=20, width=20, height=20)
+    return container, bbox
+
+
+def test_apply_blur_smooths_inside_bbox_leaves_outside_unchanged() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_blur
+
+    container, bbox = _container_with_checkerboard()
+    op = _op(OpName.REGION_EDIT, {"method": "blur", "radius": 5}, bbox=bbox, backend=Backend.OPENCV)
+    result = apply_blur(container, op)
+
+    outside_mask = ~bbox_to_mask(container, bbox)
+    np.testing.assert_array_equal(result.pixels[outside_mask], container.pixels[outside_mask])
+
+    inside_mask = bbox_to_mask(container, bbox)
+    assert result.pixels[inside_mask].std() < container.pixels[inside_mask].std()
+
+
+def test_apply_blur_invert_targets_outside_bbox() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_blur
+
+    container, bbox = _container_with_checkerboard()
+    op = _op(
+        OpName.REGION_EDIT,
+        {"method": "blur", "radius": 5, "invert": True},
+        bbox=bbox,
+        backend=Backend.OPENCV,
+    )
+    result = apply_blur(container, op)
+
+    inside_mask = bbox_to_mask(container, bbox)
+    np.testing.assert_array_equal(result.pixels[inside_mask], container.pixels[inside_mask])
+
+
+def test_apply_blur_raises_without_bbox() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_blur
+
+    op = _op(OpName.REGION_EDIT, {"method": "blur"}, backend=Backend.OPENCV)
+    with pytest.raises(ValueError, match="requires a bbox"):
+        apply_blur(_container(), op)
+
+
+def test_apply_blur_preserves_alpha_channel() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_blur
+
+    pixels = np.full((64, 64, 4), 128, dtype=np.uint8)
+    pixels[20:40, 20:40, 3] = 77
+    container = ImageContainer(pixels=pixels, bit_depth=8, source_path=_FAKE_SRC)
+    bbox = BoundingBox(x=20, y=20, width=20, height=20)
+    op = _op(OpName.REGION_EDIT, {"method": "blur", "radius": 5}, bbox=bbox, backend=Backend.OPENCV)
+
+    result = apply_blur(container, op)
+
+    np.testing.assert_array_equal(result.pixels[..., 3], pixels[..., 3])
+
+
+def test_region_edit_blur_via_executor_end_to_end() -> None:
+    container, bbox = _container_with_checkerboard()
+    op = Op(
+        op_name=OpName.REGION_EDIT,
+        params={"method": "blur", "radius": 5},
+        bbox=bbox,
+        backend=Backend.OPENCV,
+        step_id="s1",
+    )
+    result = Executor().apply(container, _graph(op))
+
+    outside_mask = ~bbox_to_mask(container, bbox)
+    np.testing.assert_array_equal(
+        result.container.pixels[outside_mask], container.pixels[outside_mask]
+    )

@@ -91,6 +91,11 @@ def _base_lines(mode: str, no_genai: bool = False) -> list[str]:
         "    - The object to remove is small (scratch, wire, text, watermark, small spot).",
         "    - No semantic content synthesis is needed (nearby texture can fill the gap).",
         "    - When backend=opencv, omit prompt (it is not used).",
+        "",
+        'BLUR (region_edit, backend="opencv", method="blur"):',
+        "  Use for a deterministic Gaussian blur of a region (e.g. blurred/bokeh background).",
+        '  Never use backend="genai" for a plain blur — it is a local, boring, deterministic op.',
+        "  Omit prompt. Pair with a preceding mask step to blur everything outside the subject.",
     ]
     if no_genai:
         lines += [

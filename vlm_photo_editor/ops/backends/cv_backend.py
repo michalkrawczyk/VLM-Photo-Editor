@@ -61,6 +61,41 @@ def apply_inpaint(container: ImageContainer, op: Op) -> ImageContainer:
     return result
 
 
+def apply_blur(container: ImageContainer, op: Op) -> ImageContainer:
+    """Gaussian-blur the region defined by op.bbox (or its complement if invert=True).
+
+    Supports REGION_EDIT with params={"method": "blur"}. Requires op.bbox; raises if absent.
+    Params: radius (float, default 15), invert (bool, default False).
+    """
+    import cv2
+
+    from vlm_photo_editor.ops.mask import bbox_to_mask
+
+    if op.bbox is None:
+        raise ValueError(f"Op {op.op_name!r} with method='blur' requires a bbox")
+
+    mask_bool = bbox_to_mask(container, op.bbox)
+    if op.params.get("invert", False):
+        mask_bool = ~mask_bool
+
+    radius = float(op.params.get("radius", 15))
+
+    pixels = container.pixels
+    has_alpha = pixels.ndim == 3 and pixels.shape[2] == 4
+    blur_input = pixels[..., :3] if has_alpha else pixels
+
+    blurred_rgb = cv2.GaussianBlur(
+        blur_input.astype(np.float32), (0, 0), sigmaX=radius, sigmaY=radius
+    ).astype(pixels.dtype)
+    blurred = np.dstack([blurred_rgb, pixels[..., 3]]) if has_alpha else blurred_rgb
+
+    result = container.copy()
+    combined = pixels.copy()
+    combined[mask_bool] = blurred[mask_bool]
+    result.pixels = combined
+    return result
+
+
 def _denoise(container: ImageContainer, params: dict) -> ImageContainer:
     import cv2
 

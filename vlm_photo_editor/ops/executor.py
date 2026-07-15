@@ -127,6 +127,11 @@ class Executor:
             return result, genai_op
 
         if op.backend == Backend.OPENCV and op.op_name in _INPAINT_OPS:
+            if op.op_name == OpName.REGION_EDIT and op.params.get("method") == "blur":
+                from .backends.cv_backend import apply_blur
+
+                return apply_blur(container, op), None
+
             from .backends.cv_backend import apply_inpaint
 
             return apply_inpaint(container, op), None
