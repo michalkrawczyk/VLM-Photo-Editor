@@ -95,7 +95,7 @@ def _render_review_panel(
     if record.plan and record.plan.steps:
         with st.expander("Plan steps", expanded=True):
             for step in record.plan.steps:
-                st.markdown(f"**{step.step_id}** — {step.action}")
+                st.markdown(f"**{step.step_id}** — {step.title}")
                 if step.why:
                     st.caption(step.why)
 
