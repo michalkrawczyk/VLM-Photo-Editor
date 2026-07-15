@@ -287,6 +287,42 @@ def test_cv_inpaint_modifies_inside_bbox() -> None:
     assert result.pixels[inside_mask].mean() > 128
 
 
+def test_cv_inpaint_handles_rgba() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply_inpaint
+
+    pixels = np.full((64, 64, 4), 255, dtype=np.uint8)
+    pixels[20:30, 20:30, :3] = 0
+    container = ImageContainer(pixels=pixels, bit_depth=8, source_path=_FAKE_SRC)
+    bbox = BoundingBox(x=20, y=20, width=10, height=10)
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={},
+        bbox=bbox,
+        backend=Backend.OPENCV,
+        step_id="s1",
+    )
+
+    result = apply_inpaint(container, op)
+
+    assert result.pixels.shape[2] == 4
+    np.testing.assert_array_equal(result.pixels[..., 3], pixels[..., 3])
+    outside_mask = ~bbox_to_mask(container, bbox)
+    np.testing.assert_array_equal(result.pixels[outside_mask], container.pixels[outside_mask])
+
+
+def test_cv_denoise_handles_rgba() -> None:
+    from vlm_photo_editor.ops.backends.cv_backend import apply
+
+    pixels = np.full((64, 64, 4), 128, dtype=np.uint8)
+    container = ImageContainer(pixels=pixels, bit_depth=8, source_path=_FAKE_SRC)
+    op = Op(op_name=OpName.DENOISE, params={}, bbox=None, backend=Backend.OPENCV, step_id="s1")
+
+    result = apply(container, op)
+
+    assert result.pixels.shape[2] == 4
+    np.testing.assert_array_equal(result.pixels[..., 3], pixels[..., 3])
+
+
 def test_cv_inpaint_raises_without_bbox() -> None:
     from vlm_photo_editor.ops.backends.cv_backend import apply_inpaint
 

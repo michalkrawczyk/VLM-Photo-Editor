@@ -38,7 +38,11 @@ def apply_inpaint(container: ImageContainer, op: Op) -> ImageContainer:
         raise ValueError(f"inpaint method {method_name!r} must be 'telea' or 'ns'")
     flags = cv2.INPAINT_NS if method_name == "ns" else cv2.INPAINT_TELEA
 
-    inpainted_8 = cv2.inpaint(pixels_8, mask_uint8, radius, flags)
+    has_alpha = pixels_8.ndim == 3 and pixels_8.shape[2] == 4
+    inpaint_input = pixels_8[..., :3] if has_alpha else pixels_8
+
+    inpainted_rgb = cv2.inpaint(inpaint_input, mask_uint8, radius, flags)
+    inpainted_8 = np.dstack([inpainted_rgb, pixels_8[..., 3]]) if has_alpha else inpainted_rgb
 
     result = container.copy()
     if is_16bit:
@@ -69,10 +73,15 @@ def _denoise(container: ImageContainer, params: dict) -> ImageContainer:
     strength = float(params.get("strength", 0.5))
     h = int(strength * 20) + 1  # maps [0,1] → [1,21]
 
-    if pixels_8.ndim == 3 and pixels_8.shape[2] == 3:
-        denoised = cv2.fastNlMeansDenoisingColored(pixels_8, None, h, h, 7, 21)
+    has_alpha = pixels_8.ndim == 3 and pixels_8.shape[2] == 4
+    denoise_input = pixels_8[..., :3] if has_alpha else pixels_8
+
+    if denoise_input.ndim == 3 and denoise_input.shape[2] == 3:
+        denoised_rgb = cv2.fastNlMeansDenoisingColored(denoise_input, None, h, h, 7, 21)
     else:
-        denoised = cv2.fastNlMeansDenoising(pixels_8, None, h, 7, 21)
+        denoised_rgb = cv2.fastNlMeansDenoising(denoise_input, None, h, 7, 21)
+
+    denoised = np.dstack([denoised_rgb, pixels_8[..., 3]]) if has_alpha else denoised_rgb
 
     result = container.copy()
     if container.bit_depth == 16:
