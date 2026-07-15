@@ -30,12 +30,6 @@ _CHAR_FOCUS_PATH_ATTR: dict[str, str] = {
     "yolo_onnx": "yolo_onnx_model_path",
     "u2netp": "u2netp_model_path",
 }
-_CHAR_FOCUS_REQ_NAME: dict[str, str] = {
-    "mediapipe": "mediapipe",
-    "yolo_onnx": "onnxruntime",
-    "u2netp": "onnxruntime",
-}
-
 from vlm_photo_editor.app import state
 from vlm_photo_editor.app.stubs import (
     AVAILABLE_MODELS,
@@ -396,7 +390,16 @@ def render() -> None:
                 )
 
             if backend not in cf_installed:
-                st.code(f"pip install -r requirements-{_CHAR_FOCUS_REQ_NAME[backend]}.txt")
+                if st.button("Install", key=f"install_cf_{backend}"):
+                    with st.spinner(f"Installing {backend} deps…"):
+                        from vlm_photo_editor.detection import install_backend_deps
+
+                        ok = install_backend_deps(backend)
+                    _cf_status.clear()
+                    if ok:
+                        st.success("Installed. Reload the page to refresh status.")
+                    else:
+                        st.error("Install failed — check the terminal for details.")
             else:
                 new_path = st.text_input(
                     f"{backend} model path",

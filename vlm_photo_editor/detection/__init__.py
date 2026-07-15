@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.detection import DetectedSubject
 from vlm_photo_editor.schema.ops import CharacterFocusBackend
 
-__all__ = ["available_backends", "detect_subject"]
+__all__ = ["available_backends", "detect_subject", "install_backend_deps"]
 
 
 def available_backends() -> list[str]:
@@ -18,6 +20,24 @@ def available_backends() -> list[str]:
         result.append(CharacterFocusBackend.YOLO_ONNX.value)
         result.append(CharacterFocusBackend.U2NETP.value)
     return result
+
+
+_BACKEND_REQS: dict[str, str] = {
+    CharacterFocusBackend.MEDIAPIPE.value: "requirements-mediapipe.txt",
+    CharacterFocusBackend.YOLO_ONNX.value: "requirements-onnxruntime.txt",
+    CharacterFocusBackend.U2NETP.value: "requirements-onnxruntime.txt",
+}
+
+
+def install_backend_deps(backend: str) -> bool:
+    """Run pip install for the given Character Focus backend's requirements file."""
+    if backend not in _BACKEND_REQS:
+        raise ValueError(f"Unknown backend: {backend!r}. Available: {sorted(_BACKEND_REQS)}")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r", _BACKEND_REQS[backend]],
+        capture_output=True,
+    )
+    return result.returncode == 0
 
 
 def detect_subject(container: ImageContainer, backend: str) -> DetectedSubject:
