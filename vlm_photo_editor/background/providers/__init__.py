@@ -15,11 +15,15 @@ __all__ = [
     "HuggingFaceProvider",
     "OpenAIProvider",
     "GoogleProvider",
+    "DEFAULT_GENAI_MODEL",
     "get_provider",
     "provider_name_for",
     "available_genai_providers",
     "provider_env_hint",
+    "default_provider_available",
 ]
+
+DEFAULT_GENAI_MODEL = "black-forest-labs/flux-fill-dev"
 
 
 def provider_name_for(model: str) -> str:
@@ -65,3 +69,8 @@ def provider_env_hint(provider: str) -> str:
     if provider == "huggingface":
         return "pip install diffusers torch"
     return _env_key(provider)
+
+
+def default_provider_available() -> bool:
+    """Whether the provider behind DEFAULT_GENAI_MODEL has its key/deps available."""
+    return provider_name_for(DEFAULT_GENAI_MODEL) in available_genai_providers()

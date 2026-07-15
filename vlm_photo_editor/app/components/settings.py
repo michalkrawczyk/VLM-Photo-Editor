@@ -250,21 +250,36 @@ def render() -> None:
             "google:imagen-3.0-generate-002",
             "hf:stabilityai/stable-diffusion-2-inpainting",
         ]
+        from vlm_photo_editor.background.providers import (
+            available_genai_providers,
+            provider_name_for,
+        )
+
+        _avail_providers = set(available_genai_providers())
+        _avail_genai = [m for m in _GENAI_IMAGE_PRESETS if provider_name_for(m) in _avail_providers]
+        _unavail_genai = [m for m in _GENAI_IMAGE_PRESETS if m not in _avail_genai]
+
         settings = get_settings()
         current_genai = settings.genai_model
-        try:
-            genai_idx = _GENAI_IMAGE_PRESETS.index(current_genai)
-        except ValueError:
-            genai_idx = 0
-        selected_genai = st.selectbox(
-            "GenAI Image Model:",
-            options=_GENAI_IMAGE_PRESETS,
-            index=genai_idx,
-            key="genai_image_model",
-        )
-        if selected_genai != current_genai:
-            settings.genai_model = selected_genai
-            state.log_intent("model_selected", {"role": "genai_image", "model": selected_genai})
+        if _avail_genai:
+            try:
+                genai_idx = _avail_genai.index(current_genai)
+            except ValueError:
+                genai_idx = 0
+            selected_genai = st.selectbox(
+                "GenAI Image Model:",
+                options=_avail_genai,
+                index=genai_idx,
+                key="genai_image_model",
+            )
+            if selected_genai != current_genai:
+                settings.genai_model = selected_genai
+                state.log_intent("model_selected", {"role": "genai_image", "model": selected_genai})
+        else:
+            st.error("No GenAI image backend available. Add an API key or install diffusers.")
+
+        if _unavail_genai:
+            st.caption("Not available: " + ", ".join(_unavail_genai))
 
     with st.expander("Photoshop Mode", expanded=False):
         _PS_LABELS = {

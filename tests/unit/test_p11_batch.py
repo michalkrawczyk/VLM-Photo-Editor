@@ -82,7 +82,7 @@ def _patched_batch(compile_result=None, plan_side_effect=None):
 def test_concurrent_planning_wall_time():
     """5 images each taking 0.1 s should finish in < 0.4 s (not 0.5 s)."""
 
-    def slow_plan(container, intent, prefs, mode, fi):
+    def slow_plan(container, intent, prefs, mode, fi, genai_available=True):
         time.sleep(0.1)
         return _fake_plan()
 
@@ -124,7 +124,7 @@ def test_rate_limit_retry_succeeds():
     """Plan raises 429 twice, succeeds on the third attempt."""
     call_count = [0]
 
-    def flaky_plan(container, intent, prefs, mode, fi):
+    def flaky_plan(container, intent, prefs, mode, fi, genai_available=True):
         call_count[0] += 1
         if call_count[0] <= 2:
             raise Exception("HTTP 429: rate limit exceeded")

@@ -146,10 +146,20 @@ def _replan_record(record: BatchImageRecord, feedback: str) -> None:
     # Re-use Planner.revise if we have a prior plan; otherwise re-plan from scratch.
     if record.plan is not None:
         from vlm_photo_editor.agents.planner import Planner
+        from vlm_photo_editor.background.providers import default_provider_available
         from vlm_photo_editor.planner.compiler import Compiler
 
         try:
-            revised = Planner().revise(record.container, record.plan, feedback, prefs, mode, None)
+            genai_available = default_provider_available()
+            revised = Planner().revise(
+                record.container,
+                record.plan,
+                feedback,
+                prefs,
+                mode,
+                None,
+                genai_available=genai_available,
+            )
             result = Compiler().compile(revised, mode)
             record.plan = result.plan
             record.op_graph = result.op_graph

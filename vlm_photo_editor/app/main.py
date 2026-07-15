@@ -74,6 +74,7 @@ def _detect_subject_if_enabled(container: "ImageContainer"):  # type: ignore[nam
 
 def _do_generate_plan() -> None:
     from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.background.providers import default_provider_available
     from vlm_photo_editor.config.settings import get_settings
     from vlm_photo_editor.ops.validator import validate_crop_bounds
     from vlm_photo_editor.pipeline.job_queue import run_job
@@ -88,6 +89,7 @@ def _do_generate_plan() -> None:
     framing_val = state.get("framing_mode")
     fi = _build_framing_intent(framing_val) if framing_val else None
     detected_subject = _detect_subject_if_enabled(container)
+    genai_available = default_provider_available()
 
     cache = get_plan_cache()
     cache_key = cache.key(container, mode, prefs)
@@ -102,7 +104,9 @@ def _do_generate_plan() -> None:
         else:
             _progress = st.progress(0.0, text="Generating plan…")
             planner = Planner()
-            plan = run_job(planner.plan, container, intent, prefs, mode, fi, detected_subject)
+            plan = run_job(
+                planner.plan, container, intent, prefs, mode, fi, detected_subject, genai_available
+            )
             _progress.progress(0.5, text="Compiling…")
 
         max_retries = get_settings().max_crop_retries
@@ -125,6 +129,7 @@ def _do_generate_plan() -> None:
                     mode,
                     fi,
                     detected_subject,
+                    genai_available,
                 )
 
         if cached_plan is None:
@@ -162,6 +167,7 @@ def _do_generate_plan() -> None:
 
 def _do_revise_plan(change: str) -> None:
     from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.background.providers import default_provider_available
     from vlm_photo_editor.config.settings import get_settings
     from vlm_photo_editor.ops.validator import validate_crop_bounds
     from vlm_photo_editor.planner.compiler import Compiler, CompilerError
@@ -174,12 +180,15 @@ def _do_revise_plan(change: str) -> None:
     framing_val = state.get("framing_mode")
     fi = _build_framing_intent(framing_val) if framing_val else None
     detected_subject = _detect_subject_if_enabled(container)
+    genai_available = default_provider_available()
     try:
         log_ = state.get("change_requests_log") or []
         log_.append(change)
         state.set("change_requests_log", log_)
         planner = Planner()
-        plan = planner.revise(container, previous_plan, change, prefs, mode, fi, detected_subject)
+        plan = planner.revise(
+            container, previous_plan, change, prefs, mode, fi, detected_subject, genai_available
+        )
 
         max_retries = get_settings().max_crop_retries
         for _attempt in range(max_retries + 1):
@@ -191,7 +200,14 @@ def _do_revise_plan(change: str) -> None:
                 if _attempt >= max_retries:
                     raise
                 plan = planner.revise(
-                    container, plan, str(crop_err), prefs, mode, fi, detected_subject
+                    container,
+                    plan,
+                    str(crop_err),
+                    prefs,
+                    mode,
+                    fi,
+                    detected_subject,
+                    genai_available,
                 )
 
         state.set("current_plan", result.plan)

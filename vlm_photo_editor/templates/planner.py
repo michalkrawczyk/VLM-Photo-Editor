@@ -13,12 +13,13 @@ def build_system_prompt(
     framing_intent: FramingIntent | None,
     target_size: tuple[int, int] | None,
     detected_subject: DetectedSubject | None = None,
+    genai_available: bool = True,
 ) -> str:
     from vlm_photo_editor.config.settings import get_settings
 
     settings = get_settings()
     no_genai = settings.no_genai
-    lines = _base_lines(mode, no_genai)
+    lines = _base_lines(mode, no_genai, genai_available)
     if settings.ps_mode == "strict":
         lines += _ps_strict_lines()
     lines += _framing_lines(framing_intent, target_size, prefs)
@@ -48,7 +49,7 @@ def _ps_strict_lines() -> list[str]:
     ]
 
 
-def _base_lines(mode: str, no_genai: bool = False) -> list[str]:
+def _base_lines(mode: str, no_genai: bool = False, genai_available: bool = True) -> list[str]:
     try:
         allowed = sorted(op.value for op in allowed_ops_for_mode(mode))
     except KeyError as exc:
@@ -114,6 +115,13 @@ def _base_lines(mode: str, no_genai: bool = False) -> list[str]:
             'NO-GENAI MODE: Do NOT set backend="genai" for any inpaint op.',
             '  Use backend="opencv" for all region_edit and background_replace ops.',
             "  Omit prompt for these ops.",
+        ]
+    if not genai_available and not no_genai:
+        lines += [
+            "",
+            "GENAI UNAVAILABLE: No GenAI provider credentials/deps found for the default model.",
+            '  Do NOT set backend="genai" for any inpaint op (region_edit, background_replace).',
+            '  Use backend="opencv" instead. Omit prompt for these ops.',
         ]
     lines += [
         "",

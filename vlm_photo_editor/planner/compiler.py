@@ -3,6 +3,7 @@ from __future__ import annotations
 import socket
 import time
 
+from vlm_photo_editor.background.providers import DEFAULT_GENAI_MODEL as _DEFAULT_GENAI_MODEL
 from vlm_photo_editor.background.providers import (
     available_genai_providers,
     provider_env_hint,
@@ -52,8 +53,6 @@ _OP_DEFAULT_BACKEND: dict[OpName, Backend] = {
     OpName.BACKGROUND_REPLACE: Backend.GENAI,
     OpName.REGION_EDIT: Backend.GENAI,
 }
-
-_DEFAULT_GENAI_MODEL = "black-forest-labs/flux-fill-dev"
 
 _INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
 

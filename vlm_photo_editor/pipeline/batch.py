@@ -43,6 +43,7 @@ async def _plan_single(
     framing_intent: Any | None,
     max_retries: int,
     on_image_progress: Callable[[str], None] | None,
+    genai_available: bool = True,
 ) -> None:
     """Plan one image with exponential back-off on rate-limit errors.
 
@@ -53,7 +54,14 @@ async def _plan_single(
     while True:
         try:
             plan = await anyio.to_thread.run_sync(
-                lambda: planner.plan(record.container, intent, prefs, mode, framing_intent)
+                lambda: planner.plan(
+                    record.container,
+                    intent,
+                    prefs,
+                    mode,
+                    framing_intent,
+                    genai_available=genai_available,
+                )
             )
             result = await anyio.to_thread.run_sync(lambda: compiler.compile(plan, mode))
             record.plan = result.plan
@@ -101,10 +109,12 @@ async def run_batch(
     Returns records with updated status fields.
     """
     from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.background.providers import default_provider_available
     from vlm_photo_editor.planner.compiler import Compiler
 
     planner = Planner()  # _llm is immutable after init — safe to share across threads
     compiler = Compiler()  # stateless
+    genai_available = default_provider_available()
 
     async with anyio.create_task_group() as tg:
         for record in records:
@@ -119,6 +129,7 @@ async def run_batch(
                 framing_intent,
                 max_retries,
                 on_image_progress,
+                genai_available,
             )
 
     # Sequential execution for auto-approvable images (avoids N concurrent numpy arrays).

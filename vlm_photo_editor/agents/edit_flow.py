@@ -34,17 +34,22 @@ class EditState(TypedDict):
 
 
 def _generate_plan(state: EditState) -> dict:
+    from vlm_photo_editor.background.providers import default_provider_available
+
     plan = Planner().plan(
         state["container"],
         state["intent"],
         state.get("prefs"),
         state["mode"],
         detected_subject=state.get("detected_subject"),
+        genai_available=default_provider_available(),
     )
     return {"plan": plan, "feedback": None, "approved": False}
 
 
 def _revise_plan(state: EditState) -> dict:
+    from vlm_photo_editor.background.providers import default_provider_available
+
     plan = Planner().revise(
         state["container"],
         state["plan"],
@@ -52,6 +57,7 @@ def _revise_plan(state: EditState) -> dict:
         state.get("prefs"),
         state["mode"],
         detected_subject=state.get("detected_subject"),
+        genai_available=default_provider_available(),
     )
     return {"plan": plan, "feedback": None, "approved": False}
 

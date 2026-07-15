@@ -34,6 +34,7 @@ class Planner:
         mode: str = "full",
         framing_intent: FramingIntent | None = None,
         detected_subject: DetectedSubject | None = None,
+        genai_available: bool = True,
     ) -> HumanPlan:
         from vlm_photo_editor.config.settings import get_debug_settings
         from vlm_photo_editor.ops.backends.pil_backend import frame_target_size
@@ -44,7 +45,7 @@ class Planner:
         messages = [
             SystemMessage(
                 content=build_system_prompt(
-                    mode, prefs, framing_intent, target_size, detected_subject
+                    mode, prefs, framing_intent, target_size, detected_subject, genai_available
                 )
             ),
             HumanMessage(
@@ -68,6 +69,7 @@ class Planner:
         mode: str = "full",
         framing_intent: FramingIntent | None = None,
         detected_subject: DetectedSubject | None = None,
+        genai_available: bool = True,
     ) -> HumanPlan:
         from vlm_photo_editor.config.settings import get_debug_settings
         from vlm_photo_editor.ops.backends.pil_backend import frame_target_size
@@ -83,7 +85,7 @@ class Planner:
         messages = [
             SystemMessage(
                 content=build_system_prompt(
-                    mode, prefs, framing_intent, target_size, detected_subject
+                    mode, prefs, framing_intent, target_size, detected_subject, genai_available
                 )
             ),
             HumanMessage(
