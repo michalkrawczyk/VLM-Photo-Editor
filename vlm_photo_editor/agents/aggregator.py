@@ -38,12 +38,12 @@ class Aggregator:
 
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        client = build_client("preference_aggregator")
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
             HumanMessage(content=_build_user_prompt(deltas)),
         ]
         try:
+            client = build_client("preference_aggregator")
             response = client.invoke(messages)
             text = response.content if hasattr(response, "content") else str(response)
             # Extract JSON object from response (model may add surrounding text)

@@ -44,7 +44,6 @@ class Critic:
         """Compare before/after images against intent; return pass/fail verdict."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        client = build_client("critic")
         before_b64 = _encode_image(before)
         after_b64 = _encode_image(after)
 
@@ -57,6 +56,7 @@ class Critic:
         ]
 
         try:
+            client = build_client("critic")
             response = client.invoke(
                 [
                     SystemMessage(content=_SYSTEM_PROMPT),
