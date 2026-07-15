@@ -143,12 +143,11 @@ def frame_target_size(w: int, h: int, composition: str) -> tuple[int, int] | Non
     return w, int(w * th / tw)
 
 
-def _frame(container: ImageContainer, params: dict) -> ImageContainer:
-    mode = str(params.get("mode", "rule_of_thirds"))
-    h, w = container.pixels.shape[:2]
+def frame_crop_box(w: int, h: int, mode: str, params: dict) -> tuple[int, int, int, int] | None:
+    """Return (left, top, right, bottom) for a FRAME composition crop, or None for fill_frame."""
     target = frame_target_size(w, h, mode)
     if target is None:
-        return container.copy()
+        return None
     target_w, target_h = target
 
     focus_keys = ("focus_x", "focus_y", "focus_w", "focus_h")
@@ -163,8 +162,16 @@ def _frame(container: ImageContainer, params: dict) -> ImageContainer:
 
     left = max(0, min(left, w - target_w))
     top = max(0, min(top, h - target_h))
-    right = left + target_w
-    bottom = top + target_h
+    return left, top, left + target_w, top + target_h
+
+
+def _frame(container: ImageContainer, params: dict) -> ImageContainer:
+    mode = str(params.get("mode", "rule_of_thirds"))
+    h, w = container.pixels.shape[:2]
+    box = frame_crop_box(w, h, mode, params)
+    if box is None:
+        return container.copy()
+    left, top, right, bottom = box
     result = container.copy()
     result.pixels = container.pixels[top:bottom, left:right]
     return result

@@ -187,6 +187,72 @@ def test_bbox_edge_pixels_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Executor — region coords remapped when CROP/FRAME ran earlier in the graph
+# ---------------------------------------------------------------------------
+
+
+def test_crop_then_bbox_remaps_to_cropped_space() -> None:
+    pixels = np.full((64, 64, 3), 50, dtype=np.uint8)
+    container = _container(pixels)
+    graph = _graph(
+        _op(OpName.CROP, {"left": 20, "top": 20, "right": 64, "bottom": 64}),
+        # bbox expressed in the ORIGINAL 64x64 image's coordinates.
+        _op(OpName.EXPOSURE, {"ev": 2.0}, bbox=BoundingBox(x=30, y=30, width=10, height=10)),
+    )
+    result = Executor().apply(container, graph)
+
+    assert result.container.pixels.shape == (44, 44, 3)
+    # Remapped bbox is [10,20)x[10,20) in the cropped image.
+    np.testing.assert_allclose(result.container.pixels[15, 15], 200, atol=1)
+    assert np.all(result.container.pixels[0, 0] == 50)  # outside remapped bbox
+
+
+def test_crop_then_bbox_outside_cropped_region_raises() -> None:
+    container = _container(np.full((64, 64, 3), 50, dtype=np.uint8))
+    graph = _graph(
+        _op(OpName.CROP, {"left": 20, "top": 20, "right": 64, "bottom": 64}),
+        # Original-space bbox entirely left/above the crop origin.
+        _op(OpName.EXPOSURE, {"ev": 2.0}, bbox=BoundingBox(x=0, y=0, width=10, height=10)),
+    )
+    with pytest.raises(ValueError, match="falls outside"):
+        Executor().apply(container, graph)
+
+
+def test_crop_then_frame_remaps_focus() -> None:
+    pixels = np.zeros((50, 200, 3), dtype=np.uint8)
+    pixels[25, 105] = 255  # marker: kept only if focus_x is remapped into cropped space
+    container = _container(pixels)
+    graph = _graph(
+        _op(OpName.CROP, {"left": 100, "top": 0, "right": 200, "bottom": 50}),
+        _op(
+            OpName.FRAME,
+            {
+                "mode": "negative_space",
+                # focus_* expressed in the ORIGINAL 200-wide image's coordinates.
+                "focus_x": 110.0,
+                "focus_y": 20.0,
+                "focus_w": 2.0,
+                "focus_h": 2.0,
+            },
+        ),
+    )
+    result = Executor().apply(container, graph)
+
+    assert result.container.pixels.shape == (50, 88, 3)
+    assert result.container.pixels[25, 5, 0] == 255
+
+
+def test_rotate_then_bbox_raises() -> None:
+    container = _container()
+    graph = _graph(
+        _op(OpName.ROTATE, {"angle": 30.0}),
+        _op(OpName.EXPOSURE, {"ev": 1.0}, bbox=BoundingBox(x=0, y=0, width=5, height=5)),
+    )
+    with pytest.raises(ValueError, match="ROTATE"):
+        Executor().apply(container, graph)
+
+
+# ---------------------------------------------------------------------------
 # Mask
 # ---------------------------------------------------------------------------
 
