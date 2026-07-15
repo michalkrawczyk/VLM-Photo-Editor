@@ -13,6 +13,7 @@ class OpName(str, Enum):
     EXPOSURE = "exposure"
     DENOISE = "denoise"
     MASK = "mask"
+    FILL_MASK = "fill_mask"
     REGION_EDIT = "region_edit"
     BACKGROUND_REPLACE = "background_replace"
     FRAME = "frame"

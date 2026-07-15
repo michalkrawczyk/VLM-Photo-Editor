@@ -38,15 +38,23 @@ def render(plan: HumanPlan, op_graph: OpGraph | None = None, *, executed: bool =
     if op_graph:
         from vlm_photo_editor.ops.constants import INPAINT_OPS as _INPAINT_OPS
         from vlm_photo_editor.schema.ops import Backend as _Backend
+        from vlm_photo_editor.schema.ops import OpName as _OpName
 
-        opencv_inpaint = any(
-            op.backend == _Backend.OPENCV and op.op_name in _INPAINT_OPS for op in op_graph.ops
+        needs_manual_bbox = any(
+            op.bbox is None
+            and (
+                (op.backend == _Backend.OPENCV and op.op_name in _INPAINT_OPS)
+                or op.op_name == _OpName.FILL_MASK
+                or op.params.get("invert") is True
+            )
+            for op in op_graph.ops
         )
         bbox = state.get("bbox")
-        if opencv_inpaint and not (bbox and bbox.get("width", 0) > 0):
+        if needs_manual_bbox and not (bbox and bbox.get("width", 0) > 0):
             st.warning(
-                "This plan requires a bounding box (OpenCV inpaint). "
-                "Expand 'Region Selection (BBox)' above and draw a rectangle before accepting."
+                "This plan requires a region selection (OpenCV inpaint, fill_mask, or a "
+                "mask step with no detected subject). Expand 'Region Selection (BBox)' "
+                "above and draw a rectangle before accepting."
             )
 
     st.divider()

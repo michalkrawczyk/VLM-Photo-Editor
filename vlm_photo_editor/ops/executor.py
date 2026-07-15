@@ -149,6 +149,8 @@ class Executor:
         # Region-confined: apply to full image then mask to bbox.
         edited = backend_fn(container, op)
         mask = bbox_to_mask(container, op.bbox)
+        if op.params.get("invert", False):
+            mask = ~mask
         combined = container.copy()
         combined.pixels = np.where(mask[..., np.newaxis], edited.pixels, container.pixels)
         return combined, None

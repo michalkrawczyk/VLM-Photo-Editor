@@ -275,6 +275,40 @@ def test_mask_clips_to_image_bounds() -> None:
     assert not mask[0, 0]  # outside
 
 
+def test_fill_mask_fills_inside_bbox_only() -> None:
+    op = _op(OpName.FILL_MASK, {"fill": 10}, bbox=BoundingBox(x=5, y=5, width=10, height=10))
+    container = _container(np.full((64, 64, 3), 200, dtype=np.uint8))
+    result = Executor().apply(container, _graph(op))
+
+    inside = bbox_to_mask(container, op.bbox)
+    assert np.all(result.container.pixels[inside] == 10)
+    assert np.all(result.container.pixels[~inside] == 200)
+
+
+def test_fill_mask_invert_fills_outside_bbox() -> None:
+    op = _op(
+        OpName.FILL_MASK,
+        {"fill": 10, "invert": True},
+        bbox=BoundingBox(x=5, y=5, width=10, height=10),
+    )
+    container = _container(np.full((64, 64, 3), 200, dtype=np.uint8))
+    result = Executor().apply(container, _graph(op))
+
+    inside = bbox_to_mask(container, op.bbox)
+    assert np.all(result.container.pixels[inside] == 200)
+    assert np.all(result.container.pixels[~inside] == 10)
+
+
+def test_pil_backend_raw_mask_op_raises() -> None:
+    """A bare MASK op should never reach a backend post-compile (Compiler folds it into
+    the next op); if one does anyway, fail loud rather than silently fill the image."""
+    from vlm_photo_editor.ops.backends.pil_backend import apply as pil_apply
+
+    op = _op(OpName.MASK, {})
+    with pytest.raises(ValueError, match="does not support op"):
+        pil_apply(_container(), op)
+
+
 # ---------------------------------------------------------------------------
 # Validator — inpaint backend / prompt rules
 # ---------------------------------------------------------------------------

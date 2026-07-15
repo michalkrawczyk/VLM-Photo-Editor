@@ -19,7 +19,7 @@ class EditMode(str, Enum):
 
 _OP_SETS: dict[str, set[OpName]] = {
     "full": set(OpName),
-    "background": {OpName.BACKGROUND_REPLACE, OpName.MASK},
+    "background": {OpName.BACKGROUND_REPLACE, OpName.FILL_MASK},
     "frame": {OpName.CROP},
     # Policy modes: all ops reachable; backend enforcement is in the compiler
     "auto": set(OpName),

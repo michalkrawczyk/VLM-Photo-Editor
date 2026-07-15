@@ -41,6 +41,7 @@ _OP_RISK: dict[OpName, RiskTier] = {
     OpName.EXPOSURE: RiskTier.LOW,
     OpName.DENOISE: RiskTier.LOW,
     OpName.MASK: RiskTier.MEDIUM,
+    OpName.FILL_MASK: RiskTier.MEDIUM,
     OpName.REGION_EDIT: RiskTier.HIGH,
     OpName.BACKGROUND_REPLACE: RiskTier.HIGH,
     OpName.FRAME: RiskTier.LOW,
@@ -56,9 +57,66 @@ _DEFAULT_GENAI_MODEL = "black-forest-labs/flux-fill-dev"
 
 _INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
 
+# Ops that change image dimensions; mask's selection can't carry across them.
+_SIZE_CHANGING_OPS = {OpName.CROP, OpName.ROTATE, OpName.FRAME}
+
 
 class CompilerError(ValueError):
     """HumanPlan could not be compiled to a valid OpGraph."""
+
+
+def _is_valid_mask_target(op: Op) -> bool:
+    """True if `op` can follow a `mask` selection step (i.e. can apply outside it)."""
+    if op.op_name in _SIZE_CHANGING_OPS:
+        return False
+    if op.op_name == OpName.BACKGROUND_REPLACE:
+        return False
+    if op.op_name == OpName.REGION_EDIT:
+        return op.params.get("method") == "blur"
+    return True
+
+
+def _collapse_mask_ops(ops: list[Op], detected_subject: DetectedSubject | None) -> list[Op]:
+    """Fold each `mask` op into the op immediately following it: `mask` protects the
+    subject, so the next op is confined to the region OUTSIDE it (invert=True). If
+    Character Focus detected a subject, its bbox is used immediately. Otherwise the op
+    is left with bbox=None — the app layer resolves it from a manually-drawn Region
+    Selection at execute time (still applied as protect-that-box/edit-outside-it), or
+    blocks execution with a clear message if none is drawn. `mask` itself never
+    survives into the compiled OpGraph."""
+    if not any(op.op_name == OpName.MASK for op in ops):
+        return ops
+
+    result: list[Op] = []
+    i = 0
+    while i < len(ops):
+        op = ops[i]
+        if op.op_name != OpName.MASK:
+            result.append(op)
+            i += 1
+            continue
+        if i + 1 >= len(ops):
+            raise CompilerError(
+                f"Step {op.step_id!r}: 'mask' must be immediately followed by another op "
+                "to apply the protected-subject selection to."
+            )
+        nxt = ops[i + 1]
+        if not _is_valid_mask_target(nxt):
+            raise CompilerError(
+                f"Step {nxt.step_id!r}: 'mask' cannot precede {nxt.op_name.value!r}; that "
+                "op manages its own region selection."
+            )
+        bbox = detected_subject.bbox if detected_subject is not None else None
+        result.append(
+            nxt.model_copy(
+                update={
+                    "bbox": bbox,
+                    "params": {**nxt.params, "invert": True},
+                }
+            )
+        )
+        i += 2
+    return result
 
 
 class Compiler:
@@ -144,6 +202,8 @@ class Compiler:
                         risk_tier=_OP_RISK.get(op_name, RiskTier.LOW),
                     )
                 )
+
+        ops = _collapse_mask_ops(ops, detected_subject)
 
         if detected_subject is not None:
             b = detected_subject.bbox

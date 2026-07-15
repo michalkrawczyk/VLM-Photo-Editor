@@ -231,6 +231,100 @@ def test_compiler_no_detected_subject_leaves_frame_params_untouched():
 
 
 # ---------------------------------------------------------------------------
+# Compiler — mask op collapses into the immediately-following op (bbox=subject, invert=True)
+# ---------------------------------------------------------------------------
+
+
+def _plan_with_steps(*steps: tuple[list[OpName], list[dict]]) -> HumanPlan:
+    return HumanPlan(
+        steps=[
+            HumanStep(index=i + 1, title=f"step{i}", why="test", op_names=names, op_params=params)
+            for i, (names, params) in enumerate(steps)
+        ],
+        mode="full",
+    )
+
+
+def test_mask_collapses_into_region_edit_blur():
+    from vlm_photo_editor.planner.compiler import Compiler
+
+    plan = _plan_with_steps(
+        ([OpName.MASK], [{}]),
+        ([OpName.REGION_EDIT], [{"backend": "opencv", "method": "blur", "radius": 10}]),
+    )
+    result = Compiler().compile(plan, "full", detected_subject=_subject(1, 2, 3, 4))
+
+    ops = result.op_graph.ops
+    assert len(ops) == 1
+    assert ops[0].op_name == OpName.REGION_EDIT
+    assert ops[0].bbox == BoundingBox(x=1, y=2, width=3, height=4)
+    assert ops[0].params["invert"] is True
+    assert ops[0].params["method"] == "blur"
+
+
+def test_mask_collapses_into_fill_mask():
+    from vlm_photo_editor.planner.compiler import Compiler
+
+    plan = _plan_with_steps(
+        ([OpName.MASK], [{}]),
+        ([OpName.FILL_MASK], [{"fill": 200}]),
+    )
+    result = Compiler().compile(plan, "full", detected_subject=_subject(5, 5, 10, 10))
+
+    ops = result.op_graph.ops
+    assert len(ops) == 1
+    assert ops[0].op_name == OpName.FILL_MASK
+    assert ops[0].bbox == BoundingBox(x=5, y=5, width=10, height=10)
+    assert ops[0].params["invert"] is True
+    assert ops[0].params["fill"] == 200
+
+
+def test_mask_without_detected_subject_leaves_bbox_unresolved():
+    """No Character Focus subject: mask still collapses (invert=True) but bbox stays
+    None — the app layer resolves it from a manually-drawn Region Selection later."""
+    from vlm_photo_editor.planner.compiler import Compiler
+
+    plan = _plan_with_steps(
+        ([OpName.MASK], [{}]),
+        ([OpName.EXPOSURE], [{"ev": -0.5}]),
+    )
+    result = Compiler().compile(plan, "full")
+
+    ops = result.op_graph.ops
+    assert len(ops) == 1
+    assert ops[0].op_name == OpName.EXPOSURE
+    assert ops[0].bbox is None
+    assert ops[0].params["invert"] is True
+
+
+def test_mask_as_last_step_raises():
+    from vlm_photo_editor.planner.compiler import Compiler, CompilerError
+
+    plan = _plan_with_steps(([OpName.MASK], [{}]))
+    with pytest.raises(CompilerError, match="must be immediately followed"):
+        Compiler().compile(plan, "full", detected_subject=_subject(1, 1, 2, 2))
+
+
+@pytest.mark.parametrize(
+    "next_op,next_params",
+    [
+        (OpName.CROP, {"left": 0, "top": 0, "right": 10, "bottom": 10}),
+        (OpName.BACKGROUND_REPLACE, {"backend": "opencv"}),
+        (OpName.REGION_EDIT, {"backend": "opencv"}),  # no method="blur"
+    ],
+)
+def test_mask_before_unsupported_op_raises(next_op, next_params):
+    from vlm_photo_editor.planner.compiler import Compiler, CompilerError
+
+    plan = _plan_with_steps(
+        ([OpName.MASK], [{}]),
+        ([next_op], [next_params]),
+    )
+    with pytest.raises(CompilerError, match="cannot precede"):
+        Compiler().compile(plan, "full", detected_subject=_subject(1, 1, 2, 2))
+
+
+# ---------------------------------------------------------------------------
 # pil_backend._frame() — anchors on focus centroid when present, else center-crop
 # ---------------------------------------------------------------------------
 

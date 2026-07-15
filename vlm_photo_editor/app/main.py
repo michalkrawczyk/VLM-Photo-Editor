@@ -228,15 +228,23 @@ def _do_execute() -> None:
 
     from vlm_photo_editor.ops.constants import INPAINT_OPS as _INPAINT_OPS
     from vlm_photo_editor.schema.ops import Backend as _Backend
+    from vlm_photo_editor.schema.ops import OpName as _OpName
 
     needs_bbox = any(
-        op.backend == _Backend.OPENCV and op.op_name in _INPAINT_OPS for op in op_graph.ops
+        op.bbox is None
+        and (
+            (op.backend == _Backend.OPENCV and op.op_name in _INPAINT_OPS)
+            or op.op_name == _OpName.FILL_MASK
+            or op.params.get("invert") is True
+        )
+        for op in op_graph.ops
     )
     if needs_bbox and not (bbox_raw and bbox_raw.get("width", 0) > 0):
         state.set(
             "error",
-            "This plan uses the OpenCV inpaint backend for region editing, which requires a "
-            "bounding box. Expand 'Region Selection (BBox)' and draw a rectangle before applying.",
+            "This plan requires a region selection (OpenCV inpaint, fill_mask, or a mask "
+            "step with no detected subject). Expand 'Region Selection (BBox)' and draw a "
+            "rectangle before applying.",
         )
         return
 
@@ -250,13 +258,17 @@ def _do_execute() -> None:
             width=max(1, int(bbox_raw["width"] * img_w)),
             height=max(1, int(bbox_raw["height"] * img_h)),
         )
-        from vlm_photo_editor.schema.ops import OpName
 
-        _REGION_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT, OpName.MASK}
-        patched_ops = [
-            op.model_copy(update={"bbox": bbox}) if op.op_name in _REGION_OPS else op
-            for op in op_graph.ops
-        ]
+        _REGION_OPS = {_OpName.BACKGROUND_REPLACE, _OpName.REGION_EDIT, _OpName.FILL_MASK}
+        patched_ops = []
+        for op in op_graph.ops:
+            if op.bbox is None and op.params.get("invert") is True:
+                # mask fallback (no detected subject): the drawn box stands in for the
+                # subject bbox — the op still applies OUTSIDE it, so invert stays True.
+                op = op.model_copy(update={"bbox": bbox})
+            elif op.op_name in _REGION_OPS:
+                op = op.model_copy(update={"bbox": bbox, "params": {**op.params, "invert": False}})
+            patched_ops.append(op)
         op_graph = op_graph.model_copy(update={"ops": patched_ops})
 
     try:

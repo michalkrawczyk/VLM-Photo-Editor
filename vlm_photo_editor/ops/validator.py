@@ -11,6 +11,7 @@ _REQUIRED_PARAMS: dict[OpName, list[str]] = {
     OpName.EXPOSURE: ["ev"],
     OpName.DENOISE: [],
     OpName.MASK: [],
+    OpName.FILL_MASK: [],
     OpName.REGION_EDIT: ["prompt"],
     OpName.BACKGROUND_REPLACE: ["prompt"],
     OpName.FRAME: ["mode"],
