@@ -25,7 +25,7 @@ def _step(op_names, op_params=None):
         title="t",
         why="w",
         op_names=op_names,
-        op_params=op_params or [],
+        op_params=op_params if op_params is not None else [{} for _ in op_names],
     )
 
 

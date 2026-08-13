@@ -8,6 +8,7 @@ _UUID2 = "00000000-0000-0000-0000-000000000002"
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from vlm_photo_editor.config.policy import allowed_ops_for_mode
 from vlm_photo_editor.planner.compiler import Compiler, CompilerError
@@ -129,10 +130,10 @@ def test_compiler_step_id_linkage():
         (["exposure"], [{"ev": 1.0}, {"ev": 2.0}]),  # more params than names
     ],
 )
-def test_compiler_rejects_mismatched_op_params_length(op_names, op_params):
-    step = _step(op_names, op_params)
-    with pytest.raises(CompilerError, match="op_params length"):
-        Compiler().compile(_plan(step), "full")
+def test_human_step_rejects_mismatched_op_params_length(op_names, op_params):
+    """Schema-level parity validator (S-B1) rejects this before the compiler runs."""
+    with pytest.raises(ValidationError, match="op_names.*op_params"):
+        _step(op_names, op_params)
 
 
 # ---------------------------------------------------------------------------

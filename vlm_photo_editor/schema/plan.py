@@ -5,7 +5,7 @@ import re
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .ops import FramingMode, OpGraph, OpName
 
@@ -35,6 +35,15 @@ class HumanStep(BaseModel):
     why: str
     op_names: list[OpName] = Field(default_factory=list)
     op_params: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _require_parity(self) -> "HumanStep":
+        if len(self.op_names) != len(self.op_params):
+            raise ValueError(
+                f"op_names ({len(self.op_names)}) and op_params ({len(self.op_params)}) "
+                "must have equal length"
+            )
+        return self
 
 
 class HumanPlan(BaseModel):
