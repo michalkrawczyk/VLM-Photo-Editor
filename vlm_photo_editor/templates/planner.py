@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from vlm_photo_editor.config.policy import EditMode, allowed_ops_for_mode
 from vlm_photo_editor.schema.detection import DetectedSubject
+from vlm_photo_editor.schema.op_catalog import all_specs
 from vlm_photo_editor.schema.ops import FramingIntent, FramingMode
 from vlm_photo_editor.schema.prefs import Preferences
 from vlm_photo_editor.templates import framing as _framing
@@ -28,25 +29,25 @@ def build_system_prompt(
     return "\n".join(lines)
 
 
-_PS_EXPRESSIBLE_OPS = [
-    "crop",
-    "rotate",
-    "white_balance",
-    "exposure",
-    "denoise",
-    "mask",
-    "fill_mask",
-    "region_edit",
-]
-
-
 def _ps_strict_lines() -> list[str]:
+    ps_expressible_ops = [
+        spec.op_name.value for spec in all_specs().values() if spec.ps_expressible
+    ]
     return [
         "",
         "PS-STRICT MODE: Only propose ops expressible in Photoshop.",
-        f"  Allowed PS ops: {_PS_EXPRESSIBLE_OPS}",
+        f"  Allowed PS ops: {ps_expressible_ops}",
         '  Do NOT use backend="genai". Use backend="opencv" for any inpaint op.',
     ]
+
+
+def _param_constraint_lines() -> list[str]:
+    # Unfiltered by allowed_ops_for_mode, matching current behavior — the prose lists
+    # all ops regardless of active mode.
+    lines: list[str] = []
+    for spec in all_specs().values():
+        lines.extend(spec.render_doc())
+    return lines
 
 
 def _base_lines(mode: str, no_genai: bool = False, genai_available: bool = True) -> list[str]:
@@ -75,27 +76,7 @@ def _base_lines(mode: str, no_genai: bool = False, genai_available: bool = True)
         "  outpaint_needed: bool (default false; set true when crop would clip the primary subject)",
         "",
         "PARAM CONSTRAINTS:",
-        "  crop: {left, top, right, bottom} (pixel ints; 0 ≤ left < right ≤ image_width, 0 ≤ top < bottom ≤ image_height)",
-        "  rotate: {angle} (float -360 to 360)",
-        "  white_balance: {temperature} (float 1000–20000 K)",
-        "  exposure: {ev} (float -10 to 10)",
-        "  denoise: {}",
-        "  mask: {} — protects the subject. Must be immediately followed by exactly one other",
-        '    op (fill_mask, region_edit with method="blur", exposure, white_balance, or',
-        "    denoise), which then applies ONLY OUTSIDE the subject. Uses the Character Focus",
-        "    detected subject if active; otherwise the user is prompted to draw a Region",
-        "    Selection at execute time. Cannot precede crop, rotate, frame, background_replace,",
-        '    or region_edit without method="blur".',
-        "  fill_mask: {fill} (int, optional, default 0) — paints the selected region a flat",
-        "    color. Standalone op; needs its own region (drawn manually, or inherited by",
-        "    immediately following a mask step).",
-        '  region_edit: {prompt: str (required for genai), backend: "genai"|"opencv" (optional),',
-        '    method: "telea"|"ns"|"blur" (opencv only, default "telea"),',
-        '    radius: float 0.5-50 (opencv method="blur" only, default 15, Gaussian blur strength)}',
-        '  background_replace: {prompt: str (required for genai), backend: "genai"|"opencv" (optional)}',
-        "  frame: {mode: str} — one of: rule_of_thirds, golden_ratio, golden_spiral,",
-        "    center_symmetry, portrait_headroom, face_only, negative_space,",
-        "    fill_frame, lead_room, horizon_third",
+        *_param_constraint_lines(),
         "",
         "INPAINT BACKEND SELECTION (region_edit / background_replace):",
         '  Default is backend="genai": full content synthesis via external API.',

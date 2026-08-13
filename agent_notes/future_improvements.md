@@ -138,6 +138,11 @@ Ruled out for this narrow use case: NanoSAM (GPU/Jetson-only), EdgeSAM (license 
 
 ## Op Catalog / Registry + Custom Op Extension Points
 
+**Status: Extension Point A (the registry itself) implemented — see `vlm_photo_editor/schema/op_catalog.py`.**
+`validator.py`, `compiler.py`, and `templates/planner.py` now read from it instead of
+five parallel tables. Extension Point B (planner-authored scripts at plan time) remains
+out of scope, per the note below — still needs its own threat-model doc.
+
 **Problem:** op definitions are scattered across five places that must be kept in sync by hand: `schema/ops.py` (`OpName` enum), `ops/validator.py` (`_REQUIRED_PARAMS`, `_PARAM_BOUNDS`), `planner/compiler.py` (`_OP_RISK`, `_OP_DEFAULT_BACKEND`), `templates/planner.py` (prose param docs fed to the LLM), and the backend dispatch tables (`ops/backends/pil_backend.py`, `ops/backends/cv_backend.py`). Nothing enforces agreement between them. This is exactly how the `mask` op ended up broken: it was listed in the planner prompt as `mask: {}` with zero semantic documentation, while its actual backend implementation did something (a full-image solid-color fill) that had no relationship to what an LLM would reasonably infer from the name — see the `mask`/`fill_mask` split fix in `planner/compiler.py`/`ops/backends/pil_backend.py` for the concrete incident.
 
 **Proposed shape:** a single `OpSpec` registry, e.g. `vlm_photo_editor/ops/catalog.py` — one entry per `OpName` holding: params + bounds, required fields, risk tier, default/allowed backends, bbox-eligibility class (size-changing / self-managed-inpaint / generic-confinable), and the exact planner-facing doc string. `validator.py`, `compiler.py`, and `templates/planner.py` would read from this registry instead of maintaining five parallel tables that can drift independently.

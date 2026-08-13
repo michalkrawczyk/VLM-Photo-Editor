@@ -12,7 +12,8 @@ from vlm_photo_editor.background.providers import (
 from vlm_photo_editor.config.policy import EditMode, allowed_ops_for_mode
 from vlm_photo_editor.ops.validator import validate_op_graph
 from vlm_photo_editor.schema.detection import DetectedSubject
-from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
+from vlm_photo_editor.schema.op_catalog import BBoxClass, all_specs, get_spec
+from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 from vlm_photo_editor.schema.plan import CompilerResult, HumanPlan
 
 _PS_MCP_HOST = "127.0.0.1"
@@ -35,29 +36,14 @@ def _ps_available() -> bool:
     return result
 
 
-_OP_RISK: dict[OpName, RiskTier] = {
-    OpName.CROP: RiskTier.LOW,
-    OpName.ROTATE: RiskTier.LOW,
-    OpName.WHITE_BALANCE: RiskTier.LOW,
-    OpName.EXPOSURE: RiskTier.LOW,
-    OpName.DENOISE: RiskTier.LOW,
-    OpName.MASK: RiskTier.MEDIUM,
-    OpName.FILL_MASK: RiskTier.MEDIUM,
-    OpName.REGION_EDIT: RiskTier.HIGH,
-    OpName.BACKGROUND_REPLACE: RiskTier.HIGH,
-    OpName.FRAME: RiskTier.LOW,
-}
-
-# Default backend per op; PIL is the Op default so only non-PIL entries are listed.
-_OP_DEFAULT_BACKEND: dict[OpName, Backend] = {
-    OpName.BACKGROUND_REPLACE: Backend.GENAI,
-    OpName.REGION_EDIT: Backend.GENAI,
-}
-
-_INPAINT_OPS = {OpName.BACKGROUND_REPLACE, OpName.REGION_EDIT}
+_INPAINT_OPS = frozenset(
+    n for n, s in all_specs().items() if s.bbox_class is BBoxClass.SELF_MANAGED_INPAINT
+)
 
 # Ops that change image dimensions; mask's selection can't carry across them.
-_SIZE_CHANGING_OPS = {OpName.CROP, OpName.ROTATE, OpName.FRAME}
+_SIZE_CHANGING_OPS = frozenset(
+    n for n, s in all_specs().items() if s.bbox_class is BBoxClass.SIZE_CHANGING
+)
 
 
 class CompilerError(ValueError):
@@ -66,12 +52,11 @@ class CompilerError(ValueError):
 
 def _is_valid_mask_target(op: Op) -> bool:
     """True if `op` can follow a `mask` selection step (i.e. can apply outside it)."""
-    if op.op_name in _SIZE_CHANGING_OPS:
+    spec = get_spec(op.op_name)
+    if spec.bbox_class is BBoxClass.SIZE_CHANGING:
         return False
-    if op.op_name == OpName.BACKGROUND_REPLACE:
-        return False
-    if op.op_name == OpName.REGION_EDIT:
-        return op.params.get("method") == "blur"
+    if spec.bbox_class is BBoxClass.SELF_MANAGED_INPAINT:
+        return op.op_name == OpName.REGION_EDIT and op.params.get("method") == "blur"
     return True
 
 
@@ -169,7 +154,7 @@ class Compiler:
                             f"Valid: {[b.value for b in Backend]}"
                         )
                 else:
-                    backend = _OP_DEFAULT_BACKEND.get(op_name, Backend.PIL)
+                    backend = get_spec(op_name).default_backend
 
                 # no_genai safety net: block all GENAI ops; redirect inpaint to OPENCV
                 if no_genai and backend == Backend.GENAI:
@@ -198,7 +183,7 @@ class Compiler:
                         backend=backend,
                         params=params,
                         step_id=step.step_id,  # STABLE ID linkage
-                        risk_tier=_OP_RISK.get(op_name, RiskTier.LOW),
+                        risk_tier=get_spec(op_name).risk_tier,
                     )
                 )
 
