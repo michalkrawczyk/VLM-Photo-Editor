@@ -28,6 +28,7 @@ class BatchImageRecord(BaseModel):
     edited_container: Any = None
     plan: Any = None  # HumanPlan | None
     op_graph: Any = None  # OpGraph | None
+    detected_subject: Any = None  # DetectedSubject | None; from a Character Focus pre-pass
     error: str | None = None
     retry_count: int = 0
 

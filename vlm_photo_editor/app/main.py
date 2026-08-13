@@ -457,7 +457,13 @@ def _render_batch_panel(files: list) -> None:
             new_records: list[BatchImageRecord] = []
             for f in files:
                 container = _load_uploaded(f)
-                new_records.append(BatchImageRecord(filename=f.name, container=container))
+                new_records.append(
+                    BatchImageRecord(
+                        filename=f.name,
+                        container=container,
+                        detected_subject=_detect_subject_if_enabled(container),
+                    )
+                )
         state.set("batch_records", new_records)
         records = new_records
 
