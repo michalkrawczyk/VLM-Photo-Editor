@@ -299,9 +299,7 @@ def render() -> None:
             settings.ps_mode = selected_ps_mode
             state.log_intent("ps_mode_changed", {"mode": selected_ps_mode})
         if selected_ps_mode == "strict" and not _ps_available():
-            st.warning(
-                "Photoshop not connected. " "Install the PS plugin or switch to 'auto' mode."
-            )
+            st.warning("Photoshop not connected. Install the PS plugin or switch to 'auto' mode.")
 
     with st.expander("Local Model Backends", expanded=False):
 

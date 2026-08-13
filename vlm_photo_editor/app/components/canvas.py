@@ -89,6 +89,6 @@ def render(background_pixels=None) -> None:
                     state.set("bbox", bbox)
                     state.log_intent("bbox_drawn", bbox)
                     st.caption(
-                        f"Region: {bbox['x']:.1%}–{bbox['x']+bbox['width']:.1%} × "
-                        f"{bbox['y']:.1%}–{bbox['y']+bbox['height']:.1%}"
+                        f"Region: {bbox['x']:.1%}–{bbox['x'] + bbox['width']:.1%} × "
+                        f"{bbox['y']:.1%}–{bbox['y'] + bbox['height']:.1%}"
                     )
