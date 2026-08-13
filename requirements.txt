@@ -5,7 +5,8 @@ pydantic>=2.7
 python-dotenv>=1.0
 keyring>=25.0
 
-# Logging & Redaction — stdlib logging + root-level RedactionFilter (see config/secrets)
+# Logging & Redaction — structlog + root-level RedactionFilter (see config/secrets)
+structlog>=24.0
 
 # Image I/O
 Pillow>=10.3
