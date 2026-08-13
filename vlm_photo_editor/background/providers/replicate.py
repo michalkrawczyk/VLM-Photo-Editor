@@ -46,6 +46,8 @@ def _url_to_container(url_or_bytes: Any, source: ImageContainer) -> ImageContain
     else:
         data = url_or_bytes.read() if hasattr(url_or_bytes, "read") else bytes(url_or_bytes)
     img = Image.open(io.BytesIO(data)).convert("RGB")
+    if img.size != (source.width, source.height):
+        img = img.resize((source.width, source.height), Image.Resampling.LANCZOS)
     pixels = np.array(img, dtype=source.pixels.dtype)
     return ImageContainer(
         pixels=pixels,

@@ -130,6 +130,19 @@ def test_replay_mode_uses_fixed_seed() -> None:
     assert candidates[0].genai_op.seed == 42
 
 
+def test_replicate_output_resized_to_source() -> None:
+    source = _container(np.random.randint(64, 192, (64, 64, 3), dtype=np.uint8))
+    mask = _center_mask()
+    bg_pixels = np.full((80, 80, 3), 200, dtype=np.uint8)  # provider snapped to a different size
+    gen = Generator(replicate_client=_mock_replicate(bg_pixels))
+
+    candidates = gen.generate(
+        source, mask, prompt="blue sky", model="test-model", step_id="s1", n=1
+    )
+
+    assert candidates[0].container.pixels.shape[:2] == (64, 64)
+
+
 def test_kwargs_forwarded_to_replicate() -> None:
     source = _container()
     mask = _center_mask()

@@ -26,7 +26,10 @@ def _container_to_pil(container: ImageContainer) -> Image.Image:
 
 
 def _pil_to_container(img: Image.Image, source: ImageContainer) -> ImageContainer:
-    pixels = np.array(img.convert("RGB"), dtype=source.pixels.dtype)
+    img = img.convert("RGB")
+    if img.size != (source.width, source.height):
+        img = img.resize((source.width, source.height), Image.Resampling.LANCZOS)
+    pixels = np.array(img, dtype=source.pixels.dtype)
     return ImageContainer(
         pixels=pixels,
         bit_depth=source.bit_depth,

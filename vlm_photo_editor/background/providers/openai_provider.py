@@ -35,6 +35,8 @@ def _mask_to_png_bytes(mask: np.ndarray) -> bytes:
 
 def _bytes_to_container(data: bytes, source: ImageContainer) -> ImageContainer:
     img = Image.open(io.BytesIO(data)).convert("RGB")
+    if img.size != (source.width, source.height):
+        img = img.resize((source.width, source.height), Image.Resampling.LANCZOS)
     pixels = np.array(img, dtype=source.pixels.dtype)
     return ImageContainer(
         pixels=pixels,
