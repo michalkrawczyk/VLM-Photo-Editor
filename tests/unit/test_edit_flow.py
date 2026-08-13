@@ -10,7 +10,16 @@ from langgraph.types import Command
 
 from vlm_photo_editor.agents.edit_flow import build_edit_graph
 from vlm_photo_editor.imageio.container import ImageContainer
-from vlm_photo_editor.schema.ops import AcceptMode, Backend, Op, OpGraph, OpName, RiskTier
+from vlm_photo_editor.schema.ops import (
+    AcceptMode,
+    Backend,
+    FramingIntent,
+    FramingMode,
+    Op,
+    OpGraph,
+    OpName,
+    RiskTier,
+)
 from vlm_photo_editor.schema.plan import HumanPlan, HumanStep
 
 # ---------------------------------------------------------------------------
@@ -100,6 +109,7 @@ def _initial_state(accept_mode=AcceptMode.MANUAL, mode="full") -> dict:
         "op_graph": None,
         "feedback": None,
         "approved": False,
+        "framing_intent": None,
     }
 
 
@@ -432,3 +442,59 @@ def test_auto_approve_after_revision(accept_mode, op_graph_fn, expect_interrupt)
         assert (
             next_nodes == ()
         ), f"{accept_mode} + {op_graph_fn.__name__} should auto-approve after revision"
+
+
+# ---------------------------------------------------------------------------
+# AGT-B3 — framing_intent forwarded from state into Planner calls
+# ---------------------------------------------------------------------------
+
+
+def test_generate_plan_forwards_framing_intent():
+    plan = _plan(_step(["crop"], [{"left": 0, "top": 0, "right": 10, "bottom": 10}]))
+    op_graph = _low_risk_op_graph()
+    framing = FramingIntent(mode=FramingMode.RULE_OF_THIRDS)
+    thread = {"configurable": {"thread_id": "t-framing-1"}}
+    graph = build_edit_graph()
+
+    with (
+        patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
+        patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+        patch("vlm_photo_editor.ops.executor.Executor") as mock_executor_cls,
+    ):
+        mock_planner_cls.return_value.plan.return_value = plan
+        mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+        mock_executor_cls.return_value.apply.return_value = MagicMock(
+            container=_make_container(), genai_ops=[]
+        )
+
+        state = _initial_state(AcceptMode.FULL_AUTO)
+        state["framing_intent"] = framing
+        graph.invoke(state, thread)
+
+        assert mock_planner_cls.return_value.plan.call_args.kwargs["framing_intent"] is framing
+
+
+def test_revise_plan_forwards_framing_intent():
+    plan_v1 = _plan(_step(["denoise"]))
+    plan_v2 = _plan(_step(["exposure"], [{"ev": 1.0}]))
+    op_graph = _low_risk_op_graph()
+    framing = FramingIntent(mode=FramingMode.RULE_OF_THIRDS)
+    thread = {"configurable": {"thread_id": "t-framing-2"}}
+    graph = build_edit_graph()
+
+    with (
+        patch("vlm_photo_editor.agents.edit_flow.Planner") as mock_planner_cls,
+        patch("vlm_photo_editor.agents.edit_flow.Compiler") as mock_compiler_cls,
+    ):
+        mock_planner_cls.return_value.plan.return_value = plan_v1
+        mock_planner_cls.return_value.revise.return_value = plan_v2
+        mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
+
+        state = _initial_state(AcceptMode.MANUAL)
+        state["framing_intent"] = framing
+        graph.invoke(state, thread)
+        graph.invoke(Command(resume={"approved": False, "feedback": "brighter"}), thread)
+
+        assert (
+            mock_planner_cls.return_value.revise.call_args.kwargs["framing_intent"] == framing
+        )

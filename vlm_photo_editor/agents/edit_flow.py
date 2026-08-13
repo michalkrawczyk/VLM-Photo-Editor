@@ -9,7 +9,7 @@ from typing_extensions import TypedDict
 
 from vlm_photo_editor.agents.planner import Planner
 from vlm_photo_editor.planner.compiler import Compiler
-from vlm_photo_editor.schema.ops import AcceptMode, OpGraph, RiskTier
+from vlm_photo_editor.schema.ops import AcceptMode, FramingIntent, OpGraph, RiskTier
 from vlm_photo_editor.schema.plan import HumanPlan
 
 
@@ -19,6 +19,7 @@ class EditState(TypedDict):
     mode: str  # edit mode: "full" | "background" | "frame"
     accept_mode: AcceptMode  # manual | auto (low-risk skip) | full_auto (always skip)
     prefs: Any | None  # Preferences at runtime
+    framing_intent: FramingIntent | None
     plan: HumanPlan | None
     op_graph: OpGraph | None
     feedback: str | None
@@ -41,6 +42,7 @@ def _generate_plan(state: EditState) -> dict:
         state["intent"],
         state.get("prefs"),
         state["mode"],
+        framing_intent=state.get("framing_intent"),
         detected_subject=state.get("detected_subject"),
         genai_available=default_provider_available(),
     )
@@ -56,6 +58,7 @@ def _revise_plan(state: EditState) -> dict:
         state["feedback"],
         state.get("prefs"),
         state["mode"],
+        framing_intent=state.get("framing_intent"),
         detected_subject=state.get("detected_subject"),
         genai_available=default_provider_available(),
     )
@@ -65,7 +68,9 @@ def _revise_plan(state: EditState) -> dict:
 def _compile(state: EditState) -> dict:
     from vlm_photo_editor.ops.validator import validate_crop_bounds
 
-    result = Compiler().compile(state["plan"], state["mode"])
+    result = Compiler().compile(
+        state["plan"], state["mode"], detected_subject=state.get("detected_subject")
+    )
     container = state["container"]
     try:
         validate_crop_bounds(result.op_graph, container.width, container.height)

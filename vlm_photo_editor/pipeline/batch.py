@@ -60,10 +60,13 @@ async def _plan_single(
                     prefs,
                     mode,
                     framing_intent,
+                    detected_subject=record.detected_subject,
                     genai_available=genai_available,
                 )
             )
-            result = await anyio.to_thread.run_sync(lambda: compiler.compile(plan, mode))
+            result = await anyio.to_thread.run_sync(
+                lambda: compiler.compile(plan, mode, detected_subject=record.detected_subject)
+            )
             record.plan = result.plan
             record.op_graph = result.op_graph
             record.status = ImageStatus.NEEDS_REVIEW
