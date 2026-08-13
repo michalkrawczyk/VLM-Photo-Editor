@@ -1,18 +1,8 @@
 ---
-description: "Loop /batch_review with /compact each iteration until all batches done"
+description: "Loop batch reviews as subagents, tracked via TodoWrite, until all batches done"
 argument-hint: "[--max-iterations N]"
 ---
 
-```!
-RALPH_SCRIPT="/home/tk/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh"
-MAX="${1:-20}"
-bash "$RALPH_SCRIPT" \
-  --completion-promise "review is complete" \
-  --max-iterations "$MAX" \
-  "Each iteration: run /compact with instruction 'Keep only: which batches in plans/plan_review.md are [DONE] and which remain. Drop all review findings and code details.', then run /batch_review. When batch_review finds all batches are [DONE] and reports the review is complete, output: <promise>review is complete</promise>"
-```
+Run:
 
-Each iteration your task is:
-1. Run /compact with instruction: "Keep only: which batches in plans/plan_review.md are [DONE] and which remain. Drop all review findings and code details."
-2. Run /batch_review to review the next pending batch
-3. When all batches are done, output: <promise>review is complete</promise>
+/ralph-loop:ralph-loop "Each iteration: use TodoWrite to sync a checklist of the '## Batch N: <name>' headings in plans/plan_review.md against their [DONE] status (re-derive from the file, don't rely on prior context). Then launch one subagent via the Agent tool (subagent_type: general-purpose, foreground) with a self-contained prompt instructing it to invoke Skill batch_review to review the next batch not marked [DONE]. Wait for it to finish, then update the TodoWrite checklist. When plans/plan_review.md shows all batches [DONE], output: <promise>review is complete</promise>" --max-iterations ${1:-20} --completion-promise "review is complete"
