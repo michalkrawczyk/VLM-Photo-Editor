@@ -356,6 +356,8 @@ def _do_critic_check() -> bool:
     intent = state.get("intent") or ""
     verdict = Critic().verify(container.pixels, edited.pixels, intent)
     if verdict.passed:
+        if verdict.uncertain:
+            state.set("error", f"Critic check inconclusive: {verdict.reason}")
         return True
     state.set("error", f"Critic: {verdict.reason}")
     state.set("ui_phase", "plan_ready")

@@ -27,7 +27,13 @@ When in doubt, pass."""
 
 
 def _encode_image(pixels: np.ndarray) -> str:
-    img = Image.fromarray(pixels.astype(np.uint8))
+    if pixels.dtype != np.uint8:
+        lo, hi = int(pixels.min()), int(pixels.max())
+        span = hi - lo or 1
+        pixels = ((pixels.astype(np.float32) - lo) / span * 255).round().astype(np.uint8)
+    img = Image.fromarray(pixels)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=85)
     return base64.standard_b64encode(buf.getvalue()).decode()
@@ -37,6 +43,7 @@ def _encode_image(pixels: np.ndarray) -> str:
 class CriticVerdict:
     passed: bool
     reason: str
+    uncertain: bool = False
 
 
 class Critic:
@@ -67,7 +74,9 @@ class Critic:
             match = re.search(r'\{.*"passed".*\}', text, re.DOTALL)
             if not match:
                 log.warning("critic.no_json_found", response_preview=text[:200])
-                return CriticVerdict(passed=True, reason="parse error — assuming pass")
+                return CriticVerdict(
+                    passed=True, reason="parse error — assuming pass", uncertain=True
+                )
             data = json.loads(match.group())
             return CriticVerdict(
                 passed=bool(data.get("passed", True)),
@@ -75,4 +84,6 @@ class Critic:
             )
         except Exception:
             log.warning("critic.failed", exc_info=True)
-            return CriticVerdict(passed=True, reason="critic error — assuming pass")
+            return CriticVerdict(
+                passed=True, reason="critic error — assuming pass", uncertain=True
+            )

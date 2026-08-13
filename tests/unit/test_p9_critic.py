@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from vlm_photo_editor.agents.critic import Critic, CriticVerdict
+from vlm_photo_editor.agents.critic import Critic, CriticVerdict, _encode_image
 from vlm_photo_editor.config.registry import CRITIC_PRESETS, ModelEntry, ModelRegistry
 from vlm_photo_editor.config.settings import AppSettings
 
@@ -28,15 +28,18 @@ def _mock_critic_response(json_str: str) -> MagicMock:
 
 
 @pytest.mark.parametrize(
-    "response_json,expected_passed,expected_reason_substr",
+    "response_json,expected_passed,expected_reason_substr,expected_uncertain",
     [
-        ('{"passed": true, "reason": "looks good"}', True, "looks good"),
-        ('{"passed": false, "reason": "exposure not changed"}', False, "exposure not changed"),
-        ("Sorry I cannot help", True, "parse error"),  # fail-open on bad JSON
+        ('{"passed": true, "reason": "looks good"}', True, "looks good", False),
+        ('{"passed": false, "reason": "exposure not changed"}', False, "exposure not changed", False),
+        ("Sorry I cannot help", True, "parse error", True),  # fail-open on bad JSON
     ],
 )
 def test_critic_verdict(
-    response_json: str, expected_passed: bool, expected_reason_substr: str
+    response_json: str,
+    expected_passed: bool,
+    expected_reason_substr: str,
+    expected_uncertain: bool,
 ) -> None:
     with patch("vlm_photo_editor.agents.critic.build_client") as mock_build:
         mock_client = MagicMock()
@@ -47,6 +50,7 @@ def test_critic_verdict(
 
     assert verdict.passed is expected_passed
     assert expected_reason_substr in verdict.reason
+    assert verdict.uncertain is expected_uncertain
 
 
 def test_critic_fail_open_on_exception() -> None:
@@ -59,6 +63,7 @@ def test_critic_fail_open_on_exception() -> None:
 
     assert verdict.passed is True
     assert "critic error" in verdict.reason
+    assert verdict.uncertain is True
 
 
 # ── CriticVerdict dataclass ────────────────────────────────────────────────────
@@ -68,6 +73,27 @@ def test_critic_verdict_fields() -> None:
     v = CriticVerdict(passed=False, reason="too dark")
     assert v.passed is False
     assert v.reason == "too dark"
+    assert v.uncertain is False
+
+
+# ── _encode_image dtype handling ────────────────────────────────────────────────
+
+
+def test_encode_image_handles_16bit_without_wraparound() -> None:
+    pixels16 = np.zeros((4, 4, 3), dtype=np.uint16)
+    pixels16[:2, :, :] = 60000  # bright half; raw uint8 cast would wrap this to a low value
+
+    b64 = _encode_image(pixels16)
+
+    import base64
+    import io
+
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(base64.standard_b64decode(b64)))
+    arr = np.array(img)
+    assert arr.dtype == np.uint8
+    assert arr[:2].mean() > arr[2:].mean()  # bright half normalized brighter than dark half
 
 
 # ── use_local_critic removed ──────────────────────────────────────────────────
