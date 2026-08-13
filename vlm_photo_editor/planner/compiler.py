@@ -113,7 +113,10 @@ class Compiler:
         from vlm_photo_editor.config.settings import get_settings
 
         settings = get_settings()
-        allowed = allowed_ops_for_mode(mode)  # KeyError for unknown mode → let propagate
+        try:
+            allowed = allowed_ops_for_mode(mode)
+        except KeyError as exc:
+            raise CompilerError(str(exc)) from exc
         no_genai = settings.no_genai
 
         if settings.ps_mode == "strict" and not _ps_available():

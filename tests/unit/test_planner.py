@@ -285,9 +285,10 @@ def test_schema_rejects_unknown_op_name():
         HumanStep(step_id=_UUID1, index=1, title="t", why="w", op_names=["sharpen"])
 
 
-def test_compiler_unknown_mode_raises_key_error():
+def test_compiler_unknown_mode_raises_compiler_error():
+    """PLN-B1: KeyError from allowed_ops_for_mode is wrapped, not raw."""
     step = _step(["exposure"], [{"ev": 1.0}])
-    with pytest.raises(KeyError):
+    with pytest.raises(CompilerError, match="Unknown edit mode"):
         Compiler().compile(_plan(step), "invalid_mode")
 
 
