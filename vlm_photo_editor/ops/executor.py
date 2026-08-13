@@ -148,6 +148,15 @@ class Executor:
 
         # Region-confined: apply to full image then mask to bbox.
         edited = backend_fn(container, op)
+        if edited.pixels.dtype != container.pixels.dtype:
+            if container.pixels.dtype == np.uint16 and edited.pixels.dtype == np.uint8:
+                edited = edited.copy()
+                edited.pixels = edited.pixels.astype(np.uint16) * 257  # exact 0-255 -> 0-65535
+            else:
+                raise ValueError(
+                    f"{op.op_name} backend returned dtype {edited.pixels.dtype}, "
+                    f"expected {container.pixels.dtype}; cannot safely composite region"
+                )
         mask = bbox_to_mask(container, op.bbox)
         if op.params.get("invert", False):
             mask = ~mask
