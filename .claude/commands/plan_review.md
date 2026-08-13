@@ -17,3 +17,4 @@ Review focus areas (in priority order):
 3. Code smells / maintainability
 4. Performance optimizations
 5. Over-engineered or unjustified functionality
+6. Possible improvements for User Experiance/Interface
