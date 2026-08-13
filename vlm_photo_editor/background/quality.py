@@ -1,12 +1,43 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
+from scipy.ndimage import binary_dilation, binary_erosion
 from skimage.filters import sobel
 
+from vlm_photo_editor.config.settings import get_settings
 from vlm_photo_editor.imageio.container import ImageContainer
 
 from .composite import composite
 from .providers.base import Candidate, GenAIProvider
+
+
+@dataclass
+class ScoredCandidate:
+    """A candidate composited against the source and scored by `seam_metric`."""
+
+    metric: float
+    composite: ImageContainer
+    candidate: Candidate
+
+
+@dataclass
+class GenAISelection:
+    """A prior generation replayed for one step: reuse `candidates`, pick `override_index`."""
+
+    candidates: list[Candidate]
+    override_index: int | None = None
+
+
+@dataclass
+class BackgroundSelection:
+    """Outcome of `select_best`: the pick, the gate flag, and every scored candidate."""
+
+    best_composite: ImageContainer
+    best_candidate: Candidate
+    needs_manual: bool
+    scored: list[ScoredCandidate]
 
 
 def seam_metric(composited: ImageContainer, mask: np.ndarray) -> float:
@@ -14,8 +45,6 @@ def seam_metric(composited: ImageContainer, mask: np.ndarray) -> float:
 
     Lower is better. Computed on a 2px ring on each side of the boundary.
     """
-    from scipy.ndimage import binary_dilation, binary_erosion
-
     pixels = composited.pixels.astype(np.float64)
     if composited.bit_depth == 16:
         pixels /= 65535.0
@@ -40,32 +69,44 @@ def select_best(
     source: ImageContainer,
     candidates: list[Candidate],
     mask: np.ndarray,
-    threshold: float = 10.0,
+    threshold: float | None = None,
     extra_seeds: int = 2,
     provider: GenAIProvider | None = None,
-    feather_px: int = 20,
-) -> tuple[ImageContainer, Candidate, bool]:
+    feather_px: int | None = None,
+    override_index: int | None = None,
+) -> BackgroundSelection:
     """Pick the candidate with the lowest seam metric.
 
     If no candidate passes threshold:
       - Roll extra_seeds more via generator (if provided)
-      - Return (best_composite, best_candidate, needs_manual)
-    """
+      - Flag the result for manual review
 
-    def _evaluate(cands: list[Candidate]) -> list[tuple[float, ImageContainer, Candidate]]:
+    `override_index` selects that entry of the scored list instead — a user choice
+    wins over the metric, and neither the gate nor the re-roll runs.
+    """
+    if not candidates:
+        raise ValueError("select_best requires at least one candidate")
+    if threshold is None:
+        threshold = get_settings().seam_threshold
+
+    def _evaluate(cands: list[Candidate]) -> list[ScoredCandidate]:
         results = []
         for c in cands:
             comp = composite(source, c.container, mask, feather_px=feather_px)
-            metric = seam_metric(comp, mask)
-            results.append((metric, comp, c))
+            results.append(ScoredCandidate(seam_metric(comp, mask), comp, c))
         return results
 
     scored = _evaluate(candidates)
-    scored.sort(key=lambda t: t[0])
-    best_metric, best_comp, best_cand = scored[0]
+    scored.sort(key=lambda s: s.metric)
 
-    if best_metric < threshold:
-        return best_comp, best_cand, False
+    if override_index is not None:
+        picked = scored[override_index]
+        return BackgroundSelection(picked.composite, picked.candidate, False, scored)
+
+    best = scored[0]
+
+    if best.metric < threshold:
+        return BackgroundSelection(best.composite, best.candidate, False, scored)
 
     # Threshold not met; try extra seeds if a provider is available
     if provider is not None and extra_seeds > 0:
@@ -79,11 +120,11 @@ def select_best(
             n=extra_seeds,
         )
         extra_scored = _evaluate(extras)
-        extra_scored.sort(key=lambda t: t[0])
-        if extra_scored[0][0] < best_metric:
-            best_metric, best_comp, best_cand = extra_scored[0]
-        if best_metric < threshold:
-            return best_comp, best_cand, False
+        if extra_scored:
+            scored = sorted(scored + extra_scored, key=lambda s: s.metric)
+            best = scored[0]
+        if best.metric < threshold:
+            return BackgroundSelection(best.composite, best.candidate, False, scored)
 
     # Still failing — flag for manual review
-    return best_comp, best_cand, True
+    return BackgroundSelection(best.composite, best.candidate, True, scored)

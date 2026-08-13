@@ -17,6 +17,8 @@ _DEFAULTS: dict[str, Any] = {
     "output_format": "same",
     "container": None,  # ImageContainer after loading the uploaded file
     "edited_container": None,  # ImageContainer after Executor.apply()
+    "genai_candidates": None,  # step_id -> list[ScoredCandidate] from the last execution
+    "genai_override": None,  # step_id -> candidate index chosen by the user
     "current_plan": None,
     "current_opgraph": None,
     "accept_mode": "manual",

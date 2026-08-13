@@ -12,6 +12,7 @@ install_redaction_filter()
 
 from vlm_photo_editor.app import state  # noqa: E402
 from vlm_photo_editor.app.components import batch_review  # noqa: E402
+from vlm_photo_editor.app.components import candidate_picker  # noqa: E402
 from vlm_photo_editor.app.components import canvas  # noqa: E402
 from vlm_photo_editor.app.components import plan_view  # noqa: E402
 from vlm_photo_editor.app.components import prefs_panel  # noqa: E402
@@ -214,6 +215,8 @@ def _do_revise_plan(change: str) -> None:
         state.set("current_opgraph", result.op_graph)
         state.set("ui_phase", "plan_ready")
         state.set("edited_container", None)
+        state.set("genai_candidates", None)
+        state.set("genai_override", None)
         state.set("change_request", "")
         state.set("error", None)
         from vlm_photo_editor.agents.edit_flow import _can_auto_approve
@@ -225,6 +228,8 @@ def _do_revise_plan(change: str) -> None:
         state.set("current_opgraph", None)
         state.set("ui_phase", "plan_ready")
         state.set("edited_container", None)
+        state.set("genai_candidates", None)
+        state.set("genai_override", None)
         state.set("change_request", "")
         state.set("plan_approved", False)
         state.set("error", str(exc))
@@ -287,6 +292,23 @@ def _do_execute() -> None:
             patched_ops.append(op)
         op_graph = op_graph.model_copy(update={"ops": patched_ops})
 
+    # Candidate override (BG-U2): replay the cached candidates for that step rather
+    # than paying for a second generation.
+    genai_selection = None
+    override = state.get("genai_override")
+    cached = state.get("genai_candidates")
+    if override and cached:
+        from vlm_photo_editor.background.quality import GenAISelection
+
+        genai_selection = {
+            step_id: GenAISelection(
+                candidates=[sc.candidate for sc in cached[step_id]],
+                override_index=idx,
+            )
+            for step_id, idx in override.items()
+            if step_id in cached
+        }
+
     try:
         _exec_progress = st.progress(0.0, text="Applying edits…")
         executor = Executor()
@@ -294,9 +316,12 @@ def _do_execute() -> None:
             executor.apply,
             container,
             op_graph,
+            genai_selection,
             on_progress=lambda p: _exec_progress.progress(p, text="Applying edits…"),
         )
         state.set("edited_container", result.container)
+        if result.genai_candidates:
+            state.set("genai_candidates", result.genai_candidates)
         state.set("ui_phase", "done")
         state.set("error", None)
         state.log_intent(
@@ -335,6 +360,8 @@ def _do_critic_check() -> bool:
     state.set("error", f"Critic: {verdict.reason}")
     state.set("ui_phase", "plan_ready")
     state.set("edited_container", None)
+    state.set("genai_candidates", None)
+    state.set("genai_override", None)
     return False
 
 
@@ -537,6 +564,8 @@ if uploaded_file is not None and (
             state.set("container", container)
             state.set("ui_phase", "has_image")
             state.set("edited_container", None)
+            state.set("genai_candidates", None)
+            state.set("genai_override", None)
             state.set("current_plan", None)
             state.set("current_opgraph", None)
             state.set("saved_path", None)
@@ -548,6 +577,8 @@ if uploaded_file is not None and (
 if uploaded_file is None and state.get("container") is not None:
     state.set("container", None)
     state.set("edited_container", None)
+    state.set("genai_candidates", None)
+    state.set("genai_override", None)
     state.set("current_plan", None)
     state.set("current_opgraph", None)
     state.set("ui_phase", "idle")
@@ -768,6 +799,23 @@ with main_col:
                 with st.spinner("Revising plan…"):
                     _do_revise_plan(change)
                 st.rerun()
+
+            # genAI candidate override (BG-U2)
+            if ui_phase == "done" and state.get("genai_candidates"):
+                st.divider()
+                picked = candidate_picker.render(
+                    state.get("genai_candidates"),
+                    state.get("genai_override"),
+                )
+                if picked is not None:
+                    step_id, idx = picked
+                    override = dict(state.get("genai_override") or {})
+                    override[step_id] = idx
+                    state.set("genai_override", override)
+                    state.log_intent("candidate_override", {"step_id": step_id, "index": idx})
+                    with st.spinner("Applying candidate…"):
+                        _do_execute()
+                    st.rerun()
 
         # Handle aggregation (runs after execution or on manual trigger from prefs panel)
         if state.get("run_aggregation"):

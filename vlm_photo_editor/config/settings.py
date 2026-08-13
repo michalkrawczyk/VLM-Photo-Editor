@@ -7,7 +7,12 @@ from typing import Literal
 
 @dataclass
 class AppSettings:
+    # Superseded by seam_threshold below pending BG-P1 (metric recalibration); still unread.
     seam_quality_threshold: float = 0.15
+    # Seam metric gate for genAI background composites (see background/quality.py::seam_metric).
+    seam_threshold: float = 10.0
+    # Gaussian sigma (px) for the composite seam feather.
+    feather_px: int = 20
     cache_ttl_seconds: int = 3600
     max_background_candidates: int = 3
     output_dir: Path = field(default_factory=lambda: Path("output"))

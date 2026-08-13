@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -12,6 +13,9 @@ from .constants import INPAINT_OPS as _INPAINT_OPS
 from .mask import bbox_to_mask
 from .validator import validate_op_graph
 
+if TYPE_CHECKING:
+    from vlm_photo_editor.background.quality import GenAISelection, ScoredCandidate
+
 # Offset of the current working image's top-left corner within the image the plan
 # started from. None once a ROTATE has made that offset un-trackable.
 Origin = tuple[int, int] | None
@@ -21,25 +25,38 @@ Origin = tuple[int, int] | None
 class ExecutionResult:
     container: ImageContainer
     genai_ops: list[GenAIOp] = field(default_factory=list)
+    # step_id → every candidate scored for that genAI step (best first).
+    genai_candidates: dict[str, list["ScoredCandidate"]] = field(default_factory=dict)
 
 
 class Executor:
     def __init__(self, allowed_ops: set[OpName] | None = None) -> None:
         self._allowed_ops = allowed_ops
 
-    def apply(self, container: ImageContainer, op_graph: OpGraph) -> ExecutionResult:
+    def apply(
+        self,
+        container: ImageContainer,
+        op_graph: OpGraph,
+        genai_selection: "dict[str, GenAISelection] | None" = None,
+    ) -> ExecutionResult:
+        """Run the graph. `genai_selection` (step_id → prior candidates + user pick)
+        replays genAI steps from cache instead of calling the provider again."""
         validate_op_graph(op_graph, allowed_ops=self._allowed_ops)
         result = container.copy()
         genai_ops: list[GenAIOp] = []
+        candidates: dict[str, list[ScoredCandidate]] = {}
         origin: Origin = (0, 0)
         for op in op_graph.ops:
             op = self._remap_for_origin(op, origin)
             h, w = result.pixels.shape[:2]
-            result, genai_op = self._apply_op(result, op)
+            selection = (genai_selection or {}).get(op.step_id)
+            result, genai_op, scored = self._apply_op(result, op, selection)
             origin = self._advance_origin(op, origin, w, h)
             if genai_op is not None:
                 genai_ops.append(genai_op)
-        return ExecutionResult(container=result, genai_ops=genai_ops)
+            if scored:
+                candidates[op.step_id] = scored
+        return ExecutionResult(container=result, genai_ops=genai_ops, genai_candidates=candidates)
 
     @staticmethod
     def _remap_for_origin(op: Op, origin: Origin) -> Op:
@@ -119,32 +136,33 @@ class Executor:
             return ox + left, oy + top
         return origin
 
-    def _apply_op(self, container: ImageContainer, op: Op) -> tuple[ImageContainer, GenAIOp | None]:
+    def _apply_op(
+        self, container: ImageContainer, op: Op, selection: "GenAISelection | None" = None
+    ) -> tuple[ImageContainer, GenAIOp | None, list["ScoredCandidate"]]:
         if op.backend == Backend.GENAI:
             from .backends.genai_backend import apply as genai_apply
 
-            result, genai_op = genai_apply(container, op)
-            return result, genai_op
+            return genai_apply(container, op, selection)
 
         if op.backend == Backend.OPENCV and op.op_name in _INPAINT_OPS:
             if op.op_name == OpName.REGION_EDIT and op.params.get("method") == "blur":
                 from .backends.cv_backend import apply_blur
 
-                return apply_blur(container, op), None
+                return apply_blur(container, op), None, []
 
             from .backends.cv_backend import apply_inpaint
 
-            return apply_inpaint(container, op), None
+            return apply_inpaint(container, op), None, []
 
         if op.backend == Backend.PHOTOSHOP and op.op_name in _INPAINT_OPS:
             from .backends.stubs import apply as stub_apply
 
-            return stub_apply(container, op), None
+            return stub_apply(container, op), None, []
 
         backend_fn = self._resolve_backend(op)
 
         if op.bbox is None:
-            return backend_fn(container, op), None
+            return backend_fn(container, op), None, []
 
         # Region-confined: apply to full image then mask to bbox.
         edited = backend_fn(container, op)
@@ -162,7 +180,7 @@ class Executor:
             mask = ~mask
         combined = container.copy()
         combined.pixels = np.where(mask[..., np.newaxis], edited.pixels, container.pixels)
-        return combined, None
+        return combined, None, []
 
     @staticmethod
     def _resolve_backend(op: Op):

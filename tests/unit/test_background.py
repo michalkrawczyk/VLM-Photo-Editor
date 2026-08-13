@@ -19,7 +19,7 @@ from vlm_photo_editor.background.providers import (
     get_provider,
     provider_name_for,
 )
-from vlm_photo_editor.background.quality import seam_metric, select_best
+from vlm_photo_editor.background.quality import GenAISelection, seam_metric, select_best
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.recipe import GenAIOp
 
@@ -263,9 +263,9 @@ def test_seam_gate_pass() -> None:
         container=generated, genai_op=GenAIOp(step_id="s1", model="m", prompt="p", seed=1)
     )
 
-    _, _, needs_manual = select_best(source, [cand], mask, threshold=100.0)
+    selection = select_best(source, [cand], mask, threshold=100.0)
 
-    assert needs_manual is False
+    assert selection.needs_manual is False
 
 
 def test_seam_gate_picks_best_candidate() -> None:
@@ -279,9 +279,11 @@ def test_seam_gate_picks_best_candidate() -> None:
         Candidate(container=good, genai_op=GenAIOp(step_id="s1", model="m", prompt="p", seed=2)),
     ]
 
-    result_comp, best_cand, _ = select_best(source, cands, mask, threshold=100.0)
+    selection = select_best(source, cands, mask, threshold=100.0)
 
-    assert best_cand.genai_op.seed == 2
+    assert selection.best_candidate.genai_op.seed == 2
+    # Every candidate is scored and returned, best first (BG-U2).
+    assert [s.candidate.genai_op.seed for s in selection.scored] == [2, 1]
 
 
 def test_seam_gate_reroll() -> None:
@@ -299,9 +301,7 @@ def test_seam_gate_reroll() -> None:
     generator = Generator(replicate_client=mock_client)
 
     # threshold=0.0 forces the first candidate to fail so extra seeds are requested.
-    _, _, needs_manual = select_best(
-        source, [bad_cand], mask, threshold=0.0, extra_seeds=1, provider=generator
-    )
+    select_best(source, [bad_cand], mask, threshold=0.0, extra_seeds=1, provider=generator)
 
     assert mock_client.run.called
 
@@ -316,11 +316,135 @@ def test_seam_gate_flag_for_manual() -> None:
         for i in range(3)
     ]
 
-    _, _, needs_manual = select_best(
-        source, cands, mask, threshold=0.0, extra_seeds=0, provider=None
+    selection = select_best(source, cands, mask, threshold=0.0, extra_seeds=0, provider=None)
+
+    assert selection.needs_manual is True
+
+
+class _StubProvider:
+    """Returns fixed candidates and counts generate() calls."""
+
+    def __init__(self, pixels: list[np.ndarray], step_id: str = "s1") -> None:
+        self._pixels = pixels
+        self._step_id = step_id
+        self.calls = 0
+
+    def generate(self, container, mask, prompt, model, step_id, n=3, seed=None, **kwargs):
+        self.calls += 1
+        return [
+            Candidate(
+                container=_container(px),
+                genai_op=GenAIOp(step_id=self._step_id, model=model, prompt=prompt, seed=i),
+            )
+            for i, px in enumerate(self._pixels)
+        ]
+
+
+def test_select_best_rejects_empty_candidate_list() -> None:
+    """BG-B9: an empty candidate list fails loudly instead of IndexError."""
+    source = _container(np.full((64, 64, 3), 100, dtype=np.uint8))
+    with pytest.raises(ValueError, match="at least one candidate"):
+        select_best(source, [], _center_mask())
+
+
+def test_select_best_survives_empty_reroll() -> None:
+    """BG-B9: a provider returning [] on re-roll flags for manual review, not IndexError."""
+    source = _container(np.full((64, 64, 3), 100, dtype=np.uint8))
+    bad = _container(np.full((64, 64, 3), 220, dtype=np.uint8))
+    cand = Candidate(container=bad, genai_op=GenAIOp(step_id="s1", model="m", prompt="p", seed=1))
+    empty_provider = _StubProvider([])
+
+    selection = select_best(
+        source,
+        [cand],
+        _center_mask(),
+        threshold=0.0,
+        extra_seeds=2,
+        provider=empty_provider,
+    )
+
+    assert empty_provider.calls == 1
+    assert selection.needs_manual is True
+    assert len(selection.scored) == 1
+
+
+def test_select_best_override_index_wins() -> None:
+    """BG-U2: an explicit override takes that candidate regardless of its metric."""
+    source = _container(np.full((64, 64, 3), 100, dtype=np.uint8))
+    good = _container(np.full((64, 64, 3), 105, dtype=np.uint8))
+    bad = _container(np.full((64, 64, 3), 220, dtype=np.uint8))
+    cands = [
+        Candidate(container=bad, genai_op=GenAIOp(step_id="s1", model="m", prompt="p", seed=1)),
+        Candidate(container=good, genai_op=GenAIOp(step_id="s1", model="m", prompt="p", seed=2)),
+    ]
+
+    selection = select_best(source, cands, _center_mask(), threshold=100.0, override_index=1)
+
+    assert selection.best_candidate.genai_op.seed == 1  # the worse-scoring one, as asked
+    assert selection.needs_manual is False
+
+
+def test_pipeline_defaults_read_settings(monkeypatch) -> None:
+    """BG-C3: threshold and feather_px default to AppSettings, not hardcoded literals."""
+    from vlm_photo_editor.config.settings import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "seam_threshold", 0.0)  # unreachable → always flags
+    source = _container(np.full((64, 64, 3), 100, dtype=np.uint8))
+
+    _, _, needs_manual, _ = run_background_pipeline(
+        source,
+        _center_mask(),
+        prompt="sky",
+        model="test-model",
+        step_id="s1",
+        n_candidates=1,
+        provider=_StubProvider([np.full((64, 64, 3), 220, dtype=np.uint8)]),
     )
 
     assert needs_manual is True
+
+
+def test_executor_exposes_candidates_and_replays_override(monkeypatch) -> None:
+    """BG-U2: candidates reach ExecutionResult; an override replays them without
+    a second provider call."""
+    import vlm_photo_editor.background as background
+    from vlm_photo_editor.ops.executor import Executor
+    from vlm_photo_editor.schema.ops import Backend, BoundingBox, Op, OpGraph, OpName
+
+    provider = _StubProvider(
+        [
+            np.full((64, 64, 3), 105, dtype=np.uint8),
+            np.full((64, 64, 3), 220, dtype=np.uint8),
+        ]
+    )
+    monkeypatch.setattr(background, "get_provider", lambda model: provider)
+
+    container = _container(np.full((64, 64, 3), 100, dtype=np.uint8))
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={"prompt": "sky", "model": "test-model", "n": 2},
+        backend=Backend.GENAI,
+        step_id="s1",
+        bbox=BoundingBox(x=16, y=16, width=32, height=32),
+    )
+    graph = OpGraph(ops=[op])
+
+    result = Executor().apply(container, graph)
+    scored = result.genai_candidates["s1"]
+
+    assert provider.calls == 1
+    assert len(scored) == 2
+    assert [s.metric for s in scored] == sorted(s.metric for s in scored)
+
+    replayed = Executor().apply(
+        container,
+        graph,
+        {"s1": GenAISelection(candidates=[s.candidate for s in scored], override_index=1)},
+    )
+
+    assert provider.calls == 1  # no second generation
+    np.testing.assert_array_equal(replayed.container.pixels, scored[1].composite.pixels)
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +461,7 @@ def test_replay_deterministic() -> None:
 
     gen = Generator(replicate_client=_mock_replicate(fixed_pixels))
 
-    result1, op1, _ = run_background_pipeline(
+    result1, op1, _, _ = run_background_pipeline(
         source,
         mask,
         prompt="sky",
@@ -347,7 +471,7 @@ def test_replay_deterministic() -> None:
         seed=77,
         provider=gen,
     )
-    result2, op2, _ = run_background_pipeline(
+    result2, op2, _, _ = run_background_pipeline(
         source,
         mask,
         prompt="sky",
@@ -383,7 +507,7 @@ def test_pipeline_with_fixture_image() -> None:
     fixed_pixels = np.random.randint(100, 200, (h, w, 3), dtype=np.uint8)
     gen = Generator(replicate_client=_mock_replicate(fixed_pixels))
 
-    result, genai_op, needs_manual = run_background_pipeline(
+    result, genai_op, needs_manual, _ = run_background_pipeline(
         container,
         mask,
         prompt="blue sky",
