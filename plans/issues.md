@@ -527,15 +527,6 @@ Review date: 2026-06-27. Files: `recipe/session.py`, `recipe/store.py`, `recipe/
 
 ### Bugs & Correctness
 
-**RCP-B1: Non-atomic writes in `RecipeStore.save()` and `PreferenceStore.save()`**
-**Files:** [vlm_photo_editor/recipe/store.py:33](vlm_photo_editor/recipe/store.py#L33), [vlm_photo_editor/preferences/store.py:31](vlm_photo_editor/preferences/store.py#L31)
-
-Both `path.write_text(...)` calls are non-atomic: if the process crashes or is killed between `open()` and `close()`, the file is left truncated and fails Pydantic validation on the next load. For a recipe sidecar, the user loses their entire edit history with no recovery path. For preferences, persistent config is corrupted and every subsequent session fails to load.
-
-Fix: write to a `.tmp` sibling file, then `os.replace(tmp, path)` which is atomic on POSIX.
-
----
-
 **RCP-B2: `toggle_rule()` silently does nothing for unknown `rule_id`**
 **File:** [vlm_photo_editor/preferences/store.py:47-59](vlm_photo_editor/preferences/store.py#L47)
 
@@ -2076,7 +2067,6 @@ All issues across all batches, sorted by severity.
 | OPS-B2 | High | cv_backend.py:30,63 | 16-bit inpaint and denoise round-trip destroys lower byte permanently |
 | PLN-D1 | High | planner.py:161,187 | User-controlled preference strings and `user_instruction` injected verbatim into system prompt — prompt injection |
 | AGT-D2 | High | planner.py:6 | stdlib `logging` used instead of structlog — VLM prompt logs bypass `RedactionProcessor` |
-| RCP-B1 | High | store.py:33, preferences/store.py:31 | Non-atomic `write_text()` in `RecipeStore.save()` and `PreferenceStore.save()` — crash mid-write corrupts sidecar/prefs permanently |
 | RCP-D1 | High | preferences/store.py:33 | `add_explicit()` persists description without sanitization — write path for PLN-D1 prompt injection, persists adversarial content across sessions |
 | SC-B1 | High | op_catalog.py:17-25 | No value constraints for string params — `frame: {mode: "bogus"}` validates, executes, and returns the image unchanged (silent no-op) |
 | PL-P1 | High | compiler.py:63-103, executor.py:146 | Mask-collapsed op with `bbox=None`+`invert=True` edits the whole image; the guard exists only in `app/main.py`, so `edit_flow` and `pipeline/batch` violate Principle 6 |

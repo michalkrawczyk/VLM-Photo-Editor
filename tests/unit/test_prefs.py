@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -68,6 +67,26 @@ def test_preference_store_empty_load(tmp_path: Path) -> None:
     prefs = ps.load()
     assert prefs.explicit == []
     assert prefs.learned == []
+
+
+def test_preference_store_save_atomic_on_write_failure(tmp_path: Path, monkeypatch) -> None:
+    """A crash mid-write must not corrupt a previously-saved prefs file."""
+    path = tmp_path / "prefs.json"
+    ps = PreferenceStore(path)
+    ps.add_explicit("Prefer warm tones")
+    original_bytes = path.read_bytes()
+
+    def _crash_partway(self, data, *args, **kwargs):
+        with open(self, "w", encoding="utf-8") as f:
+            f.write(data[: len(data) // 2])
+        raise OSError("simulated crash mid-write")
+
+    monkeypatch.setattr(Path, "write_text", _crash_partway)
+    with pytest.raises(OSError):
+        ps.add_explicit("Prefer cool tones")
+
+    assert path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_preference_store_add_and_load(tmp_path: Path) -> None:

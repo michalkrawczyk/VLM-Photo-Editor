@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 
@@ -17,6 +18,17 @@ _DEFAULT_DELTA_PATH = Path.home() / ".vlm_photo_editor" / "deltas.jsonl"
 AGGREGATE_AFTER = 5
 
 
+def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write via a sibling tmp file + os.replace() so a crash mid-write can't
+    leave a truncated prefs file that fails validation on next load."""
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(text, encoding=encoding)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 class PreferenceStore:
     def __init__(self, path: Path = _DEFAULT_PREFS_PATH) -> None:
         self._path = path
@@ -28,7 +40,7 @@ class PreferenceStore:
 
     def save(self, prefs: Preferences) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(prefs.model_dump_json(indent=2))
+        _atomic_write_text(self._path, prefs.model_dump_json(indent=2))
 
     def add_explicit(self, description: str) -> ExplicitRule:
         prefs = self.load()
