@@ -57,7 +57,7 @@ def test_recipe_fixture():
     ],
 )
 def test_op_round_trip(op_name: OpName, params: dict) -> None:
-    op = Op(op_name=op_name, params=params, step_id="test-step")
+    op = Op(op_name=op_name, params=params, backend=Backend.PIL, step_id="test-step")
     restored = Op.model_validate(op.model_dump())
     assert restored.op_name == op_name
     assert restored.params == params
@@ -69,6 +69,7 @@ def test_op_with_bbox():
         op_name=OpName.REGION_EDIT,
         params={"prompt": "blurred bokeh"},
         bbox=BoundingBox(x=10, y=20, width=300, height=200),
+        backend=Backend.GENAI,
         risk_tier=RiskTier.HIGH,
         step_id="step-bbox",
     )
@@ -76,6 +77,24 @@ def test_op_with_bbox():
     assert restored.bbox is not None
     assert restored.bbox.width == 300
     assert restored.risk_tier == RiskTier.HIGH
+
+
+def test_op_risk_tier_always_derived_from_catalog() -> None:
+    """SC-P2: a caller-supplied risk_tier must never override the catalog value —
+    it gates auto-approval and recipes are user-editable/untrusted input."""
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={"prompt": "x"},
+        backend=Backend.GENAI,
+        risk_tier=RiskTier.LOW,
+        step_id="s1",
+    )
+    assert op.risk_tier == RiskTier.HIGH
+
+
+def test_op_backend_is_required() -> None:
+    with pytest.raises(ValidationError, match="backend"):
+        Op(op_name=OpName.CROP, params={"left": 0, "top": 0, "right": 1, "bottom": 1}, step_id="s1")
 
 
 def test_bounding_box_rejects_zero_dimension():
@@ -100,6 +119,7 @@ def test_compiler_result_round_trip():
             Op(
                 op_name=OpName.CROP,
                 params={"left": 0, "top": 0, "right": 400, "bottom": 300},
+                backend=Backend.PIL,
                 step_id=_sid,
             )
         ]

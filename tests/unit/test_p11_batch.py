@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from vlm_photo_editor.schema.batch import BatchImageRecord, ImageStatus
-from vlm_photo_editor.schema.ops import AcceptMode, Op, OpGraph, OpName, RiskTier
+from vlm_photo_editor.schema.ops import AcceptMode, Backend, Op, OpGraph, OpName, RiskTier
 
 # Lazy-imported targets — Planner/Compiler are imported inside run_batch(), so
 # we must patch at their source modules, not at pipeline.batch.
@@ -46,12 +46,20 @@ def _fake_plan():
 def _fake_compile_result(risk_tier: RiskTier = RiskTier.LOW):
     result = MagicMock()
     result.plan = _fake_plan()
-    op = Op(
-        op_name=OpName.EXPOSURE,
-        params={"ev": 0.5},
-        risk_tier=risk_tier,
-        step_id="s1",
-    )
+    if risk_tier == RiskTier.HIGH:
+        op = Op(
+            op_name=OpName.BACKGROUND_REPLACE,
+            params={"prompt": "x"},
+            backend=Backend.GENAI,
+            step_id="s1",
+        )
+    else:
+        op = Op(
+            op_name=OpName.EXPOSURE,
+            params={"ev": 0.5},
+            backend=Backend.PIL,
+            step_id="s1",
+        )
     result.op_graph = OpGraph(ops=[op])
     return result
 

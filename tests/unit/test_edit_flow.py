@@ -74,8 +74,8 @@ def _medium_risk_op_graph():
     return OpGraph(
         ops=[
             Op(
-                op_name=OpName.REGION_EDIT,
-                params={"prompt": "blur"},
+                op_name=OpName.FILL_MASK,
+                params={},
                 step_id="s1",
                 risk_tier=RiskTier.MEDIUM,
                 backend=Backend.PIL,

@@ -45,7 +45,7 @@ def _graph(*ops: Op) -> OpGraph:
     ],
 )
 def test_validator_rejects_missing_param(op_name: OpName, params: dict) -> None:
-    op = Op(op_name=op_name, params=params, step_id="s1")
+    op = Op(op_name=op_name, params=params, backend=Backend.PIL, step_id="s1")
     with pytest.raises(ValueError, match="missing required param"):
         validate_op(op)
 
@@ -61,13 +61,13 @@ def test_validator_rejects_missing_param(op_name: OpName, params: dict) -> None:
     ],
 )
 def test_validator_rejects_out_of_bounds(op_name: OpName, params: dict) -> None:
-    op = Op(op_name=op_name, params=params, step_id="s1")
+    op = Op(op_name=op_name, params=params, backend=Backend.PIL, step_id="s1")
     with pytest.raises(ValueError, match="out of bounds"):
         validate_op(op)
 
 
 def test_validator_rejects_disallowed_op() -> None:
-    op = Op(op_name=OpName.EXPOSURE, params={"ev": 1.0}, step_id="s1")
+    op = Op(op_name=OpName.EXPOSURE, params={"ev": 1.0}, backend=Backend.PIL, step_id="s1")
     with pytest.raises(ValueError, match="not in allowed set"):
         validate_op(op, allowed_ops={OpName.CROP})
 
@@ -77,6 +77,7 @@ def test_validator_rejects_bbox_on_size_changing_op() -> None:
         op_name=OpName.CROP,
         params={"left": 0, "top": 0, "right": 32, "bottom": 32},
         bbox=BoundingBox(x=0, y=0, width=32, height=32),
+        backend=Backend.PIL,
         step_id="s1",
     )
     with pytest.raises(ValueError):
@@ -84,15 +85,15 @@ def test_validator_rejects_bbox_on_size_changing_op() -> None:
 
 
 def test_validator_accepts_valid_op() -> None:
-    op = Op(op_name=OpName.EXPOSURE, params={"ev": 1.0}, step_id="s1")
+    op = Op(op_name=OpName.EXPOSURE, params={"ev": 1.0}, backend=Backend.PIL, step_id="s1")
     validate_op(op)  # must not raise
 
 
 def test_validate_op_graph_raises_on_first_bad_op() -> None:
     graph = OpGraph(
         ops=[
-            Op(op_name=OpName.EXPOSURE, params={"ev": 0.5}, step_id="good"),
-            Op(op_name=OpName.EXPOSURE, params={"ev": 99.0}, step_id="bad"),
+            Op(op_name=OpName.EXPOSURE, params={"ev": 0.5}, backend=Backend.PIL, step_id="good"),
+            Op(op_name=OpName.EXPOSURE, params={"ev": 99.0}, backend=Backend.PIL, step_id="bad"),
         ]
     )
     with pytest.raises(ValueError):
@@ -163,7 +164,9 @@ def test_bbox_confines_exposure() -> None:
     container = _container(pixels)
 
     bbox = BoundingBox(x=10, y=10, width=20, height=20)
-    op = Op(op_name=OpName.EXPOSURE, params={"ev": 2.0}, bbox=bbox, step_id="s1")
+    op = Op(
+        op_name=OpName.EXPOSURE, params={"ev": 2.0}, bbox=bbox, backend=Backend.PIL, step_id="s1"
+    )
     result = Executor().apply(container, _graph(op))
 
     # Outside bbox: unchanged
@@ -178,7 +181,9 @@ def test_bbox_edge_pixels_unchanged() -> None:
     pixels = np.full((64, 64, 3), 100, dtype=np.uint8)
     container = _container(pixels)
     bbox = BoundingBox(x=0, y=0, width=32, height=32)
-    op = Op(op_name=OpName.EXPOSURE, params={"ev": 2.0}, bbox=bbox, step_id="s1")
+    op = Op(
+        op_name=OpName.EXPOSURE, params={"ev": 2.0}, bbox=bbox, backend=Backend.PIL, step_id="s1"
+    )
     result = Executor().apply(container, _graph(op))
 
     # Row/col 32 is just outside the bbox

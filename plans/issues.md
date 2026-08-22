@@ -643,20 +643,6 @@ Boundary check: `schema/` imports only stdlib + pydantic + intra-package modules
 
 ### Principle & Scope Violations
 
-**SC-P2: `Op.risk_tier` and `Op.backend` are defaulted, so any non-compiler-built OpGraph reads as LOW risk / PIL**
-**File:** [vlm_photo_editor/schema/ops.py:74-77](vlm_photo_editor/schema/ops.py#L74)
-
-```python
-backend: Backend = Backend.PIL
-risk_tier: RiskTier = RiskTier.LOW
-```
-
-The auto-approve gate reads the tier straight off the Op ([edit_flow.py:103-105](vlm_photo_editor/agents/edit_flow.py#L103)): `AUTO_LOW` executes without human approval when `all(op.risk_tier == RiskTier.LOW)`. `Compiler.compile` does set the tier from the catalog ([compiler.py:186](vlm_photo_editor/planner/compiler.py#L186)), so the live path is currently safe — but nothing in the contract requires it. An `OpGraph` deserialized from a recipe sidecar written before `risk_tier` existed, or hand-edited (recipes are explicitly meant to be "viewable and editable"), or built by any other code path, defaults every op to LOW — including a `background_replace` the catalog rates HIGH. That auto-executes a genAI op with no approval, violating Principle 4.
-
-Fix: make `risk_tier` required, or derive it in a `model_validator(mode="after")` from `op_catalog.get_spec(op_name).risk_tier` and ignore any supplied value. Same argument for `backend`: silently defaulting an inpaint op to PIL is a wrong-backend dispatch, not a safe default.
-
----
-
 **SC-P3: `ps_expressible` is advisory prose only — nothing enforces PS-strict op parity**
 **Files:** [vlm_photo_editor/schema/op_catalog.py:24](vlm_photo_editor/schema/op_catalog.py#L24), [config/policy.py:26](vlm_photo_editor/config/policy.py#L26)
 
@@ -2110,7 +2096,6 @@ All issues across all batches, sorted by severity.
 | AGT-D2 | High | planner.py:6 | stdlib `logging` used instead of structlog — VLM prompt logs bypass `RedactionProcessor` |
 | RCP-B1 | High | store.py:33, preferences/store.py:31 | Non-atomic `write_text()` in `RecipeStore.save()` and `PreferenceStore.save()` — crash mid-write corrupts sidecar/prefs permanently |
 | RCP-D1 | High | preferences/store.py:33 | `add_explicit()` persists description without sanitization — write path for PLN-D1 prompt injection, persists adversarial content across sessions |
-| SC-P2 | High | ops.py:74-77 | `Op.risk_tier` defaults LOW / `backend` defaults PIL — any OpGraph not built by the compiler reads a HIGH genAI op as LOW and auto-executes under `AUTO_LOW` (Principle 4) |
 | SC-B1 | High | op_catalog.py:17-25 | No value constraints for string params — `frame: {mode: "bogus"}` validates, executes, and returns the image unchanged (silent no-op) |
 | PL-P1 | High | compiler.py:63-103, executor.py:146 | Mask-collapsed op with `bbox=None`+`invert=True` edits the whole image; the guard exists only in `app/main.py`, so `edit_flow` and `pipeline/batch` violate Principle 6 |
 | PL-P2 | High | compiler.py:6-13 | Compiler imports `background.providers`, explicitly banned by `planner/AGENTS.md`; CLAUDE.md and AGENTS.md also disagree about `ops.validator` |

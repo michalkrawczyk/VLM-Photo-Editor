@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class OpName(str, Enum):
@@ -71,11 +71,20 @@ class BoundingBox(BaseModel):
 
 class Op(BaseModel):
     op_name: OpName
-    backend: Backend = Backend.PIL
+    backend: Backend
     params: dict[str, Any] = Field(default_factory=dict)
     bbox: BoundingBox | None = None
     risk_tier: RiskTier = RiskTier.LOW
     step_id: str
+
+    @model_validator(mode="after")
+    def _risk_tier_from_catalog(self) -> "Op":
+        # risk_tier gates auto-approval (AUTO_LOW/AUTO_MEDIUM); recipes are
+        # user-editable, so a supplied value can never be trusted over the catalog.
+        from vlm_photo_editor.schema.op_catalog import get_spec
+
+        self.risk_tier = get_spec(self.op_name).risk_tier
+        return self
 
 
 class OpGraph(BaseModel):
