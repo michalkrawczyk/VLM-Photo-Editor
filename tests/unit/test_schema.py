@@ -198,14 +198,9 @@ def test_batch_filename_rejects_null_bytes() -> None:
         "c2f5e813-22b4-5d9g-0f7e-3g4b1d6c8e90",  # VLM hallucination pattern
     ],
 )
-def test_human_step_coerces_non_uuid_step_id(bad_id: str) -> None:
-    step = HumanStep(step_id=bad_id, index=1, title="t", why="w")
-    assert re.match(
-        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-        step.step_id,
-        re.IGNORECASE,
-    )
-    assert step.step_id != bad_id
+def test_human_step_rejects_non_uuid_step_id(bad_id: str) -> None:
+    with pytest.raises(ValidationError, match="not a valid UUID"):
+        HumanStep(step_id=bad_id, index=1, title="t", why="w")
 
 
 def test_human_step_accepts_valid_uuid_step_id() -> None:

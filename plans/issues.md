@@ -643,24 +643,6 @@ Boundary check: `schema/` imports only stdlib + pydantic + intra-package modules
 
 ### Principle & Scope Violations
 
-**SC-P1: `HumanStep` silently rewrites a non-UUID `step_id` instead of rejecting it**
-**File:** [vlm_photo_editor/schema/plan.py:23-31](vlm_photo_editor/schema/plan.py#L23)
-
-```python
-if not _UUID_RE.match(s):
-    replacement = str(uuid.uuid4())
-    _log.warning("step_id %r is not a valid UUID; substituting %s", s, replacement)
-    return replacement
-```
-
-Contradicts three stated invariants at once: CLAUDE.md Principle 3 ("Compiled ops link back by stable step-ID; **never silently rewritten**"), schema/AGENTS.md ("`HumanStep.id` is set once at plan creation and never mutated"), and "Fail loudly and safely. Reject invalid plans/params with clear errors."
-
-Worse, the rewrite is asymmetric: [ops.py:78](vlm_photo_editor/schema/ops.py#L78) declares `step_id: str` with no validator, so an `Op` keeps whatever ID it was given. The repo's own fixtures prove the two contracts disagree — `sample_opgraph.json` carries `step-001` (asserted verbatim, [test_schema.py:28](tests/unit/test_schema.py#L28)) while any `HumanStep` with that same ID gets a fresh random UUID ([test_schema.py:201](tests/unit/test_schema.py#L201) asserts the coercion as intended behavior). Any persisted plan+graph pair whose step IDs predate this validator loses plan↔op linkage on reload, silently: `_log.warning` goes to a stdlib logger, not structlog, so it does not reach the app's log sinks.
-
-Fix: raise `ValueError` with the offending value. Repairing VLM output is the planner-agent layer's job (retry/re-prompt), where the substitution can be surfaced to the user — not a schema-layer side effect. If coercion must stay, apply the identical validator to `Op.step_id` and return the mapping so the compiler can rewrite linked ops.
-
----
-
 **SC-P2: `Op.risk_tier` and `Op.backend` are defaulted, so any non-compiler-built OpGraph reads as LOW risk / PIL**
 **File:** [vlm_photo_editor/schema/ops.py:74-77](vlm_photo_editor/schema/ops.py#L74)
 
@@ -693,7 +675,6 @@ Per-module AGENTS.md is the documented pre-edit reference for this layer, and Pr
 - prefs.py row lists `PrefsVersion` — no such type exists anywhere in the repo.
 - ops.py row omits `BoundingBox`, `FramingMode`, `FramingIntent`, `AcceptMode`, `CharacterFocusBackend` — including `AcceptMode`, which is the auto-approval contract.
 - op_catalog.py row says the registry holds "per-op required params, **bounds**" — `PARAM_BOUNDS` is a flat module-level dict keyed by param *name*, shared across all ops, not part of `OpSpec` (see SC-B2).
-- "Critical invariants → Stable step-IDs … never mutated" is contradicted by the code in the same module (SC-P1).
 
 ---
 
@@ -2129,7 +2110,6 @@ All issues across all batches, sorted by severity.
 | AGT-D2 | High | planner.py:6 | stdlib `logging` used instead of structlog — VLM prompt logs bypass `RedactionProcessor` |
 | RCP-B1 | High | store.py:33, preferences/store.py:31 | Non-atomic `write_text()` in `RecipeStore.save()` and `PreferenceStore.save()` — crash mid-write corrupts sidecar/prefs permanently |
 | RCP-D1 | High | preferences/store.py:33 | `add_explicit()` persists description without sanitization — write path for PLN-D1 prompt injection, persists adversarial content across sessions |
-| SC-P1 | High | plan.py:23-31 | `HumanStep` silently replaces a non-UUID `step_id` — violates Principle 3 "never silently rewritten"; `Op.step_id` has no matching validator, so plan↔op linkage can break on reload |
 | SC-P2 | High | ops.py:74-77 | `Op.risk_tier` defaults LOW / `backend` defaults PIL — any OpGraph not built by the compiler reads a HIGH genAI op as LOW and auto-executes under `AUTO_LOW` (Principle 4) |
 | SC-B1 | High | op_catalog.py:17-25 | No value constraints for string params — `frame: {mode: "bogus"}` validates, executes, and returns the image unchanged (silent no-op) |
 | PL-P1 | High | compiler.py:63-103, executor.py:146 | Mask-collapsed op with `bbox=None`+`invert=True` edits the whole image; the guard exists only in `app/main.py`, so `edit_flow` and `pipeline/batch` violate Principle 6 |

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import re
 import uuid
 from typing import Any
@@ -8,8 +7,6 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .ops import FramingMode, OpGraph, OpName
-
-_log = logging.getLogger(__name__)
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -25,9 +22,7 @@ class HumanStep(BaseModel):
     def _require_uuid_format(cls, v: object) -> str:
         s = str(v)
         if not _UUID_RE.match(s):
-            replacement = str(uuid.uuid4())
-            _log.warning("step_id %r is not a valid UUID; substituting %s", s, replacement)
-            return replacement
+            raise ValueError(f"step_id {s!r} is not a valid UUID")
         return s
 
     index: int = Field(ge=0)
