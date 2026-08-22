@@ -5,6 +5,7 @@ import pytest
 from vlm_photo_editor.schema.ops import FramingIntent, FramingMode
 from vlm_photo_editor.schema.plan import HumanPlan
 from vlm_photo_editor.schema.prefs import ExplicitRule, Preferences
+from vlm_photo_editor.secrets.store import SecretStore
 from vlm_photo_editor.templates.framing import focus_instruction, frame_ratio_str
 from vlm_photo_editor.templates.planner import build_system_prompt
 
@@ -114,6 +115,8 @@ def test_recommend_best_user_instruction_before_prefs():
 
 
 @pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.skipif(not SecretStore.has("anthropic"), reason="requires ANTHROPIC_API_KEY")
 def test_portrait_headroom_no_head_clip():
     """Requires ANTHROPIC_API_KEY. Verifies VLM produces non-clipping crop."""
     from pathlib import Path

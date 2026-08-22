@@ -21,6 +21,13 @@ from vlm_photo_editor.templates.planner import build_system_prompt
 # ---------------------------------------------------------------------------
 
 
+def _has_anthropic_key() -> bool:
+    """Deferred import: a module-level one lands after the _UUID constants (E402)."""
+    from vlm_photo_editor.secrets.store import SecretStore
+
+    return SecretStore.has("anthropic")
+
+
 def _step(
     op_names: list[str],
     op_params: list[dict] | None = None,
@@ -636,6 +643,8 @@ def test_encode_image_handles_bit_depth(dtype):
 
 
 @pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.skipif(not _has_anthropic_key(), reason="requires ANTHROPIC_API_KEY")
 def test_planner_compile_round_trip_integration():
     """Requires ANTHROPIC_API_KEY. Verifies end-to-end plan → compile."""
     from pathlib import Path
