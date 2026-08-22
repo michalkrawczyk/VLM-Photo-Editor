@@ -12,6 +12,10 @@ box before planning, for use as framing/crop context.
 - **No silent fallback:** a backend whose package is installed but whose model path
   (`AppSettings.*_model_path`) is unset/missing raises `ValueError` naming the
   missing setting. Never falls through to another backend.
+- **`mediapipe_model_path` has an env-var fallback:** `config/settings.py` defaults it
+  from `MEDIAPIPE_MODEL_PATH` if set, else `None` (still no auto-download — just one
+  more way to supply the path, added for `tests/e2e/` to configure a subprocess-launched
+  app). `yolo_onnx_model_path`/`u2netp_model_path` are unchanged (plain `None` default).
 - **Deterministic pre-pass:** detection runs once per plan/revise call, before the
   planner is invoked. It is not exposed to the planner as a callable tool.
 - **Bbox always clamped:** every backend clamps its result into `[0, width) x [0, height)`

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -26,8 +27,11 @@ class AppSettings:
     genai_model: str = "black-forest-labs/flux-fill-dev"
     # Retries after first crop-bounds failure (not counting initial attempt).
     max_crop_retries: int = 3
-    # Character Focus (P13) detector model files — no auto-download, user supplies the path.
-    mediapipe_model_path: str | None = None
+    # Character Focus (P13) detector model files — no auto-download, user supplies the path
+    # (directly, or via env var for mediapipe_model_path).
+    mediapipe_model_path: str | None = field(
+        default_factory=lambda: os.environ.get("MEDIAPIPE_MODEL_PATH")
+    )
     yolo_onnx_model_path: str | None = None
     u2netp_model_path: str | None = None
 
