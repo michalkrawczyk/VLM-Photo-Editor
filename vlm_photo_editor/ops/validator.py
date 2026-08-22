@@ -6,9 +6,14 @@ from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 from .constants import INPAINT_OPS as _INPAINT_OPS
 
 
-def validate_op(op: Op, allowed_ops: set[OpName] | None = None) -> None:
+def validate_op(
+    op: Op, allowed_ops: set[OpName] | None = None, *, require_bbox: bool = False
+) -> None:
     if allowed_ops is not None and op.op_name not in allowed_ops:
         raise ValueError(f"Op {op.op_name!r} not in allowed set")
+
+    if require_bbox and get_spec(op.op_name).requires_bbox and op.bbox is None:
+        raise ValueError(f"Op {op.op_name!r} requires a bbox but none was provided")
 
     required = list(get_spec(op.op_name).required_params)
     if op.op_name in _INPAINT_OPS and op.backend != Backend.GENAI:
@@ -39,9 +44,11 @@ def validate_op(op: Op, allowed_ops: set[OpName] | None = None) -> None:
         raise ValueError(f"Op {op.op_name!r} changes image size; bbox not allowed")
 
 
-def validate_op_graph(graph: OpGraph, allowed_ops: set[OpName] | None = None) -> None:
+def validate_op_graph(
+    graph: OpGraph, allowed_ops: set[OpName] | None = None, *, require_bbox: bool = False
+) -> None:
     for op in graph.ops:
-        validate_op(op, allowed_ops=allowed_ops)
+        validate_op(op, allowed_ops=allowed_ops, require_bbox=require_bbox)
 
 
 def validate_crop_bounds(op_graph: OpGraph, w: int, h: int) -> None:

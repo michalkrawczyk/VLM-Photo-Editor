@@ -41,7 +41,7 @@ class Executor:
     ) -> ExecutionResult:
         """Run the graph. `genai_selection` (step_id → prior candidates + user pick)
         replays genAI steps from cache instead of calling the provider again."""
-        validate_op_graph(op_graph, allowed_ops=self._allowed_ops)
+        validate_op_graph(op_graph, allowed_ops=self._allowed_ops, require_bbox=True)
         result = container.copy()
         genai_ops: list[GenAIOp] = []
         candidates: dict[str, list[ScoredCandidate]] = {}

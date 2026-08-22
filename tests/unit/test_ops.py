@@ -280,6 +280,14 @@ def test_mask_clips_to_image_bounds() -> None:
     assert not mask[0, 0]  # outside
 
 
+def test_fill_mask_without_bbox_raises_via_executor() -> None:
+    """OE-P1: fill_mask with no bbox must not silently flatten the whole image."""
+    op = _op(OpName.FILL_MASK, {"fill": 10})
+    container = _container(np.full((64, 64, 3), 200, dtype=np.uint8))
+    with pytest.raises(ValueError, match="requires a bbox"):
+        Executor().apply(container, _graph(op))
+
+
 def test_fill_mask_fills_inside_bbox_only() -> None:
     op = _op(OpName.FILL_MASK, {"fill": 10}, bbox=BoundingBox(x=5, y=5, width=10, height=10))
     container = _container(np.full((64, 64, 3), 200, dtype=np.uint8))

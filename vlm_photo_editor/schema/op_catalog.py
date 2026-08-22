@@ -23,6 +23,7 @@ class OpSpec:
     bbox_class: BBoxClass
     ps_expressible: bool
     doc_lines: tuple[str, ...]
+    requires_bbox: bool = False
 
     def render_doc(self) -> list[str]:
         return list(self.doc_lines)
@@ -152,6 +153,7 @@ register_op(
             "    color. Standalone op; needs its own region (drawn manually, or inherited by",
             "    immediately following a mask step).",
         ),
+        requires_bbox=True,
     )
 )
 
@@ -168,6 +170,7 @@ register_op(
             '    method: "telea"|"ns"|"blur" (opencv only, default "telea"),',
             '    radius: float 0.5-50 (opencv method="blur" only, default 15, Gaussian blur strength)}',
         ),
+        requires_bbox=True,
     )
 )
 
@@ -182,6 +185,7 @@ register_op(
         doc_lines=(
             '  background_replace: {prompt: str (required for genai), backend: "genai"|"opencv" (optional)}',
         ),
+        requires_bbox=True,
     )
 )
 

@@ -1058,24 +1058,6 @@ Boundary check: `ops/` imports `schema`, `imageio`, `config`, numpy/PIL/cv2 only
 
 ### Principle & Scope Violations
 
-**OE-P1: `fill_mask` with `bbox=None` paints the entire image — no op declares that it requires a region**
-**Files:** [vlm_photo_editor/ops/backends/pil_backend.py:112-118](vlm_photo_editor/ops/backends/pil_backend.py#L112), [ops/executor.py:146-147](vlm_photo_editor/ops/executor.py#L146), [ops/validator.py:9-39](vlm_photo_editor/ops/validator.py#L9)
-
-The catalog documents `fill_mask` as "Standalone op; **needs its own region**" ([op_catalog.py:151-153](vlm_photo_editor/schema/op_catalog.py#L151)), but nothing enforces it. `validate_op` has no concept of a required bbox, and `_apply_op` treats `bbox is None` as "apply to the whole image":
-
-```python
-if op.bbox is None:
-    return backend_fn(container, op), None
-```
-
-Verified: a single `fill_mask` op with no bbox on a 40×40 image returns an array whose only unique value is `0` — the whole image is flattened to the fill colour. The two backends that own their own mask do guard this (`apply_inpaint` and `apply_blur` both `raise ValueError` when `op.bbox is None`); the generic path does not, so the guard depends entirely on which backend the op happened to be routed to.
-
-"Fail loudly and safely. Reject invalid plans/params with clear errors" — here an under-specified op destroys the image and reports success. Same shape as PL-P1, which covers the `invert=True` half of this gap.
-
-Fix: add `requires_bbox: bool` to `OpSpec` (true for `fill_mask`, `region_edit`, `background_replace`) and reject in `validate_op`, so the check is backend-independent.
-
----
-
 **OE-P2: `params["invert"]` is honoured on exactly one of the four dispatch paths — an op meant to protect the subject can edit precisely the subject**
 **Files:** [vlm_photo_editor/ops/executor.py:122-156](vlm_photo_editor/ops/executor.py#L122), [ops/backends/cv_backend.py:15-61](vlm_photo_editor/ops/backends/cv_backend.py#L15), [ops/backends/genai_backend.py:17-20](vlm_photo_editor/ops/backends/genai_backend.py#L17)
 
@@ -2100,7 +2082,6 @@ All issues across all batches, sorted by severity.
 | PL-P1 | High | compiler.py:63-103, executor.py:146 | Mask-collapsed op with `bbox=None`+`invert=True` edits the whole image; the guard exists only in `app/main.py`, so `edit_flow` and `pipeline/batch` violate Principle 6 |
 | PL-P2 | High | compiler.py:6-13 | Compiler imports `background.providers`, explicitly banned by `planner/AGENTS.md`; CLAUDE.md and AGENTS.md also disagree about `ops.validator` |
 | PL-P3 | High | planner.py:40,75, edit_flow.py:66,88 | `agents/` imports `ops.backends.pil_backend`, `ops.validator`, `ops.executor` — banned by `agents/AGENTS.md` invariant 1 |
-| OE-P1 | High | pil_backend.py:112, executor.py:146 | `fill_mask` with `bbox=None` paints the whole image — no op can declare a required region and the validator never checks (verified) |
 | OE-P2 | High | executor.py:152, cv_backend.py:15, genai_backend.py:17 | `invert` honoured on only 2 of 4 dispatch paths — `apply_inpaint`/genAI edit exactly the region the flag says to protect (Principle 6) |
 | OE-P3 | High | genai_backend.py:17-20 | GENAI op with no bbox builds an all-True fill mask — the model regenerates the subject too (Principle 6) |
 | OE-B1 | High | executor.py:44-120 | `CROP` params never remapped through `origin` while `bbox`/focus are — a second size-changing op crashes or crops the wrong region (verified) |
