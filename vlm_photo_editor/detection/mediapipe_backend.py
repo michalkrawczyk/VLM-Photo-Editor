@@ -18,8 +18,9 @@ def detect(container: ImageContainer) -> DetectedSubject:
 
     import mediapipe as mp
 
-    vision = mp.tasks.python.vision
-    base_options = mp.tasks.python.core.base_options.BaseOptions(model_asset_path=model_path)
+    # mp.tasks IS mediapipe.tasks.python — there is no further .python attribute on it.
+    vision = mp.tasks.vision
+    base_options = mp.tasks.BaseOptions(model_asset_path=model_path)
     options = vision.ObjectDetectorOptions(base_options=base_options, max_results=1)
     detector = vision.ObjectDetector.create_from_options(options)
     rgb = to_rgb_uint8(container.pixels)

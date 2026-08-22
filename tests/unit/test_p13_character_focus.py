@@ -73,7 +73,10 @@ def test_detect_subject_mediapipe_clamps_bbox():
     mock_detector.detect.return_value = mock_result
 
     mock_mp = MagicMock()
-    mock_mp.tasks.python.vision.ObjectDetector.create_from_options.return_value = mock_detector
+    # Real mediapipe exposes mp.tasks.vision / mp.tasks.BaseOptions and has no
+    # mp.tasks.python; deleting it keeps a bare MagicMock from accepting that path.
+    del mock_mp.tasks.python
+    mock_mp.tasks.vision.ObjectDetector.create_from_options.return_value = mock_detector
 
     settings = get_settings()
     settings.mediapipe_model_path = "/fake/model.tflite"
