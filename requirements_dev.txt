@@ -13,3 +13,7 @@ isort>=5.13
 ruff>=0.4
 pydocstyle>=6.3
 
+# E2E browser testing
+playwright>=1.45
+pytest-playwright>=0.5
+

@@ -218,3 +218,7 @@ __marimo__/
 .streamlit/secrets.toml
 agent_ignore/
 .vscode
+
+# e2e test artifacts / downloaded model cache
+tests/e2e/artifacts/
+tests/e2e/models/
