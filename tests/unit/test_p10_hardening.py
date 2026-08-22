@@ -214,17 +214,27 @@ def test_plan_cache_ttl_expiry():
         assert cache.get(key) is None
 
 
-def test_plan_cache_key_differs_by_mode_and_prefs():
+def test_plan_cache_key_differs_by_mode_prefs_intent_and_framing():
     from vlm_photo_editor.pipeline.plan_cache import PlanCache
 
     cache = PlanCache()
     container = _fake_container()
-    key_full_v1 = cache.key(container, "full", _fake_prefs(1))
-    key_frame_v1 = cache.key(container, "frame", _fake_prefs(1))
-    key_full_v2 = cache.key(container, "full", _fake_prefs(2))
-    key_no_prefs = cache.key(container, "full", None)
+    keys = {
+        cache.key(container, "full", _fake_prefs(1)),
+        cache.key(container, "frame", _fake_prefs(1)),
+        cache.key(container, "full", _fake_prefs(2)),
+        cache.key(container, "full", None),
+        cache.key(container, "full", _fake_prefs(1), "brighten"),
+        cache.key(container, "full", _fake_prefs(1), "crop tighter"),
+        cache.key(container, "frame", _fake_prefs(1), "", "rule_of_thirds"),
+        cache.key(container, "frame", _fake_prefs(1), "", "portrait_headroom"),
+    }
 
-    assert len({key_full_v1, key_frame_v1, key_full_v2, key_no_prefs}) == 4
+    assert len(keys) == 8
+    # Same inputs → same key, so a genuine repeat still hits the cache.
+    assert cache.key(container, "frame", _fake_prefs(1), "x", "face_only") == cache.key(
+        container, "frame", _fake_prefs(1), "x", "face_only"
+    )
 
 
 # ── F. Async job queue ────────────────────────────────────────────────────────

@@ -20,10 +20,16 @@ class PlanCache:
         container: ImageContainer,
         mode: str,
         prefs: Preferences | None,
+        intent: str = "",
+        framing_mode: str | None = None,
     ) -> str:
         img_hash = hashlib.sha256(container.pixels.tobytes()).hexdigest()[:16]
         prefs_ver = str(prefs.version) if prefs else "0"
-        return f"{img_hash}:{mode}:{prefs_ver}"
+        # intent and framing_mode change the plan the VLM produces, so they must be
+        # part of the key — otherwise a second request on the same image+mode replays
+        # the first plan.
+        intent_hash = hashlib.sha256(intent.encode("utf-8")).hexdigest()[:16]
+        return f"{img_hash}:{mode}:{prefs_ver}:{framing_mode or '-'}:{intent_hash}"
 
     def get(self, key: str) -> HumanPlan | None:
         entry = self._store.get(key)

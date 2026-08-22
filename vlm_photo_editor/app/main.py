@@ -93,7 +93,7 @@ def _do_generate_plan() -> None:
     genai_available = default_provider_available()
 
     cache = get_plan_cache()
-    cache_key = cache.key(container, mode, prefs)
+    cache_key = cache.key(container, mode, prefs, intent, framing_val)
     cached_plan = cache.get(cache_key)
 
     try:
