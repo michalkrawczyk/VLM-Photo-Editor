@@ -208,7 +208,6 @@ def test_validate_crop_bounds_passes_when_within_image():
 @pytest.mark.parametrize("fail_count", [1, 2, 3])
 def test_validate_crop_bounds_retry_calls_revise(fail_count):
     """Retry loop calls revise exactly fail_count times before succeeding."""
-    from pathlib import Path
     from unittest.mock import MagicMock
 
     from vlm_photo_editor.ops.validator import validate_crop_bounds

@@ -31,7 +31,12 @@ def _mock_critic_response(json_str: str) -> MagicMock:
     "response_json,expected_passed,expected_reason_substr,expected_uncertain",
     [
         ('{"passed": true, "reason": "looks good"}', True, "looks good", False),
-        ('{"passed": false, "reason": "exposure not changed"}', False, "exposure not changed", False),
+        (
+            '{"passed": false, "reason": "exposure not changed"}',
+            False,
+            "exposure not changed",
+            False,
+        ),
         ("Sorry I cannot help", True, "parse error", True),  # fail-open on bad JSON
     ],
 )

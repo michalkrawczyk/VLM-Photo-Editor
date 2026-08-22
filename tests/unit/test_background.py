@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from vlm_photo_editor.background import run_background_pipeline
-from vlm_photo_editor.background.composite import color_match, composite, grain_match, seam_blend
+from vlm_photo_editor.background.composite import color_match, composite, grain_match
 from vlm_photo_editor.background.generator import Candidate, Generator
 from vlm_photo_editor.background.providers import (
     GoogleProvider,

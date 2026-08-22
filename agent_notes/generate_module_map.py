@@ -35,11 +35,10 @@ Filtering examples (Python)
 
 from __future__ import annotations
 
-import ast
 import argparse
+import ast
 import json
 import logging
-import sys
 from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)

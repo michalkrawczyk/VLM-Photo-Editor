@@ -384,7 +384,7 @@ def _render_batch_panel(files: list) -> None:
     import anyio
 
     from vlm_photo_editor.pipeline.batch import run_batch
-    from vlm_photo_editor.schema.batch import BatchImageRecord, ImageStatus
+    from vlm_photo_editor.schema.batch import BatchImageRecord
 
     st.subheader(f"Batch Processing — {len(files)} images")
 

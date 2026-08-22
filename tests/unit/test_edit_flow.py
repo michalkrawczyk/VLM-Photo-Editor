@@ -495,6 +495,4 @@ def test_revise_plan_forwards_framing_intent():
         graph.invoke(state, thread)
         graph.invoke(Command(resume={"approved": False, "feedback": "brighter"}), thread)
 
-        assert (
-            mock_planner_cls.return_value.revise.call_args.kwargs["framing_intent"] == framing
-        )
+        assert mock_planner_cls.return_value.revise.call_args.kwargs["framing_intent"] == framing

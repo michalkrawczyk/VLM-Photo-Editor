@@ -84,6 +84,4 @@ class Critic:
             )
         except Exception:
             log.warning("critic.failed", exc_info=True)
-            return CriticVerdict(
-                passed=True, reason="critic error — assuming pass", uncertain=True
-            )
+            return CriticVerdict(passed=True, reason="critic error — assuming pass", uncertain=True)
