@@ -104,6 +104,22 @@ def test_16bit_jpeg_raises_valueerror(tmp_path: Path) -> None:
         save(c16, tmp_path / "out.jpg")
 
 
+def test_16bit_rgb_tiff_round_trip(tmp_path: Path) -> None:
+    """IO-B4: 16-bit RGB save must not raise and must round-trip exactly (tifffile)."""
+    import tifffile
+
+    src = tmp_path / "source.nef"
+    pixels_16 = (np.arange(8 * 8 * 3, dtype=np.uint16).reshape(8, 8, 3) * 500).astype(np.uint16)
+    c16 = ImageContainer(pixels=pixels_16, bit_depth=16, source_path=src)
+
+    dest = tmp_path / "out.tif"
+    save(c16, dest)
+
+    back = tifffile.imread(str(dest))
+    assert back.dtype == np.uint16
+    np.testing.assert_array_equal(back, pixels_16)
+
+
 def test_rgba_jpeg_saves_as_rgb(tmp_path: Path) -> None:
     """IO-B2: RGBA container saved to JPEG must not raise; alpha channel is dropped."""
     pixels_rgba = np.full((32, 32, 4), 128, dtype=np.uint8)

@@ -28,8 +28,14 @@ def save(container: ImageContainer, dest: Path | str, fmt: str | None = None) ->
         if pixels.ndim == 2:
             img = Image.fromarray(pixels.astype(np.int32), "I")
         else:
-            mode = "RGBA" if pixels.shape[2] == 4 else "RGB"
-            img = Image.fromarray(pixels, mode)
+            # IO-B4: Pillow has no 16-bit-per-channel RGB mode — Image.fromarray raises
+            # TypeError on a uint16 HxWx3 array. tifffile writes a true 16-bit
+            # multichannel TIFF (this is the only destination the guard above permits).
+            import tifffile
+
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tifffile.imwrite(str(dest), pixels)
+            return dest
     else:
         if pixels.ndim == 2:
             mode = "L"
