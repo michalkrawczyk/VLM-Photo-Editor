@@ -47,19 +47,37 @@ def install_backend_deps(backend: str) -> tuple[bool, str]:
     return result.returncode == 0, output.strip()[-4000:]
 
 
-def detect_subject(container: ImageContainer, backend: str) -> DetectedSubject:
-    """Run the given Character Focus backend's detector once on *container*."""
+# DET-P1: coarse floor below which a detection is not trusted to define the
+# subject-freeze region. Scores are NOT comparable across backends (DET-P3), so this
+# is deliberately low — it mainly rejects the mediapipe `category is None -> 0.0`
+# fallback and any pathological near-zero score.
+_MIN_CONFIDENCE = 0.25
+
+
+def detect_subject(container: ImageContainer, backend: str) -> DetectedSubject | None:
+    """Run the given Character Focus backend's detector once on *container*.
+
+    Returns ``None`` when the detector ran cleanly but found no subject (DET-P2) or
+    when the best detection scores below ``_MIN_CONFIDENCE`` (DET-P1); raises
+    ``ValueError`` only for misconfiguration (unknown/off backend, missing model
+    path).
+    """
     resolved = CharacterFocusBackend(backend)
     if resolved is CharacterFocusBackend.OFF:
         raise ValueError("detect_subject() called with backend='off'; caller should skip detection")
     if resolved is CharacterFocusBackend.MEDIAPIPE:
         from . import mediapipe_backend
 
-        return mediapipe_backend.detect(container)
-    if resolved is CharacterFocusBackend.YOLO_ONNX:
+        result = mediapipe_backend.detect(container)
+    elif resolved is CharacterFocusBackend.YOLO_ONNX:
         from . import yolo_onnx_backend
 
-        return yolo_onnx_backend.detect(container)
-    from . import u2netp_backend
+        result = yolo_onnx_backend.detect(container)
+    else:
+        from . import u2netp_backend
 
-    return u2netp_backend.detect(container)
+        result = u2netp_backend.detect(container)
+
+    if result is not None and result.confidence < _MIN_CONFIDENCE:
+        return None
+    return result

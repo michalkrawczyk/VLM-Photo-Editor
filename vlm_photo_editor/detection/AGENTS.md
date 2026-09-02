@@ -12,6 +12,11 @@ box before planning, for use as framing/crop context.
 - **No silent fallback:** a backend whose package is installed but whose model path
   (`AppSettings.*_model_path`) is unset/missing raises `ValueError` naming the
   missing setting. Never falls through to another backend.
+- **Empty result ≠ misconfiguration (DET-P2):** a detector that ran cleanly and
+  found nothing returns `None` (`detect()` / `detect_subject()` are
+  `-> DetectedSubject | None`). `ValueError` is reserved for misconfiguration
+  (missing model path, unknown/off backend). Callers treat `None` as "plan
+  without subject context" — the default, gracefully-handled path.
 - **`mediapipe_model_path` has an env-var fallback:** `config/settings.py` defaults it
   from `MEDIAPIPE_MODEL_PATH` if set, else `None` (still no auto-download — just one
   more way to supply the path, added for `tests/e2e/` to configure a subprocess-launched
@@ -23,11 +28,13 @@ box before planning, for use as framing/crop context.
 
 ## Backend architecture
 
-One file per detector, each exporting a single `detect(container) -> DetectedSubject`
-function (no class/ABC — each call is stateless, unlike `background/providers/`'s
-multi-candidate generators). To add a new backend:
+One file per detector, each exporting a single
+`detect(container) -> DetectedSubject | None` function (no class/ABC — each call is
+stateless, unlike `background/providers/`'s multi-candidate generators). To add a
+new backend:
 1. Add a `CharacterFocusBackend` member in `schema/ops.py`.
-2. Add a `<name>_backend.py` file with `detect(container: ImageContainer) -> DetectedSubject`.
+2. Add a `<name>_backend.py` file with
+   `detect(container: ImageContainer) -> DetectedSubject | None`.
 3. Add its presence check to `available_backends()` and its dispatch branch to
    `detect_subject()` in `__init__.py`.
 4. Add its model-path field to `AppSettings` (`config/settings.py`).

@@ -130,6 +130,63 @@ def test_detect_subject_yolo_onnx_clamps_bbox():
 
 
 # ---------------------------------------------------------------------------
+# DET-P1 — degenerate / low-confidence detections must not define a freeze region
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        (900, 700, 50, 50),  # entirely off the bottom-right
+        (-100, -100, 50, 50),  # entirely off the top-left
+        (640, 100, 30, 30),  # flush against the right edge, zero width inside
+    ],
+)
+def test_clamp_bbox_raises_when_box_has_no_overlap(box):
+    from vlm_photo_editor.detection._common import clamp_bbox
+
+    x, y, w, h = box
+    with pytest.raises(ValueError, match="no overlap"):
+        clamp_bbox(x, y, w, h, 640, 480)
+
+
+def test_clamp_bbox_partial_overlap_still_returns():
+    from vlm_photo_editor.detection._common import clamp_bbox
+
+    bbox = clamp_bbox(-20, -20, 60, 60, 640, 480)  # top-left corner overhangs
+    assert (bbox.x, bbox.y) == (0, 0)
+    assert bbox.width == 40 and bbox.height == 40
+
+
+def test_detect_subject_drops_below_confidence_floor():
+    """DET-P1: a detection scoring below _MIN_CONFIDENCE is not trusted as a subject."""
+    from vlm_photo_editor.config.settings import get_settings
+
+    container = _container(np.full((64, 64, 3), 128, dtype=np.uint8))
+
+    detection = MagicMock(categories=[])  # -> backend emits confidence 0.0
+    detection.bounding_box = MagicMock(origin_x=5, origin_y=5, width=30, height=30)
+    mock_detector = MagicMock()
+    mock_detector.detect.return_value = MagicMock(detections=[detection])
+
+    mock_mp = MagicMock()
+    del mock_mp.tasks.python
+    mock_mp.tasks.vision.ObjectDetector.create_from_options.return_value = mock_detector
+
+    settings = get_settings()
+    settings.mediapipe_model_path = "/fake/model.tflite"
+    try:
+        with patch.dict("sys.modules", {"mediapipe": mock_mp}):
+            from vlm_photo_editor.detection import detect_subject
+
+            result = detect_subject(container, "mediapipe")
+    finally:
+        settings.mediapipe_model_path = None
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
 # Missing model path → clear ValueError naming the setting, no silent fallback
 # ---------------------------------------------------------------------------
 

@@ -6,7 +6,7 @@ from vlm_photo_editor.schema.detection import DetectedSubject
 from ._common import clamp_bbox, to_rgb_uint8
 
 
-def detect(container: ImageContainer) -> DetectedSubject:
+def detect(container: ImageContainer) -> DetectedSubject | None:
     from vlm_photo_editor.config.settings import get_settings
 
     model_path = get_settings().mediapipe_model_path
@@ -27,7 +27,9 @@ def detect(container: ImageContainer) -> DetectedSubject:
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     result = detector.detect(mp_image)
     if not result.detections:
-        raise ValueError("mediapipe: no subject detected in image")
+        # DET-P2: a clean run that found nothing is a normal outcome, not a
+        # misconfiguration — return None so callers plan without subject context.
+        return None
 
     det = result.detections[0]
     b = det.bounding_box

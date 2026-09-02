@@ -25,7 +25,7 @@ def _letterbox(rgb: np.ndarray, size: int) -> tuple[np.ndarray, float, int, int]
     return canvas, scale, pad_x, pad_y
 
 
-def detect(container: ImageContainer) -> DetectedSubject:
+def detect(container: ImageContainer) -> DetectedSubject | None:
     from vlm_photo_editor.config.settings import get_settings
 
     model_path = get_settings().yolo_onnx_model_path
@@ -66,12 +66,12 @@ def detect(container: ImageContainer) -> DetectedSubject:
         class_ids.append(class_id)
 
     if not boxes:
-        raise ValueError("yolo_onnx: no subject detected in image")
+        return None  # DET-P2: nothing above threshold is a normal result.
 
     indices = cv2.dnn.NMSBoxes(boxes, scores, _CONF_THRESHOLD, _NMS_THRESHOLD)
     flat_indices = np.array(indices).flatten()
     if flat_indices.size == 0:
-        raise ValueError("yolo_onnx: no subject detected in image")
+        return None
     best = int(max(flat_indices, key=lambda i: scores[i]))
 
     x, y, w, h = boxes[best]

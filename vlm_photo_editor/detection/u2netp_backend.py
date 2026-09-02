@@ -10,7 +10,7 @@ from ._common import clamp_bbox, to_rgb_uint8
 _INPUT_SIZE = 320
 
 
-def detect(container: ImageContainer) -> DetectedSubject:
+def detect(container: ImageContainer) -> DetectedSubject | None:
     from vlm_photo_editor.config.settings import get_settings
 
     model_path = get_settings().u2netp_model_path
@@ -40,7 +40,8 @@ def detect(container: ImageContainer) -> DetectedSubject:
         binary, connectivity=8
     )
     if num_labels <= 1:
-        raise ValueError("u2netp: no salient subject detected in image")
+        # DET-P2: no salient region is a normal result, not a misconfiguration.
+        return None
 
     # Label 0 is background; pick the largest non-background component by area.
     largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))

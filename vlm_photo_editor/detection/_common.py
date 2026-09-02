@@ -6,11 +6,22 @@ from vlm_photo_editor.schema.ops import BoundingBox
 
 
 def clamp_bbox(x: float, y: float, w: float, h: float, img_w: int, img_h: int) -> BoundingBox:
-    """Clamp a (possibly out-of-bounds) detector box into [0, img_w) x [0, img_h)."""
-    x0 = max(0, min(int(x), img_w - 1))
-    y0 = max(0, min(int(y), img_h - 1))
-    x1 = max(x0 + 1, min(int(round(x + w)), img_w))
-    y1 = max(y0 + 1, min(int(round(y + h)), img_h))
+    """Clamp a detector box to the image; raise if it does not overlap the image.
+
+    DET-P1: a box that falls entirely off the image used to be forced to a 1x1 px
+    box, which then became the subject-freeze region and let genAI regenerate the
+    whole frame. A non-overlapping box is a detector/coordinate-mapping failure, not
+    a valid subject — fail loudly instead.
+    """
+    x0 = max(0, int(x))
+    y0 = max(0, int(y))
+    x1 = min(int(round(x + w)), img_w)
+    y1 = min(int(round(y + h)), img_h)
+    if x1 <= x0 or y1 <= y0:
+        raise ValueError(
+            f"detection box (x={x}, y={y}, w={w}, h={h}) has no overlap with "
+            f"{img_w}x{img_h} image"
+        )
     return BoundingBox(x=x0, y=y0, width=x1 - x0, height=y1 - y0)
 
 
