@@ -64,8 +64,12 @@ All checks in one run (`ruff`, `black`, `isort`, `pydocstyle`, `pytest`), status
 ```
 bash agent_notes/utility_scripts/run_checks.sh            # fix mode + pytest -m "not slow"
 bash agent_notes/utility_scripts/run_checks.sh --check    # read-only, modifies nothing
-bash agent_notes/utility_scripts/run_checks.sh --full     # full pytest
+bash agent_notes/utility_scripts/run_checks.sh --full     # drop the "not slow" filter
 ```
+pytest scope flags: `[PATH ...]` (default `tests/`), `-k EXPR`, `-m MARKER`, `--ignore PATH`
+(repeatable), `--short [N]` (tail pytest output to N lines, default 40; exit code and Summary table
+unaffected). Full semantics + gotchas: [done_gate.md](done_gate.md).
+
 Runs every step even after a failure — one invocation gives the whole picture. `pydocstyle` is advisory (`WARN`, never blocks); a tool missing from `PATH` reports `SKIP`, never `PASS`. `PKG` env var overrides the `pydocstyle` target dir (default `vlm_photo_editor`).
 
 Individual tools, order per `RUNBOOK.md`:
