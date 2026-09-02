@@ -1120,21 +1120,6 @@ Fix: remap `left/top/right/bottom` in `_remap_for_origin` exactly as `bbox` is (
 
 ---
 
-**OE-B4: `validate_op`'s CROP block compares raw param values — non-numeric params raise `TypeError` past the compiler's `except ValueError`**
-**File:** [vlm_photo_editor/ops/validator.py:26-36](vlm_photo_editor/ops/validator.py#L26)
-
-```python
-left = op.params["left"]
-...
-if left < 0 or top < 0:
-```
-
-No coercion. `{"left": "0"}` from the VLM raises `TypeError: '<' not supported between instances of 'str' and 'int'`; `Compiler.compile` catches only `ValueError` ([compiler.py:216](vlm_photo_editor/planner/compiler.py#L216)), so it escapes as an internal error rather than a `CompilerError` the UI can show. `validate_crop_bounds` in the same file gets this right (`int(p["left"])`, though that raises `ValueError` for a non-numeric string — still not a clean message). Floats pass validation and are silently truncated by `int()` in `_crop`, so `right=80.9` validates as `< 81` and crops to 80.
-
-Same root cause as SC-B2's `float(op.params[key])` note, one function above at [validator.py:22](vlm_photo_editor/ops/validator.py#L22); both belong in one fix: coerce and type-check params once, rejecting `bool` and non-numeric types with a `ValueError`.
-
----
-
 **OE-B5: float→int truncation and unchecked `astype` in `cv_backend`**
 **Files:** [vlm_photo_editor/ops/backends/cv_backend.py:87-89](vlm_photo_editor/ops/backends/cv_backend.py#L87), [cv_backend.py:104-106](vlm_photo_editor/ops/backends/cv_backend.py#L104)
 
@@ -2415,7 +2400,6 @@ All issues across all batches, sorted by severity.
 | PL-B2 | Medium | compiler.py:53-103 | Two consecutive `mask` steps leave a `MASK` op in the compiled OpGraph and strip the next op's region confinement |
 | PL-B3 | Medium | edit_flow.py:83 | `_await_human` reads `state["op_graph"]` unconditionally — `KeyError` on the crop-retries-exhausted path; tests mask it by seeding `None` |
 | PL-B4 | Medium | compiler.py:95-101 | `_collapse_mask_ops` overwrites a planner-supplied `invert: False` with `True` — approved plan and compiled op mean opposite things |
-| OE-B4 | Medium | validator.py:26-36 | CROP checks compare raw params — a string `left` raises `TypeError` past the compiler's `except ValueError`; floats validate then truncate (with SC-B2) |
 | OE-S1 | Medium | genai_backend.py:36-37 | `n` and `seed` reach the provider unvalidated — `{"n": 500}` issues 500 paid calls on approval (compounds OPS-D1) |
 | OE-S2 | Medium | executor.py:27, edit_flow.py:90, batch.py:150, main.py:292 | `Executor(allowed_ops=None)` default disables execute-time op allowlisting at 3 of 4 call sites |
 | OE-PF1 | Medium | executor.py:150-156 | Confined ops run the backend over the full frame and allocate 3 full-size arrays — ~1.2 GB transient per op on a 24 MP 16-bit RAW |

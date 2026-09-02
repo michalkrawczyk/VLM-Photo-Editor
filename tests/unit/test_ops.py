@@ -659,3 +659,33 @@ def test_bbox_to_mask_far_edge_still_clamps() -> None:
     assert mask.shape == (64, 64)
     assert mask[60:, 60:].all()
     assert mask.sum() == 16
+
+
+# ---------------------------------------------------------------------------
+# OE-B4 — non-numeric / bool CROP params raise ValueError (not TypeError)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", ["angl", None, True, [1]])
+def test_validate_op_crop_rejects_non_numeric_params(bad: object) -> None:
+    op = _op(OpName.CROP, {"left": bad, "top": 0, "right": 32, "bottom": 32})
+    with pytest.raises(ValueError, match="must be a number"):
+        validate_op(op)
+
+
+def test_validate_op_crop_accepts_numeric_string() -> None:
+    # A numeric string coerces cleanly instead of raising TypeError past the compiler.
+    op = _op(OpName.CROP, {"left": "0", "top": "0", "right": "32", "bottom": "32"})
+    validate_op(op)  # must not raise
+
+
+def test_validate_op_crop_rejects_fractional_pixels() -> None:
+    op = _op(OpName.CROP, {"left": 0, "top": 0, "right": 80.9, "bottom": 32})
+    with pytest.raises(ValueError, match="whole number"):
+        validate_op(op)
+
+
+def test_validate_op_bounded_param_non_numeric_raises_valueerror() -> None:
+    op = Op(op_name=OpName.EXPOSURE, params={"ev": "abc"}, backend=Backend.PIL, step_id="s1")
+    with pytest.raises(ValueError, match="must be a number"):
+        validate_op(op)

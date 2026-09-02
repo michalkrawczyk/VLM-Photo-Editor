@@ -6,6 +6,22 @@ from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 from .constants import INPAINT_OPS as _INPAINT_OPS
 
 
+def _as_number(op_name: OpName, key: str, value: object) -> float:
+    """Coerce a param to float, raising ValueError (never TypeError) for bad types.
+
+    `bool` is rejected explicitly — it is an `int` subclass and almost always a
+    planner mistake for a numeric param.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"Op {op_name!r} param {key!r} must be a number, got bool {value!r}")
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"Op {op_name!r} param {key!r} must be a number, got {type(value).__name__} {value!r}"
+        ) from None
+
+
 def validate_op(
     op: Op, allowed_ops: set[OpName] | None = None, *, require_bbox: bool = False
 ) -> None:
@@ -24,15 +40,17 @@ def validate_op(
 
     for key, (lo, hi) in PARAM_BOUNDS.items():
         if key in op.params:
-            val = float(op.params[key])
+            val = _as_number(op.op_name, key, op.params[key])
             if not (lo <= val <= hi):
                 raise ValueError(f"Param {key!r}={val} out of bounds [{lo}, {hi}]")
 
     if op.op_name == OpName.CROP:
-        left = op.params["left"]
-        top = op.params["top"]
-        right = op.params["right"]
-        bottom = op.params["bottom"]
+        left, top, right, bottom = (
+            _as_number(op.op_name, k, op.params[k]) for k in ("left", "top", "right", "bottom")
+        )
+        for k, v in (("left", left), ("top", top), ("right", right), ("bottom", bottom)):
+            if v != int(v):
+                raise ValueError(f"Crop: {k} ({v}) must be a whole number of pixels")
         if left < 0 or top < 0:
             raise ValueError(f"Crop: coordinates must be non-negative, got left={left} top={top}")
         if left >= right:
