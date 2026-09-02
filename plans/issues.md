@@ -1513,13 +1513,6 @@ Fix: branch on `preds.shape[1] - 4` against the model's class count, or make the
 
 ---
 
-**DET-B3: install failure tells the user to check a terminal that has nothing in it**
-**File:** [vlm_photo_editor/detection/__init__.py:38](vlm_photo_editor/detection/__init__.py#L38), [app/components/settings.py:401](vlm_photo_editor/app/components/settings.py#L401)
-
-`capture_output=True` swallows pip's stdout and stderr, the function discards `result` and returns a bare bool, and the UI then prints `"Install failed — check the terminal for details."` — where, by construction, no details were printed. Return (or log via structlog) the captured `stderr` tail, or drop `capture_output` so pip streams to the console the message points at.
-
----
-
 **DET-B4: `to_rgb_uint8` does not normalize single-channel 3-D arrays**
 **File:** [vlm_photo_editor/detection/_common.py:21-24](vlm_photo_editor/detection/_common.py#L21)
 
@@ -2406,7 +2399,6 @@ All issues across all batches, sorted by severity.
 | DET-P2 | Medium | mediapipe_backend.py:29, u2netp_backend.py:43, yolo_onnx_backend.py:69 | "No subject detected" raised as `ValueError` into an uncaught call site (main.py:91,182 sit above the `try`) — a landscape photo aborts plan generation |
 | DET-P3 | Medium | schema/detection.py:8-12 | `confidence` means classifier score / class score / mean saliency depending on backend, and `label` can be `class_17`; both rendered verbatim into the planner prompt |
 | DET-B2 | Medium | detection/\_\_init\_\_.py:36-40 | `install_backend_deps` passes a bare relative requirements filename — fails unless the app was launched from the repo root |
-| DET-B3 | Medium | detection/\_\_init\_\_.py:38, settings.py:401 | `capture_output=True` swallows pip output, then the UI says "check the terminal for details" |
 | DET-B5 | Medium | u2netp_backend.py:35-37 | Missing U2-Net min-max normalization — a logits-emitting export yields either "no subject" on every image or a whole-frame box (feeds DET-P1) |
 | DET-D1 | Medium | detection/\_\_init\_\_.py:32-40, settings.py:394 | UI button runs `pip install` into the live interpreter with no confirmation — reachable by anyone who can load the Streamlit page |
 | DET-PF1 | Medium | u2netp_backend.py:31, yolo_onnx_backend.py:46, mediapipe_backend.py:24 | Inference session / detector constructed and discarded per `detect()` call — full model load per image in batch mode |

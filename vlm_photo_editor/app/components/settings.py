@@ -392,12 +392,13 @@ def render() -> None:
                     with st.spinner(f"Installing {backend} deps…"):
                         from vlm_photo_editor.detection import install_backend_deps
 
-                        ok = install_backend_deps(backend)
+                        ok, output = install_backend_deps(backend)
                     _cf_status.clear()
                     if ok:
                         st.success("Installed. Reload the page to refresh status.")
                     else:
-                        st.error("Install failed — check the terminal for details.")
+                        st.error("Install failed. pip output:")
+                        st.code(output or "(no output captured)")
             else:
                 new_path = st.text_input(
                     f"{backend} model path",

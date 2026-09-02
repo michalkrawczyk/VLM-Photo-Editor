@@ -417,3 +417,28 @@ def test_settings_character_focus_expander_shows_status_badges():
     badges = [md.value for md in expander.markdown]
     assert any("package missing" in b for b in badges)  # yolo_onnx / u2netp
     assert any("path not set" in b for b in badges)  # mediapipe: importable, no path yet
+
+
+# ── DET-B3 — install_backend_deps surfaces pip output on failure ────────────
+
+
+def test_install_backend_deps_returns_captured_output_on_failure():
+    from vlm_photo_editor.detection import install_backend_deps
+
+    fake = SimpleNamespace(returncode=1, stdout="", stderr="ERROR: could not find X\n")
+    with patch("subprocess.run", return_value=fake) as run:
+        ok, output = install_backend_deps("mediapipe")
+
+    assert ok is False
+    assert "could not find X" in output
+    assert run.call_args.kwargs.get("capture_output") is True
+    assert run.call_args.kwargs.get("text") is True
+
+
+def test_install_backend_deps_ok_on_success():
+    from vlm_photo_editor.detection import install_backend_deps
+
+    fake = SimpleNamespace(returncode=0, stdout="Successfully installed\n", stderr="")
+    with patch("subprocess.run", return_value=fake):
+        ok, _ = install_backend_deps("u2netp")
+    assert ok is True

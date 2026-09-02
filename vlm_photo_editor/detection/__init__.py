@@ -29,15 +29,22 @@ _BACKEND_REQS: dict[str, str] = {
 }
 
 
-def install_backend_deps(backend: str) -> bool:
-    """Run pip install for the given Character Focus backend's requirements file."""
+def install_backend_deps(backend: str) -> tuple[bool, str]:
+    """Run pip install for the given Character Focus backend's requirements file.
+
+    Returns ``(ok, output_tail)`` — on failure ``output_tail`` carries pip's
+    captured stderr/stdout so the caller can show it instead of pointing the
+    user at a terminal that never received it.
+    """
     if backend not in _BACKEND_REQS:
         raise ValueError(f"Unknown backend: {backend!r}. Available: {sorted(_BACKEND_REQS)}")
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", "-r", _BACKEND_REQS[backend]],
         capture_output=True,
+        text=True,
     )
-    return result.returncode == 0
+    output = (result.stderr or "") + (result.stdout or "")
+    return result.returncode == 0, output.strip()[-4000:]
 
 
 def detect_subject(container: ImageContainer, backend: str) -> DetectedSubject:
