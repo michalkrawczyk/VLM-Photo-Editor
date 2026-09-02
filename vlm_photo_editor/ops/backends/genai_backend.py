@@ -40,14 +40,20 @@ def apply(
 
     from vlm_photo_editor.config.settings import get_settings
 
+    # OE-S1: `n`/`seed` are not in required_params, so validate_op only bounds-checks
+    # `n` when present; coerce both to the types the provider clients expect.
+    n_candidates = int(op.params.get("n", 3))
+    seed_raw = op.params.get("seed")
+    seed = int(seed_raw) if seed_raw is not None else None
+
     result, genai_op, _, scored = run_background_pipeline(
         container,
         mask,
         prompt=prompt,
         model=op.params.get("model") or get_settings().genai_model,
         step_id=op.step_id,
-        n_candidates=op.params.get("n", 3),
-        seed=op.params.get("seed"),
+        n_candidates=n_candidates,
+        seed=seed,
         candidates=selection.candidates if selection is not None else None,
         override_index=selection.override_index if selection is not None else None,
         **extra_kwargs,

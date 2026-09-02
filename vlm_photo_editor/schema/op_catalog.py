@@ -41,6 +41,7 @@ PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "strength": (0.0, 1.0),
     "inpaint_radius": (1, 100),
     "radius": (0.5, 50.0),
+    "n": (1, 8),  # genAI candidate count — caps planner/recipe-controlled paid calls (OE-S1)
 }
 
 _CATALOG: dict[OpName, OpSpec] = {}
