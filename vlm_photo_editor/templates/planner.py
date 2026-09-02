@@ -187,11 +187,13 @@ def _subject_detection_lines(detected_subject: DetectedSubject | None) -> list[s
     if detected_subject is None:
         return []
     b = detected_subject.bbox
+    label = detected_subject.label.strip() or "unnamed subject"
     return [
         "",
         "SUBJECT DETECTION:",
-        f"  Label: {detected_subject.label}  "
-        f"(confidence {detected_subject.confidence:.2f}, source: {detected_subject.source})",
+        f"  Label: {label}  "
+        f"(detector score {detected_subject.confidence:.2f} — not comparable across "
+        f"backends; source: {detected_subject.source})",
         f"  Bounding box (px): x={b.x} y={b.y} width={b.width} height={b.height}",
         "  Anchor framing/crop/region-edit reasoning on this box — it is verified, not a guess.",
     ]

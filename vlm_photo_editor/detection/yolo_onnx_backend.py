@@ -84,7 +84,9 @@ def detect(container: ImageContainer) -> DetectedSubject | None:
     bbox = clamp_bbox(orig_x, orig_y, orig_w, orig_h, container.width, container.height)
     return DetectedSubject(
         bbox=bbox,
-        label=f"class_{class_ids[best]}",
+        # DET-P3: no COCO class-name map on this path — a bare class index is noise
+        # in the planner prompt, so leave the label empty rather than emit `class_17`.
+        label="",
         confidence=scores[best],
         source="yolo_onnx",
     )
