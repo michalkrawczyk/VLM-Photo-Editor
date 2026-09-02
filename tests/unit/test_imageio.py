@@ -120,6 +120,37 @@ def test_16bit_rgb_tiff_round_trip(tmp_path: Path) -> None:
     np.testing.assert_array_equal(back, pixels_16)
 
 
+def test_exif_orientation_applied_on_load(tmp_path: Path) -> None:
+    """IO-B5: EXIF Orientation=6 (rotate 90° CW) must be baked into the pixels on load
+    and the tag cleared, so a later save cannot leave the output sideways."""
+    src = tmp_path / "portrait.jpg"
+    base = Image.fromarray(np.zeros((10, 20, 3), dtype=np.uint8), "RGB")  # 20 wide, 10 tall
+    exif = base.getexif()
+    exif[274] = 6  # Orientation: rotate 90° CW on display
+    base.save(src, format="JPEG", exif=exif)
+
+    container = load(src)
+    # Orientation 6 swaps the axes: stored 10x20 -> displayed 20x10.
+    assert container.pixels.shape[:2] == (20, 10)
+
+    raw = Image.open(src)
+    assert raw.getexif().get(274, 1) == 6  # source file untouched
+    assert container.metadata.get("exif") is None or _orientation(container.metadata["exif"]) in (
+        None,
+        1,
+    )
+
+
+def _orientation(exif_bytes: bytes):
+    img = Image.new("RGB", (1, 1))
+    ex = img.getexif()
+    try:
+        ex.load(exif_bytes)
+    except Exception:
+        return None
+    return ex.get(274)
+
+
 def test_rgba_jpeg_saves_as_rgb(tmp_path: Path) -> None:
     """IO-B2: RGBA container saved to JPEG must not raise; alpha channel is dropped."""
     pixels_rgba = np.full((32, 32, 4), 128, dtype=np.uint8)

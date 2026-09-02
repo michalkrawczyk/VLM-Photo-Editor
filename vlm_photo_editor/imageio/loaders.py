@@ -41,10 +41,15 @@ def _load_raw(path: Path) -> ImageContainer:
 
 
 def _load_pil(path: Path) -> ImageContainer:
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     img = Image.open(path)
     img.load()
+
+    # IO-B5: rotate pixels to display orientation and drop the EXIF Orientation tag.
+    # Without this, portrait photos are edited/exported sideways (the tag is not written
+    # on save) and detection/planner reason about geometry on rotated pixels.
+    img = ImageOps.exif_transpose(img)
 
     icc = img.info.get("icc_profile")
     metadata = {k: v for k, v in img.info.items() if k != "icc_profile"}
