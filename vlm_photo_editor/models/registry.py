@@ -153,12 +153,19 @@ def model_entry_available(entry: ModelEntry) -> tuple[bool, str]:
     return True, ""
 
 
-def install_loader_deps(loader: str) -> bool:
-    """Run pip install for the given loader's requirements file. Returns True on success."""
+def install_loader_deps(loader: str) -> tuple[bool, str]:
+    """Run pip install for the given loader's requirements file.
+
+    Returns ``(ok, output_tail)`` — on failure ``output_tail`` carries pip's
+    captured stderr/stdout so the caller can show it instead of pointing the user
+    at a terminal that never received it (CFG-B4).
+    """
     if loader not in _LOADER_REQS:
         raise ValueError(f"Unknown loader: {loader!r}. Available: {sorted(_LOADER_REQS)}")
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", "-r", _LOADER_REQS[loader]],
         capture_output=True,
+        text=True,
     )
-    return result.returncode == 0
+    output = (result.stderr or "") + (result.stdout or "")
+    return result.returncode == 0, output.strip()[-4000:]

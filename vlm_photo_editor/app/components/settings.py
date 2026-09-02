@@ -341,16 +341,23 @@ def render() -> None:
                     else:
                         st.error(f"Cannot reach {vllm_url}")
             elif badge_text == "not installed":
-                if st.button("Install", key=f"install_{loader}"):
+                # DET-D1: pip install mutates the running interpreter's environment —
+                # gate it behind an explicit opt-in so a stray page visit can't trigger it.
+                confirmed = st.checkbox(
+                    f"Allow modifying this environment (runs `pip install` for {loader})",
+                    key=f"confirm_install_{loader}",
+                )
+                if st.button("Install", key=f"install_{loader}", disabled=not confirmed):
                     with st.spinner(f"Installing {loader} deps…"):
                         from vlm_photo_editor.models.registry import install_loader_deps
 
-                        ok = install_loader_deps(loader)
+                        ok, output = install_loader_deps(loader)
                     _loader_status.clear()
                     if ok:
                         st.success("Installed. Reload the page to refresh status.")
                     else:
-                        st.error("Install failed — check the terminal for details.")
+                        st.error("Install failed. pip output:")
+                        st.code(output or "(no output captured)")
 
     with st.expander("Character Focus", expanded=False):
         st.caption(
@@ -388,7 +395,12 @@ def render() -> None:
                 )
 
             if backend not in cf_installed:
-                if st.button("Install", key=f"install_cf_{backend}"):
+                # DET-D1: require an explicit opt-in before pip mutates the environment.
+                confirmed = st.checkbox(
+                    f"Allow modifying this environment (runs `pip install` for {backend})",
+                    key=f"confirm_install_cf_{backend}",
+                )
+                if st.button("Install", key=f"install_cf_{backend}", disabled=not confirmed):
                     with st.spinner(f"Installing {backend} deps…"):
                         from vlm_photo_editor.detection import install_backend_deps
 

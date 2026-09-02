@@ -146,14 +146,31 @@ def test_install_loader_deps_calls_pip_with_correct_file(loader, expected_req_fi
 
     mock_result = MagicMock()
     mock_result.returncode = 0
+    mock_result.stdout = "Successfully installed\n"
+    mock_result.stderr = ""
     with patch("subprocess.run", return_value=mock_result) as mock_run:
-        ok = install_loader_deps(loader)
+        ok, _ = install_loader_deps(loader)
 
     assert ok is True
     mock_run.assert_called_once_with(
         [sys.executable, "-m", "pip", "install", "-r", expected_req_file],
         capture_output=True,
+        text=True,
     )
+
+
+def test_install_loader_deps_surfaces_pip_output_on_failure():
+    from vlm_photo_editor.models.registry import install_loader_deps
+
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stdout = ""
+    mock_result.stderr = "ERROR: could not find X\n"
+    with patch("subprocess.run", return_value=mock_result):
+        ok, output = install_loader_deps("ollama")
+
+    assert ok is False
+    assert "could not find X" in output
 
 
 def test_install_loader_deps_unknown_raises():
