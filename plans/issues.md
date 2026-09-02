@@ -1120,17 +1120,6 @@ Fix: remap `left/top/right/bottom` in `_remap_for_origin` exactly as `bbox` is (
 
 ---
 
-**OE-B3: a bbox that starts outside the image produces an all-False mask — the region edit is a silent no-op**
-**File:** [vlm_photo_editor/ops/mask.py:9-17](vlm_photo_editor/ops/mask.py#L9)
-
-`bbox_to_mask` rejects negative origins but clamps only the far edge (`x2 = min(bbox.x + width, container.width)`). For `bbox.x >= container.width` the slice `mask[y:y2, x:x2]` is empty, the function returns an all-`False` mask, and `np.where` reproduces the input unchanged. The user approved a region edit; the executor reports success and the image is untouched — the same silent-no-op class as SC-B1.
-
-`_remap_for_origin` raises for exactly this situation ([executor.py:71-75](vlm_photo_editor/ops/executor.py#L71)) but only when `origin != (0, 0)`, so an out-of-range bbox in the first op of a graph slips through.
-
-Fix: raise when `bbox.x >= container.width or bbox.y >= container.height`, and reuse that check in `_remap_for_origin` instead of duplicating it.
-
----
-
 **OE-B4: `validate_op`'s CROP block compares raw param values — non-numeric params raise `TypeError` past the compiler's `except ValueError`**
 **File:** [vlm_photo_editor/ops/validator.py:26-36](vlm_photo_editor/ops/validator.py#L26)
 
@@ -2426,7 +2415,6 @@ All issues across all batches, sorted by severity.
 | PL-B2 | Medium | compiler.py:53-103 | Two consecutive `mask` steps leave a `MASK` op in the compiled OpGraph and strip the next op's region confinement |
 | PL-B3 | Medium | edit_flow.py:83 | `_await_human` reads `state["op_graph"]` unconditionally — `KeyError` on the crop-retries-exhausted path; tests mask it by seeding `None` |
 | PL-B4 | Medium | compiler.py:95-101 | `_collapse_mask_ops` overwrites a planner-supplied `invert: False` with `True` — approved plan and compiled op mean opposite things |
-| OE-B3 | Medium | mask.py:9-17 | `bbox_to_mask` clamps only the far edge — a bbox starting past the image returns an all-False mask and the region edit is a silent no-op |
 | OE-B4 | Medium | validator.py:26-36 | CROP checks compare raw params — a string `left` raises `TypeError` past the compiler's `except ValueError`; floats validate then truncate (with SC-B2) |
 | OE-S1 | Medium | genai_backend.py:36-37 | `n` and `seed` reach the provider unvalidated — `{"n": 500}` issues 500 paid calls on approval (compounds OPS-D1) |
 | OE-S2 | Medium | executor.py:27, edit_flow.py:90, batch.py:150, main.py:292 | `Executor(allowed_ops=None)` default disables execute-time op allowlisting at 3 of 4 call sites |

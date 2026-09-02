@@ -637,3 +637,25 @@ def test_region_edit_blur_via_executor_end_to_end() -> None:
     np.testing.assert_array_equal(
         result.container.pixels[outside_mask], container.pixels[outside_mask]
     )
+
+
+# ---------------------------------------------------------------------------
+# OE-B3 — bbox starting outside the image is rejected, not a silent no-op
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("x,y", [(64, 0), (0, 64), (100, 100), (64, 64)])
+def test_bbox_to_mask_rejects_origin_outside_image(x: int, y: int) -> None:
+    container = _container()  # 64x64
+    bbox = BoundingBox(x=x, y=y, width=10, height=10)
+    with pytest.raises(ValueError, match="outside"):
+        bbox_to_mask(container, bbox)
+
+
+def test_bbox_to_mask_far_edge_still_clamps() -> None:
+    container = _container()  # 64x64
+    bbox = BoundingBox(x=60, y=60, width=20, height=20)
+    mask = bbox_to_mask(container, bbox)
+    assert mask.shape == (64, 64)
+    assert mask[60:, 60:].all()
+    assert mask.sum() == 16
