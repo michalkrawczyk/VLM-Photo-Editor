@@ -31,6 +31,18 @@ def validate_op(
     if require_bbox and get_spec(op.op_name).requires_bbox and op.bbox is None:
         raise ValueError(f"Op {op.op_name!r} requires a bbox but none was provided")
 
+    # PL-P1: a subject-protection edit (invert=True) with no region is a whole-image
+    # edit — the executor never consults `invert` on the bbox-is-None branch, so this
+    # combination silently violates Principle 6. Only reject at execution time
+    # (require_bbox); the compiler emits it deliberately for the app layer to repair
+    # by injecting a detected/drawn bbox before running.
+    if require_bbox and op.bbox is None and op.params.get("invert"):
+        raise ValueError(
+            f"Op {op.op_name!r} has invert=True but no bbox: a masked edit with no "
+            "region would modify the whole image. Resolve a bbox (detected subject "
+            "or drawn region selection) before execution."
+        )
+
     required = list(get_spec(op.op_name).required_params)
     if op.op_name in _INPAINT_OPS and op.backend != Backend.GENAI:
         required = [r for r in required if r != "prompt"]
