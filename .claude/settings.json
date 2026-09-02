@@ -95,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash /media/tk/Programming1/Python/VLM-Photo-Editor/agent_notes/utility_scripts/cleanup.sh 2>/dev/null || true",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agent_notes/utility_scripts/cleanup.sh\" || true",
             "statusMessage": "Running session cleanup..."
           }
         ]
