@@ -15,6 +15,7 @@ _DEFAULTS: dict[str, Any] = {
     "batch_review_index": 0,
     "batch_retry_id": None,
     "output_format": "same",
+    "source_name": None,  # original upload filename, for output/recipe naming
     "container": None,  # ImageContainer after loading the uploaded file
     "edited_container": None,  # ImageContainer after Executor.apply()
     "genai_candidates": None,  # step_id -> list[ScoredCandidate] from the last execution
@@ -34,6 +35,8 @@ _DEFAULTS: dict[str, Any] = {
     "ui_phase": "idle",  # idle | has_image | plan_ready | done
     "error": None,
     "saved_path": None,
+    "saved_bytes": None,
+    "saved_name": None,
     "_loaded_file_id": None,
 }
 

@@ -1,6 +1,5 @@
 """Streamlit entrypoint. Run: streamlit run vlm_photo_editor/app/main.py"""
 
-import tempfile
 from pathlib import Path
 
 import streamlit as st
@@ -43,13 +42,15 @@ state.init_state()
 
 
 def _load_uploaded(file) -> "ImageContainer":  # type: ignore[name-defined]
+    from vlm_photo_editor.app.tmp_layout import image_workdir
     from vlm_photo_editor.imageio.loaders import load
 
     suffix = Path(file.name).suffix
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(file.getvalue())
-        tmp_path = Path(tmp.name)
-    return load(tmp_path)
+    workdir = image_workdir(Path(file.name).stem)
+    src_path = workdir / f"original{suffix}"
+    src_path.write_bytes(file.getvalue())
+    state.set("source_name", file.name)
+    return load(src_path)
 
 
 def _build_framing_intent(framing_val: str) -> FramingIntent:
@@ -501,6 +502,7 @@ def _render_batch_panel(files: list) -> None:
 
 
 def _do_save() -> None:
+    from vlm_photo_editor.config.settings import get_settings
     from vlm_photo_editor.imageio.savers import save as _save
     from vlm_photo_editor.recipe.store import RecipeStore
     from vlm_photo_editor.schema.recipe import Recipe
@@ -508,7 +510,9 @@ def _do_save() -> None:
     edited = state.get("edited_container")
     op_graph = state.get("current_opgraph")
     source = edited.source_path
+    stem = Path(state.get("source_name") or source.name).stem
     output_format = state.get("output_format") or "same"
+    settings = get_settings()
 
     _RAW_EXTS = {".nef", ".cr2", ".arw", ".dng", ".orf", ".rw2"}
     _FORMAT_EXT = {"jpeg": ".jpg", "png": ".png", "tiff": ".tif", "webp": ".webp"}
@@ -523,13 +527,17 @@ def _do_save() -> None:
         dest_suffix = _FORMAT_EXT[output_format]
         pil_fmt = _FORMAT_PIL[output_format]
 
-    dest = source.parent / f"{source.stem}_edited{dest_suffix}"
+    out_dir = Path(settings.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / f"{stem}_edited{dest_suffix}"
     try:
         saved = _save(edited, dest, fmt=pil_fmt)
         state.set("saved_path", str(saved))
+        state.set("saved_bytes", saved.read_bytes())
+        state.set("saved_name", saved.name)
 
-        recipe = Recipe(source_path=str(source), op_graph=op_graph)
-        RecipeStore.save(recipe, directory=source.parent)
+        recipe = Recipe(source_path=stem + source.suffix, op_graph=op_graph)
+        RecipeStore.save(recipe, directory=Path(settings.recipes_dir))
 
         state.log_intent("save", {"path": str(saved)})
         state.set("error", None)
@@ -851,6 +859,15 @@ with col_save:
         saved = state.get("saved_path")
         if saved:
             st.success(f"Saved: {saved}")
+
+    saved_bytes = state.get("saved_bytes")
+    if saved_bytes:
+        st.download_button(
+            "Download edited file",
+            data=saved_bytes,
+            file_name=state.get("saved_name") or "edited",
+            key="save_download",
+        )
 
 with col_status:
     mode_display = state.get("edit_mode") or "full"

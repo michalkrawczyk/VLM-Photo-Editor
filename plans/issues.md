@@ -54,39 +54,6 @@ edit_graph = build_edit_graph()
 
 ---
 
-## DESIGN ISSUES (continued)
-
-### D15: Save path UX undefined — no dialog, no structured tmp layout
-
-**Related:** B7 (saved file written to `/tmp`), B5 (temp file never deleted).
-
-Two separate concerns:
-
-**1. User-defined output path (save-as dialog)**
-After hitting the Save button, the user should be able to choose where the edited file goes via a native file-save dialog. Streamlit has no built-in file picker; options:
-- `tkinter.filedialog.asksaveasfilename` — works in local deployments, fails in browser-based ones.
-- Offer a download button (`st.download_button`) as the universal fallback; the browser handles the destination.
-- For a desktop packaging path, wrap with a native dialog via `tkinter` or `pyside6.QFileDialog`, guarded by a capability flag.
-
-Default suggested: `st.download_button` first (works everywhere); add native dialog behind a `USE_NATIVE_DIALOG=1` env flag for local installs.
-
-**2. Structured tmp directory for per-image data**
-Current code scatters all temp files flat in `/tmp`. Required layout:
-
-```
-/tmp/vlm_photo_editor/
-└── <image-stem>_<session-id>/   ← one subfolder per uploaded image
-    ├── original.<ext>
-    ├── edited.<ext>
-    └── <stem>.edit.json
-```
-
-- Create `vlm_photo_editor/` on first use; create the per-image subfolder on upload.
-- Sweep the per-image subfolder on new upload or session end (fixes B5).
-- The subfolder name should be deterministic within a session so the recipe and output always land together.
-
----
-
 ## Batch 1 Review — Schema Layer
 
 Review date: 2026-06-26. Files: `schema/__init__.py`, `schema/ops.py`, `schema/plan.py`, `schema/prefs.py`, `schema/recipe.py`, `schema/batch.py`.
@@ -1945,19 +1912,6 @@ Fix: have `set()` require/derive `provider` (e.g. accept a full `ModelEntry`, li
 
 ---
 
-**CFG-B2: `AppSettings.output_dir` / `recipes_dir` are defined but never read — the wiring for already-open B7/D15 exists and is dead**
-**File:** [vlm_photo_editor/config/settings.py:18-19](vlm_photo_editor/config/settings.py#L18)
-
-```python
-output_dir: Path = field(default_factory=lambda: Path("output"))
-recipes_dir: Path = field(default_factory=lambda: Path("recipes"))
-```
-Neither field is referenced anywhere outside its own definition (repo-wide grep). `RecipeStore.save()` already accepts an optional `directory` param ([recipe/store.py:27](vlm_photo_editor/recipe/store.py#L27)) that could take `get_settings().recipes_dir`, and B7 documents that `app/main.py` derives the save path from the source temp file instead of any configured output directory. These two fields look like the intended fix for B7/D15 that was never connected — flagging so a future fix wires the existing hook instead of inventing a third output-path mechanism.
-
-Fix: wire `app/main.py`'s save path and the `RecipeStore.save()` call through `get_settings().output_dir`/`recipes_dir`, or remove the fields until the save-path redesign (D15) lands.
-
----
-
 **CFG-B3: `model_entry_available()` reports `provider="replicate"` entries as available; `build_client()` has no branch for them**
 **File:** [vlm_photo_editor/models/registry.py:70-82](vlm_photo_editor/models/registry.py#L70), [models/registry.py:151](vlm_photo_editor/models/registry.py#L151)
 
@@ -2293,7 +2247,6 @@ All issues across all batches, sorted by severity.
 | B5 | Medium | main.py:37 | Uploaded image temp file never deleted |
 | B7 | Medium | main.py:128 | Saved file and recipe written to `/tmp` |
 | D6 | Medium | edit_flow.py:107 | Module-level `edit_graph` singleton breaks multi-worker deploy |
-| D15 | Medium | — | Save path UX undefined; no native dialog or structured tmp layout |
 | S-C1 | Medium | ops.py:67 | `Op.params: dict[str, Any]` — type erasure, no per-op validation |
 | S-D2 | Medium | recipe.py:11 | `GenAIOp.prompt`/`model` accept empty strings |
 | S-D3 | Medium | recipe.py:20 | `source_path` unvalidated bare string — replay path risk |
@@ -2347,7 +2300,6 @@ All issues across all batches, sorted by severity.
 | BG-C1 | Medium | providers/*.py | Six helpers duplicated verbatim across four providers — the reason BG-B2 and BG-P5 are four bugs each instead of one |
 | BG-C5 | Medium | providers/\_\_init\_\_.py:50-63 | `available_genai_providers()` checks key OR deps but never both — advertises providers that raise `ImportError` at call time |
 | BG-U1 | Medium | background/\_\_init\_\_.py:53, genai_backend.py:30 | `needs_manual_review` computed, returned, discarded — no surface tells the user a composite failed its quality gate |
-| CFG-B2 | Medium | config/settings.py:18-19 | `output_dir`/`recipes_dir` fields never read anywhere — the wiring for already-open B7/D15 exists and is dead |
 | CFG-B3 | Medium | models/registry.py:70-82,151 | `model_entry_available()` greenlights `provider="replicate"`; `build_client()` has no branch for it and raises |
 | CFG-B4 | Medium | models/registry.py:156-164 | `install_loader_deps()` swallows pip output via `capture_output=True`; UI says "check the terminal" with nothing printed there (mirrors DET-B3) |
 | PIP-P3 | Medium | batch.py:122-145, registry.py:15 | P11 spec drift: `max_images_per_call` never read (no grouping/cap), `full_auto` executes but does not save; DoD boxes ticked anyway |
