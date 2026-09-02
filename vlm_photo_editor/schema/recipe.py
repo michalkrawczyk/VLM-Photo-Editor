@@ -12,7 +12,10 @@ class GenAIOp(BaseModel):
     step_id: str
     model: str
     prompt: str
-    seed: int
+    # BG-P2: None when the provider's API accepts no seed (OpenAI images.edit, Google
+    # Imagen edit). A fabricated seed reproduces nothing — such a step is regenerated
+    # fresh on replay rather than pretending to be deterministic.
+    seed: int | None = None
 
 
 class Recipe(BaseModel):

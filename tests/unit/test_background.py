@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -156,6 +157,85 @@ def test_kwargs_forwarded_to_replicate() -> None:
 
     call_input = client.run.call_args[1]["input"]
     assert call_input["guidance_scale"] == 7.5
+
+
+# ---------------------------------------------------------------------------
+# BG-P2 — no fabricated seed;  BG-P3 — provider must honour the mask
+# ---------------------------------------------------------------------------
+
+
+def test_genai_op_seed_defaults_to_none() -> None:
+    assert GenAIOp(step_id="s1", model="m", prompt="p").seed is None
+
+
+def test_inject_seeds_skips_steps_without_a_real_seed() -> None:
+    """BG-P2: a step whose provider recorded seed=None is regenerated fresh, not
+    injected with a meaningless seed."""
+    from vlm_photo_editor.recipe.renderer import Renderer
+    from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
+
+    graph = OpGraph(
+        ops=[
+            Op(
+                op_name=OpName.BACKGROUND_REPLACE,
+                backend=Backend.GENAI,
+                params={"prompt": "sky"},
+                step_id="s1",
+            )
+        ]
+    )
+    out = Renderer._inject_seeds(graph, [GenAIOp(step_id="s1", model="m", prompt="p", seed=None)])
+    assert "seed" not in out.ops[0].params
+
+
+def test_google_provider_sends_only_masked_crop_and_freezes_subject() -> None:
+    """BG-P3: GoogleProvider has no mask API — it must send the model only the masked
+    bounding box, leaving subject pixels byte-identical."""
+    import sys
+
+    source = _container(np.random.randint(20, 60, (64, 64, 3), dtype=np.uint8))
+    mask = _center_mask(margin=16)  # True in [16:48, 16:48] -> 32x32 crop
+
+    captured: dict = {}
+
+    def _fake_edit_image(*, prompt, base_image, number_of_images, **kw):
+        captured["size"] = Image.open(io.BytesIO(base_image.image_bytes)).size
+        gen = SimpleNamespace(
+            image=SimpleNamespace(image_bytes=_png_bytes(np.full((32, 32, 3), 240, dtype=np.uint8)))
+        )
+        return SimpleNamespace(generated_images=[gen] * number_of_images)
+
+    genai = MagicMock()
+    genai.types.Image = lambda image_bytes: SimpleNamespace(image_bytes=image_bytes)
+    genai.ImageGenerationModel.return_value.edit_image.side_effect = _fake_edit_image
+    google_mod = MagicMock()
+    google_mod.generativeai = genai
+
+    with (
+        patch.dict(sys.modules, {"google": google_mod, "google.generativeai": genai}),
+        patch("vlm_photo_editor.secrets.store.SecretStore.get", return_value="k"),
+    ):
+        cands = GoogleProvider().generate(
+            source, mask, prompt="forest", model="google:imagen-3", step_id="s1", n=1
+        )
+
+    assert captured["size"] == (32, 32)  # masked bbox only, not the full 64x64 frame
+    out = cands[0].container.pixels
+    np.testing.assert_array_equal(out[~mask], source.pixels[~mask])
+    assert cands[0].genai_op.seed is None
+
+
+def test_huggingface_qwen_rejected_before_model_load() -> None:
+    """BG-P3 / BG-B7: Qwen cannot inpaint — reject at dispatch, not after a multi-GB load."""
+    with pytest.raises(NotImplementedError, match="cannot inpaint"):
+        HuggingFaceProvider().generate(
+            _container(),
+            _center_mask(),
+            prompt="x",
+            model="hf:Qwen/Qwen2.5-VL-7B-Instruct",
+            step_id="s1",
+            n=1,
+        )
 
 
 # ---------------------------------------------------------------------------

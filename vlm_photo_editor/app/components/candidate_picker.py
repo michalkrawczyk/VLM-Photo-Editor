@@ -38,7 +38,9 @@ def render(
         for idx, (col, sc) in enumerate(zip(cols, scored)):
             with col:
                 st.image(_to_display(sc.composite.pixels), width=_THUMB_WIDTH)
-                st.caption(f"seed {sc.candidate.genai_op.seed} · seam {sc.metric:.3f}")
+                seed = sc.candidate.genai_op.seed
+                seed_txt = f"seed {seed}" if seed is not None else "seed n/a"
+                st.caption(f"{seed_txt} · seam {sc.metric:.3f}")
                 if idx == current:
                     st.button(
                         "In use",

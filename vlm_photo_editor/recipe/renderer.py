@@ -42,7 +42,12 @@ class Renderer:
         """Pre-populate seed into GENAI op params for deterministic replay."""
         if not genai_ops:
             return op_graph
-        seed_map = {g.step_id: g.seed for g in genai_ops}
+        # BG-P2: a step whose provider recorded no honoured seed (seed is None) is not
+        # reproducible — regenerate it fresh on replay rather than injecting a
+        # meaningless seed=None into params.
+        seed_map = {g.step_id: g.seed for g in genai_ops if g.seed is not None}
+        if not seed_map:
+            return op_graph
         ops = [
             (
                 op.model_copy(

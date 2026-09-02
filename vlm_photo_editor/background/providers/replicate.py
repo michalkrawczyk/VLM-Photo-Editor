@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import io
-import random
 from typing import Any
 
 import numpy as np
-from PIL import Image
 
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.recipe import GenAIOp
 
-from .base import Candidate, GenAIProvider
+from .base import (
+    Candidate,
+    GenAIProvider,
+    container_to_png_bytes,
+    decode_to_container,
+    expand_seeds,
+    mask_to_l_png_bytes,
+)
 
 _INSTRUCT_MODEL_PREFIXES = ("qwen",)
 
@@ -20,42 +25,17 @@ def _is_instruct_model(model: str) -> bool:
     return any(lower.startswith(p) or p in lower for p in _INSTRUCT_MODEL_PREFIXES)
 
 
-def _container_to_png_bytes(container: ImageContainer) -> bytes:
-    pixels = container.pixels
-    if pixels.dtype != np.uint8:
-        pixels = (pixels / 256).clip(0, 255).astype(np.uint8)
-    img = Image.fromarray(pixels)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def _mask_to_png_bytes(mask: np.ndarray) -> bytes:
-    img = Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def _url_to_container(url_or_bytes: Any, source: ImageContainer) -> ImageContainer:
+def _output_to_container(url_or_bytes: Any, source: ImageContainer) -> ImageContainer:
     if isinstance(url_or_bytes, str):
         import urllib.request
 
         with urllib.request.urlopen(url_or_bytes) as resp:
             data = resp.read()
+    elif hasattr(url_or_bytes, "read"):
+        data = url_or_bytes.read()
     else:
-        data = url_or_bytes.read() if hasattr(url_or_bytes, "read") else bytes(url_or_bytes)
-    img = Image.open(io.BytesIO(data)).convert("RGB")
-    if img.size != (source.width, source.height):
-        img = img.resize((source.width, source.height), Image.Resampling.LANCZOS)
-    pixels = np.array(img, dtype=source.pixels.dtype)
-    return ImageContainer(
-        pixels=pixels,
-        bit_depth=source.bit_depth,
-        source_path=source.source_path,
-        icc_profile=source.icc_profile,
-        metadata=dict(source.metadata),
-    )
+        data = bytes(url_or_bytes)
+    return decode_to_container(data, source)
 
 
 class ReplicateProvider(GenAIProvider):
@@ -89,10 +69,10 @@ class ReplicateProvider(GenAIProvider):
             == "instruct"
         )
 
-        image_bytes = _container_to_png_bytes(container)
-        mask_bytes = _mask_to_png_bytes(mask)
+        image_bytes = container_to_png_bytes(container)
+        mask_bytes = mask_to_l_png_bytes(mask)
 
-        seeds = [seed] if seed is not None else [random.randint(0, 2**31 - 1) for _ in range(n)]
+        seeds = expand_seeds(seed, n)
 
         candidates: list[Candidate] = []
         for s in seeds:
@@ -103,7 +83,7 @@ class ReplicateProvider(GenAIProvider):
 
             output = client.run(model, input=inp)
             raw = output[0] if isinstance(output, (list, tuple)) else output
-            result_container = _url_to_container(raw, container)
+            result_container = _output_to_container(raw, container)
 
             candidates.append(
                 Candidate(

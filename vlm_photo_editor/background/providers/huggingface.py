@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-import io
-import random
-
 import numpy as np
-from PIL import Image
 
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.recipe import GenAIOp
 
-from .base import Candidate, GenAIProvider
+from .base import (
+    Candidate,
+    GenAIProvider,
+    container_to_pil,
+    expand_seeds,
+    mask_to_l_pil,
+    pil_to_container,
+    strip_model_prefix,
+)
 
 _MODEL_PREFIX = "hf:"
-
-
-def _strip_prefix(model: str) -> str:
-    return model[len(_MODEL_PREFIX) :] if model.startswith(_MODEL_PREFIX) else model
 
 
 def _is_flux_model(model: str) -> bool:
@@ -24,28 +24,6 @@ def _is_flux_model(model: str) -> bool:
 
 def _is_qwen_model(model: str) -> bool:
     return "qwen" in model.lower()
-
-
-def _container_to_pil(container: ImageContainer) -> Image.Image:
-    pixels = container.pixels
-    if pixels.dtype != np.uint8:
-        pixels = (pixels / 256).clip(0, 255).astype(np.uint8)
-    return Image.fromarray(pixels).convert("RGB")
-
-
-def _mask_to_pil(mask: np.ndarray) -> Image.Image:
-    return Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
-
-
-def _pil_to_container(img: Image.Image, source: ImageContainer) -> ImageContainer:
-    pixels = np.array(img.convert("RGB"), dtype=source.pixels.dtype)
-    return ImageContainer(
-        pixels=pixels,
-        bit_depth=source.bit_depth,
-        source_path=source.source_path,
-        icc_profile=source.icc_profile,
-        metadata=dict(source.metadata),
-    )
 
 
 class HuggingFaceProvider(GenAIProvider):
@@ -62,7 +40,7 @@ class HuggingFaceProvider(GenAIProvider):
         seed: int | None = None,
         **kwargs,
     ) -> list[Candidate]:
-        bare_model = _strip_prefix(model)
+        bare_model = strip_model_prefix(model, _MODEL_PREFIX)
 
         if _is_flux_model(bare_model):
             return self._generate_flux(
@@ -101,13 +79,15 @@ class HuggingFaceProvider(GenAIProvider):
         pipe = FluxFillPipeline.from_pretrained(model, torch_dtype=torch.bfloat16)
         pipe = pipe.to("cuda" if torch.cuda.is_available() else "cpu")
 
-        image_pil = _container_to_pil(container)
-        mask_pil = _mask_to_pil(mask)
-        seeds = [seed] if seed is not None else [random.randint(0, 2**31 - 1) for _ in range(n)]
+        image_pil = container_to_pil(container)
+        mask_pil = mask_to_l_pil(mask)
+        seeds = expand_seeds(seed, n)
 
         candidates: list[Candidate] = []
         for s in seeds:
-            generator = torch.Generator().manual_seed(s)
+            # BG-B8: the generator must live on the pipeline's device or diffusers
+            # errors on the mismatch / silently ignores the seed on the GPU sampler.
+            generator = torch.Generator(device=pipe.device).manual_seed(s)
             out = pipe(
                 prompt=prompt,
                 image=image_pil,
@@ -117,7 +97,7 @@ class HuggingFaceProvider(GenAIProvider):
             ).images[0]
             candidates.append(
                 Candidate(
-                    container=_pil_to_container(out, container),
+                    container=pil_to_container(out, container),
                     genai_op=GenAIOp(step_id=step_id, model=f"hf:{model}", prompt=prompt, seed=s),
                 )
             )
@@ -134,49 +114,12 @@ class HuggingFaceProvider(GenAIProvider):
         seed: int | None,
         **kwargs,
     ) -> list[Candidate]:
-        try:
-            import torch
-            from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
-        except ImportError as exc:
-            raise ImportError(
-                "transformers and torch required for Qwen local inference. "
-                "Run: pip install transformers torch"
-            ) from exc
-
-        processor = AutoProcessor.from_pretrained(model)
-        vlm = Qwen2_5_VLForConditionalGeneration.from_pretrained(model, torch_dtype=torch.bfloat16)
-        vlm = vlm.to("cuda" if torch.cuda.is_available() else "cpu")
-
-        image_pil = _container_to_pil(container)
-        buf = io.BytesIO()
-        image_pil.save(buf, format="PNG")
-        buf.seek(0)
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": buf},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
-
-        seeds = [seed] if seed is not None else [random.randint(0, 2**31 - 1) for _ in range(n)]
-        candidates: list[Candidate] = []
-
-        for s in seeds:
-            torch.manual_seed(s)
-            text = processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            inputs = processor(text=[text], images=[image_pil], return_tensors="pt").to(vlm.device)
-            output_ids = vlm.generate(**inputs, max_new_tokens=512)
-            # Qwen returns a text description; for image editing we need diffusers fallback.
-            # This path is suitable for instruction-based region description tasks.
-            raise NotImplementedError(
-                "Qwen2.5-VL produces text, not pixels. "
-                "Use it as a prompt refiner, not a direct image editor."
-            )
-
-        return candidates
+        # BG-P3 / BG-B7: Qwen2.5-VL produces text, not pixels, and cannot honour the
+        # mask — reject up front instead of loading a multi-GB model and running a
+        # generation pass only to raise. `composite()` must never be handed a
+        # full-frame regeneration that silently ignored the mask.
+        raise NotImplementedError(
+            "Qwen2.5-VL produces text, not pixels, and cannot inpaint a masked region. "
+            "Use it as a prompt refiner, not a direct image editor; pick a FLUX.1-Fill "
+            "model for local inference."
+        )
