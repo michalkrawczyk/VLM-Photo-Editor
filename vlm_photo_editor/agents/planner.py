@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import base64
 import io
-import logging
 from typing import TYPE_CHECKING
 
-_log = logging.getLogger(__name__)
-
+import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from vlm_photo_editor.models.registry import build_client
@@ -18,6 +16,9 @@ from vlm_photo_editor.templates.planner import build_system_prompt
 
 if TYPE_CHECKING:
     from vlm_photo_editor.imageio.container import ImageContainer
+
+# AGT-D2: structlog (not stdlib logging) so VLM prompt logs pass the RedactionProcessor.
+log = structlog.get_logger()
 
 _NO_TARGET_MODES = {FramingMode.RECOMMEND_BEST, FramingMode.CUSTOM, FramingMode.FILL_FRAME}
 
@@ -55,7 +56,7 @@ class Planner:
             ),
         ]
         if get_debug_settings().vlm_prompt_debug:
-            _log.debug("vlm_prompt system=%s user_text=%s", messages[0].content, intent)
+            log.debug("vlm_prompt", system=messages[0].content, user_text=intent)
         result = self._llm.invoke(messages)
         result.mode = mode
         return result
@@ -95,7 +96,7 @@ class Planner:
             ),
         ]
         if get_debug_settings().vlm_prompt_debug:
-            _log.debug("vlm_prompt system=%s feedback=%s", messages[0].content, feedback)
+            log.debug("vlm_prompt", system=messages[0].content, feedback=feedback)
         result = self._llm.invoke(messages)
         result.mode = mode
         return result

@@ -496,6 +496,19 @@ def test_planner_calls_llm_returns_human_plan(method):
         mock_llm.with_structured_output.return_value.invoke.assert_called_once()
 
 
+def test_planner_logs_via_structlog_not_stdlib():
+    """AGT-D2: stdlib logging bypasses the structlog RedactionProcessor — the VLM
+    prompt (which may echo a key-like string) must be logged through structlog."""
+    import logging as _stdlib_logging
+
+    from vlm_photo_editor.agents import planner as planner_mod
+
+    assert not hasattr(planner_mod, "_log")
+    assert not hasattr(planner_mod, "logging")
+    assert not isinstance(planner_mod.log, _stdlib_logging.Logger)
+    assert type(planner_mod.log).__module__.startswith("structlog")
+
+
 # ---------------------------------------------------------------------------
 # Planner._user_content — dimensions in message
 # ---------------------------------------------------------------------------
