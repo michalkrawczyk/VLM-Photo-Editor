@@ -283,7 +283,7 @@ def test_save_all_accepted_writes_files(tmp_path):
     mock_save = MagicMock(side_effect=saved_paths)
 
     with patch("vlm_photo_editor.app.components.batch_review._save", mock_save):
-        saved = _save_all_accepted(records, "same", out_dir)
+        saved = _save_all_accepted(records, "same", out_dir, tmp_path / "recipes")
 
     # _save called once per ACCEPTED record
     assert mock_save.call_count == n
@@ -313,7 +313,97 @@ def test_non_accepted_images_produce_no_output(tmp_path, status):
     )
 
     with patch("vlm_photo_editor.app.components.batch_review._save") as mock_save:
-        saved = _save_all_accepted([record], "same", tmp_path)
+        saved = _save_all_accepted([record], "same", tmp_path, tmp_path / "recipes")
 
     assert saved == []
     mock_save.assert_not_called()
+
+
+# ── PIP-S1 — provider exception text is sanitised before log/UI ──────────────
+
+
+def test_safe_error_strips_url_and_truncates():
+    from vlm_photo_editor.pipeline.batch import _safe_error
+
+    exc = RuntimeError("call to https://api.example.com/v1?key=sk-secret failed")
+    out = _safe_error(exc)
+    assert "sk-secret" not in out
+    assert "https://" not in out
+    assert out.startswith("RuntimeError:")
+
+    long = _safe_error(ValueError("x" * 500))
+    assert len(long) < 250
+
+
+# ── PIP-P1 — batch save writes a Recipe sidecar per output ──────────────────
+
+
+def test_save_all_accepted_writes_recipe_sidecar(tmp_path):
+    from vlm_photo_editor.app.components.batch_review import _save_all_accepted
+
+    op_graph = OpGraph(
+        ops=[Op(op_name=OpName.EXPOSURE, params={"ev": 0.5}, backend=Backend.PIL, step_id="s1")]
+    )
+    rec = BatchImageRecord(
+        filename="photo.jpg",
+        container=MagicMock(),
+        edited_container=MagicMock(),
+        op_graph=op_graph,
+        status=ImageStatus.AUTO_EXECUTED,
+    )
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    recipes_dir = tmp_path / "recipes"
+
+    with patch(
+        "vlm_photo_editor.app.components.batch_review._save",
+        MagicMock(return_value=out_dir / "photo_edited.jpg"),
+    ):
+        _save_all_accepted([rec], "same", out_dir, recipes_dir)
+
+    sidecars = list(recipes_dir.glob("*.edit.json"))
+    assert len(sidecars) == 1
+
+    from vlm_photo_editor.recipe.store import RecipeStore
+
+    loaded = RecipeStore.load(sidecars[0])
+    assert loaded.op_graph.ops[0].step_id == "s1"
+
+
+# ── PIP-P2 — batch re-plan forwards detected_subject ───────────────────────
+
+
+def test_replan_record_forwards_detected_subject():
+    import vlm_photo_editor.app.components.batch_review as br
+    from vlm_photo_editor.schema.detection import DetectedSubject
+    from vlm_photo_editor.schema.ops import BoundingBox
+    from vlm_photo_editor.schema.plan import HumanPlan
+
+    subject = DetectedSubject(
+        bbox=BoundingBox(x=1, y=1, width=4, height=4),
+        label="person",
+        confidence=0.9,
+        source="mediapipe",
+    )
+    rec = BatchImageRecord(
+        filename="p.jpg",
+        container=MagicMock(),
+        plan=HumanPlan(steps=[]),
+        detected_subject=subject,
+        status=ImageStatus.NEEDS_REVIEW,
+    )
+
+    revise = MagicMock(return_value=HumanPlan(steps=[]))
+    compile_ = MagicMock(return_value=MagicMock(plan=HumanPlan(steps=[]), op_graph=MagicMock()))
+
+    with (
+        patch("vlm_photo_editor.agents.planner.Planner.revise", revise),
+        patch("vlm_photo_editor.planner.compiler.Compiler.compile", compile_),
+        patch("vlm_photo_editor.background.providers.default_provider_available", lambda: False),
+        patch.object(br.state, "get", lambda k: None),
+        patch.object(br.st, "error", MagicMock()),
+    ):
+        br._replan_record(rec, "make it warmer")
+
+    assert revise.call_args.kwargs["detected_subject"] is subject
+    assert compile_.call_args.kwargs["detected_subject"] is subject

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -25,6 +26,22 @@ _log = logging.getLogger(__name__)
 
 _BASE_DELAY = 1.0  # seconds
 _MAX_DELAY = 60.0  # seconds
+
+_URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
+
+
+def _safe_error(exc: BaseException) -> str:
+    """Exception type plus a URL-stripped, truncated message.
+
+    Provider SDK exceptions routinely embed the request URL (and, for the
+    ``google`` provider, the API key as a query parameter). This value is both
+    logged through an unredacted logger (SR-P1) and rendered verbatim in the UI,
+    so it must not carry raw provider text.
+    """
+    msg = _URL_RE.sub("<url>", str(exc)).strip()
+    if len(msg) > 200:
+        msg = msg[:200] + "…"
+    return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
 
 
 def _is_rate_limit(exc: BaseException) -> bool:
@@ -85,8 +102,8 @@ async def _plan_single(
                 record.retry_count = attempt
                 continue
             record.status = ImageStatus.FAILED
-            record.error = str(exc)
-            _log.error("batch_plan_failed image=%s error=%s", record.filename, exc)
+            record.error = _safe_error(exc)
+            _log.error("batch_plan_failed image=%s error=%s", record.filename, record.error)
             break
 
     if on_image_progress is not None:
@@ -152,8 +169,9 @@ def _execute_record(record: BatchImageRecord) -> None:
     try:
         result = Executor().apply(record.container, record.op_graph)
         record.edited_container = result.container
+        record.genai_ops = result.genai_ops
         record.status = ImageStatus.AUTO_EXECUTED
     except Exception as exc:
         record.status = ImageStatus.FAILED
-        record.error = str(exc)
-        _log.error("batch_execute_failed image=%s error=%s", record.filename, exc)
+        record.error = _safe_error(exc)
+        _log.error("batch_execute_failed image=%s error=%s", record.filename, record.error)

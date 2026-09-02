@@ -2033,39 +2033,6 @@ Boundary check: `pipeline/` imports `agents/`, `planner/`, `ops/`, `background/p
 
 ### Principle & Scope Violations
 
-**PIP-P1: nothing in the batch path ever writes a Recipe — every batch-executed edit is unreproducible (Principle 5)**
-**File:** [vlm_photo_editor/pipeline/batch.py:148-159](vlm_photo_editor/pipeline/batch.py#L148), [app/components/batch_review.py:206-236](vlm_photo_editor/app/components/batch_review.py#L206)
-
-```python
-def _execute_record(record: BatchImageRecord) -> None:
-    result = Executor().apply(record.container, record.op_graph)
-    record.edited_container = result.container
-    record.status = ImageStatus.AUTO_EXECUTED
-```
-
-`result.genai_ops` is discarded, and `_save_all_accepted()` calls `_save(...)` only. Repo-wide grep for `Recipe` in `pipeline/` and `app/components/batch_review.py` returns nothing; the single-image path does the opposite ([main.py:531-532](vlm_photo_editor/app/main.py#L531) constructs `Recipe(source_path=..., op_graph=...)` and calls `RecipeStore.save`). So a 200-image `full_auto` run writes 200 edited files and zero sidecars: no op graph, no model, no prompt, no seed. This contradicts Principle 5 ("edits are a replayable recipe; generative steps record model + prompt + seed") outright, and it bites hardest exactly where the product argument for `full_auto` rests — "a bad result only costs a rerun" is only true if the run is recorded.
-
-Fix: move the recipe write into `_execute_record()` (it has `ExecutionResult`, including `genai_ops`) and into `_execute_and_accept()`, or have `_save_all_accepted()` write a recipe beside each output file the way `_do_save()` does.
-
----
-
-**PIP-P2: the batch re-plan path drops `detected_subject`, so the subject-freeze region silently disappears on re-plan (Principle 6)**
-**File:** [vlm_photo_editor/app/components/batch_review.py:154-163](vlm_photo_editor/app/components/batch_review.py#L154)
-
-```python
-revised = Planner().revise(
-    record.container, record.plan, feedback, prefs, mode, None,
-    genai_available=genai_available,
-)
-result = Compiler().compile(revised, mode)
-```
-
-`record.detected_subject` is populated by the Character Focus pre-pass at record construction ([main.py:461-464](vlm_photo_editor/app/main.py#L461)) and is what `Compiler.compile()` turns into the protect region for masked/genAI ops. Neither call forwards it: `Planner().revise` gets `detected_subject=None` (the positional `None` is `framing_intent`), and `compile()` is called without the keyword. The initial plan for the same image was compiled *with* the subject; one "Re-plan" click silently downgrades it to a whole-frame edit. The record still shows Character Focus as enabled, so the loss is invisible. The other batch re-entry point ([batch_review.py:175](vlm_photo_editor/app/components/batch_review.py#L175), and [main.py:437-447](vlm_photo_editor/app/main.py#L437)) goes back through `run_batch`, which *does* pass `record.detected_subject` — so the two retry paths disagree.
-
-Fix: forward `record.detected_subject` to both calls, or delete the hand-rolled revise branch and route every re-plan through `run_batch` (see PIP-C1).
-
----
-
 **PIP-P3: P11 spec drift — `max_images_per_call` is never read, and `full_auto` does not save**
 **File:** [vlm_photo_editor/pipeline/batch.py:122-145](vlm_photo_editor/pipeline/batch.py#L122), [config/registry.py:15](vlm_photo_editor/config/registry.py#L15)
 
@@ -2158,21 +2125,6 @@ Fix: strip and compare the first token, or check `COMPLEX` first and fall throug
 ---
 
 ### Security & Data Integrity
-
-**PIP-S1: raw provider exception text is logged through an unredacted logger and rendered verbatim in the UI**
-**File:** [vlm_photo_editor/pipeline/batch.py:87-89](vlm_photo_editor/pipeline/batch.py#L87), [batch.py:156-159](vlm_photo_editor/pipeline/batch.py#L156), surfaced at [app/components/batch_review.py:262](vlm_photo_editor/app/components/batch_review.py#L262)
-
-```python
-record.status = ImageStatus.FAILED
-record.error = str(exc)
-_log.error("batch_plan_failed image=%s error=%s", record.filename, exc)
-```
-
-Two sinks for the same untrusted string. The log call goes through `logging.getLogger(__name__)` ([batch.py:24](vlm_photo_editor/pipeline/batch.py#L24)) which **SR-P1** shows is never covered by `RedactionFilter` (it is attached to the root logger, not a handler). The UI copy is not filtered at all: `st.error(f"**{record.filename}**: {record.error}")`. Provider SDK exceptions routinely embed the request URL and sometimes header/body fragments; for the `google` provider the key travels as a query parameter and its format isn't even in the redaction regex (**SR-S1**). `record.error` additionally persists in Streamlit session state for the life of the session.
-
-Fix: log `type(exc).__name__` plus a truncated message, store a sanitised summary in `record.error`, and keep the full exception behind a debug-level log — after SR-P1 is fixed so that level is actually redacted.
-
----
 
 **PIP-S2: no concurrency or cost ceiling on batch planning — up to 40 simultaneous paid VLM calls, with a correlated retry storm behind them**
 **File:** [vlm_photo_editor/pipeline/batch.py:122-136](vlm_photo_editor/pipeline/batch.py#L122)
@@ -2354,7 +2306,6 @@ All issues across all batches, sorted by severity.
 | BG-B2 | High | replicate.py:49, openai_provider.py:38, google_provider.py:29, huggingface.py:41 | `np.array(img, dtype=uint16)` keeps 0-255 values in a 16-bit container (verified) — generated background renders near-black |
 | SR-P1 | High | secrets/redaction.py:20-21 | `install_redaction_filter()` adds the filter to the root *logger*, not a handler — every named logger in the app (verified) and all structlog output bypass redaction entirely; more fundamental than AGT-D2/SEC-C4 |
 | CFG-B1 | High | config/registry.py:78-83 | `ModelRegistry.set()` drops provider on cross-provider model swap (verified) — planner selector can build e.g. `ChatAnthropic(model="gpt-4o-mini")` |
-| PIP-P1 | High | pipeline/batch.py:148-159, batch_review.py:206-236 | No Recipe is ever written in the batch path — every batch-executed/saved edit is unreproducible; `genai_ops` (model/prompt/seed) discarded (Principle 5) |
 | B5 | Medium | main.py:37 | Uploaded image temp file never deleted |
 | B7 | Medium | main.py:128 | Saved file and recipe written to `/tmp` |
 | D6 | Medium | edit_flow.py:107 | Module-level `edit_graph` singleton breaks multi-worker deploy |
@@ -2416,12 +2367,10 @@ All issues across all batches, sorted by severity.
 | CFG-B2 | Medium | config/settings.py:18-19 | `output_dir`/`recipes_dir` fields never read anywhere — the wiring for already-open B7/D15 exists and is dead |
 | CFG-B3 | Medium | models/registry.py:70-82,151 | `model_entry_available()` greenlights `provider="replicate"`; `build_client()` has no branch for it and raises |
 | CFG-B4 | Medium | models/registry.py:156-164 | `install_loader_deps()` swallows pip output via `capture_output=True`; UI says "check the terminal" with nothing printed there (mirrors DET-B3) |
-| PIP-P2 | Medium | batch_review.py:154-163 | Batch re-plan drops `record.detected_subject` for both `revise()` and `compile()` — the subject-freeze region silently disappears (Principle 6) |
 | PIP-P3 | Medium | batch.py:122-145, registry.py:15 | P11 spec drift: `max_images_per_call` never read (no grouping/cap), `full_auto` executes but does not save; DoD boxes ticked anyway |
 | PIP-B1 | Medium | batch.py:56-73 | Batch never calls `validate_crop_bounds` and has no revise loop — an out-of-bounds crop the single-image path repairs is a terminal FAILED (verified) |
 | PIP-B2 | Medium | main.py:437-447, batch_review.py:175 | Every batch retry path hardcodes `framing_intent=None` — the re-plan ignores the framing mode the initial run used |
 | PIP-B3 | Medium | plan_cache.py:18-32, main.py:96 | Cache key omits `detected_subject` and `genai_available` — toggling Character Focus or adding a provider key replays the stale plan |
-| PIP-S1 | Medium | batch.py:87-89,156-159, batch_review.py:262 | Raw provider exception logged via an unredacted named logger (SR-P1) and rendered verbatim in the UI + session state |
 | PIP-S2 | Medium | batch.py:122-136 | No concurrency/cost ceiling — up to 40 concurrent paid VLM calls (verified limiter) with correlated ≤1 s-jitter retry waves |
 | PIP-C1 | Medium | batch.py:96-159 vs edit_flow.py:66-121 | `run_batch` is a lossier copy of the edit_flow graph (no crop validation, no revise, no recipe, no critic); batch_review adds a third copy |
 | PIP-PF1 | Medium | batch.py:56-69 | Batch never consults `PlanCache` — re-running a batch or near-duplicate frames re-pays for every plan |

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import tempfile
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,7 +11,9 @@ import streamlit as st
 
 from vlm_photo_editor.app import state
 from vlm_photo_editor.app.components import preview
+from vlm_photo_editor.config.settings import get_settings
 from vlm_photo_editor.imageio.savers import save as _save
+from vlm_photo_editor.pipeline.batch import _safe_error
 from vlm_photo_editor.schema.batch import BatchImageRecord, ImageStatus
 from vlm_photo_editor.schema.ops import AcceptMode
 
@@ -126,11 +127,12 @@ def _execute_and_accept(record: BatchImageRecord) -> None:
     try:
         result = run_job(Executor().apply, record.container, record.op_graph)
         record.edited_container = result.container
+        record.genai_ops = result.genai_ops
         record.status = ImageStatus.ACCEPTED
     except Exception as exc:
         record.status = ImageStatus.FAILED
-        record.error = str(exc)
-        st.error(f"Execution failed: {exc}")
+        record.error = _safe_error(exc)
+        st.error(f"Execution failed: {record.error}")
 
 
 def _replan_record(record: BatchImageRecord, feedback: str) -> None:
@@ -158,17 +160,18 @@ def _replan_record(record: BatchImageRecord, feedback: str) -> None:
                 prefs,
                 mode,
                 None,
+                detected_subject=record.detected_subject,
                 genai_available=genai_available,
             )
-            result = Compiler().compile(revised, mode)
+            result = Compiler().compile(revised, mode, detected_subject=record.detected_subject)
             record.plan = result.plan
             record.op_graph = result.op_graph
             record.status = ImageStatus.NEEDS_REVIEW
             record.error = None
         except Exception as exc:
             record.status = ImageStatus.FAILED
-            record.error = str(exc)
-            st.error(f"Re-plan failed: {exc}")
+            record.error = _safe_error(exc)
+            st.error(f"Re-plan failed: {record.error}")
     else:
         record.status = ImageStatus.PENDING
         record.error = None
@@ -183,12 +186,17 @@ def _render_save_all(records: list[BatchImageRecord]) -> None:
     st.divider()
     output_format = state.get("output_format") or "same"
 
+    settings = get_settings()
+    out_dir = Path(settings.output_dir) / "batch"
+    st.caption(f"Output directory: `{out_dir}`")
+
     if st.button(f"Save All Accepted ({len(saveable)} images)", key="batch_save_all"):
-        out_dir = Path(tempfile.gettempdir()) / "vlm_batch_out"
         out_dir.mkdir(parents=True, exist_ok=True)
-        saved_paths = _save_all_accepted(saveable, output_format, out_dir)
+        saved_paths = _save_all_accepted(
+            saveable, output_format, out_dir, Path(settings.recipes_dir) / "batch"
+        )
         if saved_paths:
-            st.success(f"Saved {len(saved_paths)} files.")
+            st.success(f"Saved {len(saved_paths)} files to {out_dir}.")
             _offer_zip(saved_paths)
 
     # Also show auto-executed images read-only with revert option
@@ -208,7 +216,11 @@ def _save_all_accepted(
     records: list[BatchImageRecord],
     output_format: str,
     out_dir: Path,
+    recipes_dir: Path,
 ) -> list[Path]:
+    from vlm_photo_editor.recipe.store import RecipeStore
+    from vlm_photo_editor.schema.recipe import Recipe
+
     saved: list[Path] = []
     for record in records:
         if record.status not in (ImageStatus.ACCEPTED, ImageStatus.AUTO_EXECUTED):
@@ -231,8 +243,15 @@ def _save_all_accepted(
         try:
             path = _save(record.edited_container, dest, fmt=pil_fmt)
             saved.append(path)
+            if record.op_graph is not None:
+                recipe = Recipe(
+                    source_path=record.filename,
+                    op_graph=record.op_graph,
+                    genai_ops=list(record.genai_ops or []),
+                )
+                RecipeStore.save(recipe, directory=recipes_dir)
         except Exception as exc:
-            st.error(f"Save failed for {record.filename}: {exc}")
+            st.error(f"Save failed for {record.filename}: {_safe_error(exc)}")
 
     return saved
 
