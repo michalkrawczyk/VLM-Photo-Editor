@@ -48,13 +48,6 @@ edit_graph = build_edit_graph()
 
 ---
 
-### D7: `seam_metric` threshold in `quality.py` is 10× the `AppSettings` threshold
-**File:** [vlm_photo_editor/background/quality.py:47](vlm_photo_editor/background/quality.py#L47) and [vlm_photo_editor/config/settings.py:9](vlm_photo_editor/config/settings.py#L9)
-
-`AppSettings.seam_quality_threshold = 0.15` (plausible for a 0–1 normalized gradient metric). But `run_background_pipeline` passes `threshold=10.0` (hardcoded), and `select_best` uses `threshold: float = 10.0` as its default. The `AppSettings` value is never read by the pipeline. The threshold controlling how often results are flagged for manual review is effectively unconfigured.
-
----
-
 ## MISSING TESTS
 
 ### T2: No test for revision error path in UI (uncovers B2)
@@ -2003,15 +1996,6 @@ Already-open findings, confirmed against current code, no new rows:
 
 ### Code Smells / Maintainability
 
-**CFG-C1: `seam_quality_threshold` is dead config — superseded field never removed**
-**File:** [vlm_photo_editor/config/settings.py:11](vlm_photo_editor/config/settings.py#L11)
-
-The field's own comment says "Superseded by `seam_threshold` below pending BG-P1 (metric recalibration); still unread" — confirmed true, it's referenced nowhere else in the repo. `background/quality.py` already reads `seam_threshold` (the field below it) exclusively. Leaving the dead field in place risks a future BG-P1 fix editing the value that isn't actually read.
-
-Fix: remove `seam_quality_threshold`, or fold its intent into `seam_threshold`'s docstring/default once BG-P1 is resolved.
-
----
-
 **CFG-C2: Lint failures in this batch's files**
 **Files:** [vlm_photo_editor/config/registry.py:3](vlm_photo_editor/config/registry.py#L3), [vlm_photo_editor/models/registry.py:38,55](vlm_photo_editor/models/registry.py#L38)
 
@@ -2309,7 +2293,6 @@ All issues across all batches, sorted by severity.
 | B5 | Medium | main.py:37 | Uploaded image temp file never deleted |
 | B7 | Medium | main.py:128 | Saved file and recipe written to `/tmp` |
 | D6 | Medium | edit_flow.py:107 | Module-level `edit_graph` singleton breaks multi-worker deploy |
-| D7 | Medium | quality.py:47 | `seam_metric` threshold 10× `AppSettings` default; setting never read |
 | D15 | Medium | — | Save path UX undefined; no native dialog or structured tmp layout |
 | S-C1 | Medium | ops.py:67 | `Op.params: dict[str, Any]` — type erasure, no per-op validation |
 | S-D2 | Medium | recipe.py:11 | `GenAIOp.prompt`/`model` accept empty strings |
@@ -2452,7 +2435,6 @@ All issues across all batches, sorted by severity.
 | BG-O1 | Low | generator.py:9-13 | `Generator(ReplicateProvider)` forwards one argument and has no non-test consumer |
 | BG-O2 | Low | huggingface.py:25-26,71-74,126-182 | 57 lines of Qwen scaffolding whose terminal statement says the capability does not exist |
 | SR-B1 | Low | secrets/redaction.py:11-14 | `except TypeError` too narrow — a `%(key)s`-dict formatting mismatch raises `KeyError` uncaught, crashing the log call (latent, unused pattern today) |
-| CFG-C1 | Low | config/settings.py:11 | `seam_quality_threshold` dead config, superseded by `seam_threshold` but never removed |
 | CFG-C2 | Low | config/registry.py:3, models/registry.py:38,55 | Ruff lint failures: unused `field` import, two lines >100 chars |
 | PIP-B4 | Low | batch.py:30-33 | `_is_rate_limit` substring test: any message containing "429" retries, while `status_code=429`/"Too Many Requests" exceptions are missed |
 | PIP-B5 | Low | cost_router.py:31 | `"TRIVIAL" in text` matches "not TRIVIAL, it is COMPLEX" — mis-routes as soon as the module is wired in |

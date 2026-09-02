@@ -8,8 +8,6 @@ from typing import Literal
 
 @dataclass
 class AppSettings:
-    # Superseded by seam_threshold below pending BG-P1 (metric recalibration); still unread.
-    seam_quality_threshold: float = 0.15
     # Seam metric gate for genAI background composites (see background/quality.py::seam_metric).
     seam_threshold: float = 10.0
     # Gaussian sigma (px) for the composite seam feather.
