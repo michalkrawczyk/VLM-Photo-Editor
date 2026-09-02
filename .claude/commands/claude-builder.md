@@ -1,12 +1,35 @@
 # Instruction: generate or adapt CLAUDE.md
 
+Current repo: !`pwd`
+Existing CLAUDE.md: @CLAUDE.md
+Existing agent notes: @.agent_notes
+
+## Procedure
+
+1. INVENTORY this repo: stack, package manager, layout, real build/test/lint commands
+   (`pyproject.toml` / `Makefile` / CI config). State what you found.
+2. INVENTORY `.agent_notes/` — every `*.md`, every script. See the inventory rule below.
+3. If the CLAUDE.md injected above is non-empty → ADAPTING: read `.agent_notes/insights.md`, skim
+   `decisions/*.md` and `gotchas/*.md` headlines. Empty or absent → CREATING: skip to 4.
+4. VERIFY every tool, marker, path and version the templates below name, against step 1. Unverified →
+   drop that line from the template. Never carry a template token you did not confirm in this repo.
+5. DECIDE placement per section using the inline-vs-offload test below.
+6. DRAFT CLAUDE.md, plus every `.agent_notes/` concept file a stub points at. No stub without its file.
+7. VALIDATE: `python3 .agent_notes/tools/validate_okf.py .agent_notes` if the script exists.
+8. OUTPUT per the contract at the end of this file. Propose only — write nothing unless `--apply` was
+   passed and confirmed.
+
 ## Generator rules
 
 No fabrication — verify every command, path, marker, version in-repo. Unverifiable → `TODO: confirm`.
 
 Commands go to `.agent_notes/commands.md`, derived from `pyproject.toml` / `Makefile` / CI config. Not into CLAUDE.md.
 
+Prefer single atomic commands over shell chains (`&&`, `||`, `;`, `|`) — atomic commands can be allowlisted individually in `.claude/settings.json` (e.g. `Bash(pytest:*)`); chains can't be scoped as precisely. Chain only when genuinely necessary. Any necessary chain → its own entry in the "Chains" section of `.agent_notes/commands.md` (command + one-line why), not inlined raw.
+
 **Inventory `.agent_notes/` first.** List every `*.md` and every script (`tools/`, `*.py`, `*.sh`). For each, read enough to write one CLAUDE.md line: `path — what it holds — when to read/run it`. Group as: read-at-start · read-on-demand · scripts. Unclear purpose → open it; still unclear → `TODO: describe`. Never list a file without a trigger condition. Never invent files not on disk.
+
+`tools/run_checks.sh` present → edit it for this repo, don't just copy it: set `PKG` to the real package/module and confirm that path exists (pydocstyle target — the template's `vlm_photo_editor` default is a placeholder; left unchanged it silently WARNs against a nonexistent package, since pydocstyle runs advisory-only). Verify the lint/format toolchain it assumes (ruff, black, isort, pydocstyle) against what this repo actually runs (`pyproject.toml` / CI config) and adjust or drop steps that don't apply. Pytest path scope self-detects (`tests/` → `test/` → pytest's own discovery) — no edit needed there. Note any toolchain substitution in `commands.md`.
 
 `module_map.md` exists → read it, copy the real generate/view/search invocations into the CLAUDE.md search-order rule verbatim. Absent → write the rule with `TODO: confirm` and don't guess script paths.
 
@@ -37,17 +60,22 @@ Defaults (override per project):
 | Testing | Stub → `.agent_notes/testing.md` | Trigger: about to write a test. Keep inline: extend > create, parametrize not loops |
 | Git Commits | Stub → `.agent_notes/git.md` | Trigger: about to commit. Keep inline: format, ≤50, never-commit list |
 | Subagents | Stub → `.agent_notes/subagents.md` | Trigger: about to delegate. Keep inline: don't-delegate list, "rerun the gate yourself" |
-| Commands | Offload fully → `commands.md` | Never needed from memory |
+| Commands | Offload fully → `commands.md` (Atomic + Chains sections) | Never needed from memory |
 
 Offloading anything means the target file must exist and be listed in the inventory. Never leave a dangling reference — a stub pointing at a missing file is worse than inlining.
 
-Adapting existing CLAUDE.md: keep project-specific facts, replace only generic overlaps, move unknowns to `.agent_notes/`. Create missing OKF concepts as stubs.
+Adapting existing CLAUDE.md: first read `.agent_notes/insights.md` if present (skim `decisions/*.md` and `gotchas/*.md` headlines too) — fold any durable, non-project-specific lesson into the relevant CLAUDE.md section instead of leaving it stranded. Then keep project-specific facts, replace only generic overlaps, move unknowns to `.agent_notes/`. Create missing OKF concepts as stubs.
 
 Budget ≤300 lines inline (stubs, not full sections) — file loads every turn. §2 is verbatim and non-negotiable; trim elsewhere.
 Section order:
 Mission → Precedence → Challenge → Done Gate → Stuck → Communication Style + Behavioral Guidelines → Subagents → Testing → Git → `.agent_notes`.
 
-Precedence: session instruction > CLAUDE.md > `.agent_notes/` > defaults.
+Precedence is emitted as its own `## Precedence` heading in CLAUDE.md, one line, verbatim:
+
+```markdown
+## Precedence
+Session instruction > CLAUDE.md > `.agent_notes/` > defaults.
+```
 
 ---
 
@@ -59,9 +87,10 @@ Short, precise: what the project does, who uses it, **non-goals**, maturity stag
 
 ## 2. Communication Style + Behavioral Guidelines (verbatim)
 
-Insert exactly as given. Do not compress, reword, or relocate.
+Insert exactly as given. Do not compress, reword, or relocate. Everything between the four-backtick
+fences is CLAUDE.md content — the three-backtick block inside it is part of that content.
 
-```markdown
+````markdown
 ## Communication Style
 
 Terse, but focused on task always. Stay on-task every response — no drift. Drop: articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries (sure/certainly/of course/happy to), hedging. Fragments OK. Short synonyms (big not extensive, fix not "implement a solution for"). Technical terms exact. Code blocks unchanged. Errors quoted exact.
@@ -138,10 +167,10 @@ For multi-step tasks, state a brief plan:
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 ---
-```
+````
 
-Optional addition to §3 Surgical Changes, only if project uses an autoformatter:
-`Formatter output wins over local style.`
+Optional addition to the block's own `## 3. Surgical Changes` subsection (not this file's §3), only if the
+project uses an autoformatter: `Formatter output wins over local style.`
 
 ---
 
@@ -164,35 +193,56 @@ Flag explicitly: irreversible steps, data loss paths, unbounded scope, unverifia
 unstated assumptions, work duplicating something already in repo, reasoning that holds only in the happy path.
 
 Disagreement is not delay: state objection once, then proceed with user's choice unless T3-gated.
+
+High-stakes plan (T2/T3, irreversible, or multi-step with real cost if wrong) → run this Challenge via a
+fresh subagent instead of self-critiquing (see Subagents). You're anchored to your own plan; it isn't.
+Cheap plans stay in-thread.
 ```
 
 ---
 
 ## 4. Done Gate
 
-```markdown
+Full text → `.agent_notes/done_gate.md`. CLAUDE.md gets only the stub after this block.
+
+`mypy src` below is a placeholder: verify mypy is actually configured (`pyproject.toml` / CI) and verify the
+real source path. Not configured → delete the line, don't weaken it to `TODO: confirm`. Same for any other
+tool you add here.
+
+````markdown
 ## Done Gate
 
 T0 docs only: saved.
 
 T1 any code:
-  1. `ruff format && ruff check --fix` clean
+  1. `.agent_notes/tools/run_checks.sh --check` exit 0 AND summary shows no `SKIP` for a tool this repo
+     uses — SKIP means the tool isn't installed, which is not a pass
   2. `mypy src` no new errors
-  3. `pytest -m "not slow"` green
-  4. Every changed line traces to request
+  3. Every changed line traces to request
 
 T2 behavior change: T1 +
-  5. Test fails on old code, passes on new — state how verified
-  6. No leftover TODO/commented code
+  4. Test fails on old code, passes on new — state how verified
+  5. No leftover TODO/commented code
 
 T3 schema, migration, public API, dep, config: T2 +
-  7. Full `pytest` green
-  8. Rollback path, one line
-  9. Human confirm before commit
+  6. `.agent_notes/tools/run_checks.sh --check --full` exit 0 (full suite)
+  7. Rollback path, one line
+  8. Human confirm before commit
 
 Report: `Changed: … | Ran: cmd → result | Assumptions: … | Not done: …`
 No green claim without command output. Unverified → say "unverified".
 Pre-existing failure blocks gate → report it, proceed only if unrelated to diff.
+run_checks.sh covers lint/format/docstyle/pytest; tools outside it (e.g. mypy) stay separate lines here.
+pydocstyle is advisory in that script and never fails the run — a WARN is not a green docstring check.
+````
+
+CLAUDE.md stub:
+
+```markdown
+## Done Gate
+Before calling any task done: read `.agent_notes/done_gate.md`. Tiers: T0 docs · T1 code · T2 behavior · T3 schema/migration/public API/dep/config.
+No green claim without command output. `SKIP` in the checks summary is not a pass. Unverified → say "unverified".
+T3 requires human confirm before commit.
 ```
 
 ---
@@ -210,7 +260,9 @@ Never: skip/xfail, `# type: ignore`, `except: pass`, mock the failure, weaken as
 
 ## 6. Subagents
 
-```markdown
+Full text → `.agent_notes/subagents.md`. CLAUDE.md gets only the stub after this block.
+
+````markdown
 ## Subagents
 
 Delegate to keep main context clean and cheap. Subagent burns its own context, returns only its report.
@@ -223,6 +275,9 @@ Delegate to keep main context clean and cheap. Subagent burns its own context, r
 - Main context is filling and remaining work needs room
 - Multi-step plan: for each step, weigh whether delegating it to a subagent reduces main
   context without losing context the step actually needs — delegate the steps that clear that bar
+- High-stakes plan about to execute (T2/T3, irreversible, or costly if wrong) → delegate its Challenge
+  review: a fresh subagent isn't anchored to your assumptions. Unlike the cases above, this doesn't
+  save context — it needs the whole plan — the payoff is an unanchored critique, not cheapness
 
 **Don't delegate:**
 - Anything requiring the conversation's accumulated context — it doesn't transfer
@@ -247,13 +302,28 @@ Budget: [max files/steps]
 - Parallel agents → check for contradictions before merging. Contradiction = investigate, not average.
 
 Report delegation in your summary: `Delegated: [what] → [what came back].`
+````
+
+CLAUDE.md stub:
+
+```markdown
+## Subagents
+Before delegating: read `.agent_notes/subagents.md`. Brief format is mandatory — subagent has zero context.
+Never delegate: the Done Gate, commits, write/architecture decisions, anything needing this conversation's context.
+Subagent report is a claim, not a fact — verify what you act on. Rerun the gate yourself.
 ```
 
 ---
 
 ## 7. Testing
 
-```markdown
+Full text → `.agent_notes/testing.md`. CLAUDE.md gets only the stub after this block.
+
+Placeholders to verify before emitting: the marker line (`slow`, `integration`) must match this repo's real
+`markers =` in `pyproject.toml`/`pytest.ini` — different names → use theirs, none defined → delete the line.
+`playwright` — drop unless the repo actually depends on it. `.tmp_scripts/` stays regardless.
+
+````markdown
 ## Testing
 
 Grep existing coverage before new test file — extend > create. Check if tested methods fit existing pipelines.
@@ -264,26 +334,49 @@ Merge related assertions (schema + round-trip + error case) into one test.
 Assert behavior, not call counts, unless the call IS the contract.
 
 Prefer pytest and playwright over `python -c` and shell scripts. Session-written scripts → `.tmp_scripts/`.
+````
+
+CLAUDE.md stub:
+
+```markdown
+## Testing
+Before writing a test: read `.agent_notes/testing.md`. Grep existing coverage first — extend > create.
+`@pytest.mark.parametrize`, never `for` loops. Session-written scripts → `.tmp_scripts/`, never `python -c`.
 ```
 
 ---
 
 ## 8. Git Commits
 
-```markdown
+Full text → `.agent_notes/git.md`. CLAUDE.md gets only the stub after this block.
+
+````markdown
 ## Git Commits
 
 Conventional Commits. Subject ≤50 chars (hard cap 72). Imperative mood. No trailing period.
 Format: `<type>(<scope>): <summary>`. Types: feat, fix, refactor, perf, docs, test, chore, build, ci, style, revert.
 Body only for non-obvious why, breaking changes, migration notes, `Closes #N`.
 No AI attribution or emoji.
+````
+
+CLAUDE.md stub:
+
+```markdown
+## Git Commits
+Before any commit: read `.agent_notes/git.md`. Conventional Commits, subject ≤50 chars, imperative mood.
+Never commit secrets, generated files, binaries. Never `--no-verify`. No AI attribution or emoji.
 ```
 
 ---
 
 ## 9. .agent_notes/
 
-```markdown
+Emit the **Code search order** paragraph only if `module_map.md` and its scripts exist on disk (same
+condition as the `module_map.md` rule above) — otherwise a rule that can never fire sends every search to a
+missing file. Emit the regeneration sentence only if a post-session hook is actually configured in
+`.claude/settings.json`; no hook → delete it.
+
+````markdown
 ## .agent_notes/
 
 OKF v0.1 bundle. One concept per file, path = identity, cross-link with markdown links.
@@ -317,18 +410,20 @@ one concept per file, `type` required, cross-linked, `index.md` for entry, `time
 No parallel doc system. Doc request → OKF concept, not an ad-hoc README.
 
 <generated inventory goes here — one line per file, with trigger condition>
-```
+````
 
 Default concept set (create as stubs if missing):
 
 | File | `type` | Holds | Read when |
 |---|---|---|---|
 | `index.md` | Index | Map of bundle | Task start |
-| `commands.md` | Runbook | Verified build/test/lint/run commands | Before running anything |
+| `commands.md` | Runbook | Two sections: Atomic (verified build/test/lint/run commands, allowlist-able individually) and Chains (necessary shell chains — `&&`/`\|`/`;`/`\|\|` — that couldn't be split, one entry + one-line why each) | Before running anything (Atomic) / before running a multi-step or piped command (Chains) |
 | `module_map.md` | Runbook | How to generate, view, and search the module map — usage of the map scripts in `.agent_notes/` | Locating classes/methods/functions, exploring subsystem structure, finding call sites, reading signatures, understanding file organization — before any search |
-| `conventions.md` | Playbook | Project style, naming, error/logging patterns | Before writing new code |
-| `glossary.md` | Glossary | Domain terms → code symbols | Request uses domain language |
-| `testing.md` | Playbook | Fixture map, marker semantics, pipelines to extend | Before adding tests |
+| `conventions.md` | Playbook | Project style, naming, error/logging patterns, plus a `## Glossary` section mapping domain terms → code symbols | Before writing new code, or when a request uses domain language |
+| `testing.md` | Playbook | Fixture map, marker semantics, pipelines to extend, plus §7's full text | Before adding tests |
+| `done_gate.md` | Runbook | §4's full tier ladder T0–T3 and the report format | Before calling any task done |
+| `git.md` | Playbook | §8's full commit rules, types, body policy, never-commit list | Before any commit |
+| `subagents.md` | Playbook | §6's full delegate/don't-delegate lists, brief format, result handling | Before delegating |
 | `gotchas/*.md` | Gotcha | One trap per file | On matching error |
 | `decisions/*.md` | Decision | Context, choice, consequence | Before contradicting existing design |
 | `log.md` | Log | Chronological, append-only | Rarely; write on nontrivial change |
@@ -336,6 +431,20 @@ Default concept set (create as stubs if missing):
 | `tools/validate_okf.py` | — | Frontmatter/link validator | After writing any concept |
 | map scripts | — | Generate / view / search module map — paths and invocation documented in `module_map.md` | Before grep/semantic search |
 
-`.tmp_scripts/`: gitignored, never imported by `src/`. Delete at task end. Ran twice → make it a pytest.
+`.tmp_scripts/`: gitignored, never imported by the package. Delete at task end. Ran twice → make it a pytest.
 
 OKF spec: https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf
+
+---
+
+## Output contract
+
+Report in this order:
+
+1. Table: `path | new/modified/deleted | reason` — every file you propose to create or change.
+2. Full content of each file, in code blocks.
+3. Unresolved list: every `TODO: confirm` left in the drafts, and every template line you dropped as
+   unverifiable, one line each.
+
+Write behavior: **propose only by default — write nothing.** With `--apply`, ask for explicit y/n before
+writing. An existing CLAUDE.md is never overwritten without showing a diff against it first.
