@@ -70,7 +70,7 @@ Batches derived from directory structure only (module/layer boundaries), not fil
 
 **Review focus:** policy enum/values consistency with what ops/planner actually check; registry defaults are safe (no accidental Photoshop-required paths, honoring "Photoshop is optional, never required)"; settings.py secret/config separation.
 
-## Batch 9: Pipeline Orchestration
+## Batch 9: Pipeline Orchestration [DONE]
 
 **Files:** `vlm_photo_editor/pipeline/__init__.py`, `pipeline/batch.py`, `pipeline/cost_router.py`, `pipeline/job_queue.py`, `pipeline/plan_cache.py`
 

@@ -2056,6 +2056,307 @@ Also confirmed unchanged, no new row: PL-C5 (`PolicyMode` remains unreferenced o
 
 ---
 
+## Batch 9 Review — Pipeline Orchestration
+
+Review date: 2026-08-24. Files: `pipeline/__init__.py` (empty), `pipeline/batch.py`, `pipeline/cost_router.py`, `pipeline/job_queue.py`, `pipeline/plan_cache.py`. Cross-checked against consumers: `app/main.py` (`_do_generate_plan` cache use, `_render_batch_panel` start/retry call sites, `_do_save` recipe write), `app/components/batch_review.py` (the whole batch review/save surface), `agents/edit_flow.py` (the single-image graph this layer duplicates), `ops/validator.py`, `config/settings.py`, `config/registry.py` (`max_images_per_call`), and `plans/photo_editor_build_plan.md` P10/P11.
+
+Boundary check: `pipeline/` imports `agents/`, `planner/`, `ops/`, `background/providers`, `schema/`, `config/`, `models/`. No module imports `pipeline/` except `app/`, so it sits correctly between the UI and the pipeline stages. No `AGENTS.md` exists for this module, so no per-module contract to check drift against.
+
+---
+
+### Principle & Scope Violations
+
+**PIP-P1: nothing in the batch path ever writes a Recipe — every batch-executed edit is unreproducible (Principle 5)**
+**File:** [vlm_photo_editor/pipeline/batch.py:148-159](vlm_photo_editor/pipeline/batch.py#L148), [app/components/batch_review.py:206-236](vlm_photo_editor/app/components/batch_review.py#L206)
+
+```python
+def _execute_record(record: BatchImageRecord) -> None:
+    result = Executor().apply(record.container, record.op_graph)
+    record.edited_container = result.container
+    record.status = ImageStatus.AUTO_EXECUTED
+```
+
+`result.genai_ops` is discarded, and `_save_all_accepted()` calls `_save(...)` only. Repo-wide grep for `Recipe` in `pipeline/` and `app/components/batch_review.py` returns nothing; the single-image path does the opposite ([main.py:531-532](vlm_photo_editor/app/main.py#L531) constructs `Recipe(source_path=..., op_graph=...)` and calls `RecipeStore.save`). So a 200-image `full_auto` run writes 200 edited files and zero sidecars: no op graph, no model, no prompt, no seed. This contradicts Principle 5 ("edits are a replayable recipe; generative steps record model + prompt + seed") outright, and it bites hardest exactly where the product argument for `full_auto` rests — "a bad result only costs a rerun" is only true if the run is recorded.
+
+Fix: move the recipe write into `_execute_record()` (it has `ExecutionResult`, including `genai_ops`) and into `_execute_and_accept()`, or have `_save_all_accepted()` write a recipe beside each output file the way `_do_save()` does.
+
+---
+
+**PIP-P2: the batch re-plan path drops `detected_subject`, so the subject-freeze region silently disappears on re-plan (Principle 6)**
+**File:** [vlm_photo_editor/app/components/batch_review.py:154-163](vlm_photo_editor/app/components/batch_review.py#L154)
+
+```python
+revised = Planner().revise(
+    record.container, record.plan, feedback, prefs, mode, None,
+    genai_available=genai_available,
+)
+result = Compiler().compile(revised, mode)
+```
+
+`record.detected_subject` is populated by the Character Focus pre-pass at record construction ([main.py:461-464](vlm_photo_editor/app/main.py#L461)) and is what `Compiler.compile()` turns into the protect region for masked/genAI ops. Neither call forwards it: `Planner().revise` gets `detected_subject=None` (the positional `None` is `framing_intent`), and `compile()` is called without the keyword. The initial plan for the same image was compiled *with* the subject; one "Re-plan" click silently downgrades it to a whole-frame edit. The record still shows Character Focus as enabled, so the loss is invisible. The other batch re-entry point ([batch_review.py:175](vlm_photo_editor/app/components/batch_review.py#L175), and [main.py:437-447](vlm_photo_editor/app/main.py#L437)) goes back through `run_batch`, which *does* pass `record.detected_subject` — so the two retry paths disagree.
+
+Fix: forward `record.detected_subject` to both calls, or delete the hand-rolled revise branch and route every re-plan through `run_batch` (see PIP-C1).
+
+---
+
+**PIP-P3: P11 spec drift — `max_images_per_call` is never read, and `full_auto` does not save**
+**File:** [vlm_photo_editor/pipeline/batch.py:122-145](vlm_photo_editor/pipeline/batch.py#L122), [config/registry.py:15](vlm_photo_editor/config/registry.py#L15)
+
+The build plan's P11 section states two behaviours this module does not implement:
+
+- "A `model_registry` entry declares `max_images_per_call`; the batch scheduler reads this at runtime" ([build plan:282](plans/photo_editor_build_plan.md)). `max_images_per_call: int = 1` exists on `ModelEntry` and is read by nothing — repo-wide grep returns only the definition. `run_batch` starts one `_plan_single` per image unconditionally; there is no grouping and no cap.
+- "`full_auto` executes and saves every image without prompting" ([build plan:285](plans/photo_editor_build_plan.md)). `run_batch` executes and stops; saving requires a manual "Save All Accepted" click. The P11 DoD boxes are all ticked, so this drift is currently invisible in the plan.
+
+Also noted, no new row: the mask/`invert` whole-image edit already tracked as **PL-P1** applies to `pipeline/batch.py:153` verbatim — `_execute_record` hands the `OpGraph` straight to `Executor().apply()` without the `needs_bbox` guard that exists only in `app/main.py`, and does it under auto-approval with no human present.
+
+Fix: either implement the two behaviours or amend the P11 section and un-tick the affected DoD lines; leaving `max_images_per_call` in the registry as a dead field invites a second, conflicting batching mechanism later.
+
+---
+
+### Bugs & Correctness
+
+**PIP-B1: the batch path never validates crop bounds, so a crop the single-image path would repair is a terminal failure (verified)**
+**File:** [vlm_photo_editor/pipeline/batch.py:56-73](vlm_photo_editor/pipeline/batch.py#L56)
+
+`_plan_single` calls `planner.plan()` then `compiler.compile()` and stops. `Compiler.compile()` runs `validate_op_graph` ([compiler.py:218](vlm_photo_editor/planner/compiler.py#L218)) which checks crop *params* but never the image dimensions — `validate_crop_bounds(graph, w, h)` needs the container and is called from exactly two places, both in the single-image flow ([main.py:117](vlm_photo_editor/app/main.py#L117), [main.py:198](vlm_photo_editor/app/main.py#L198)) plus `edit_flow._compile`. Both wrap it in a revise loop bounded by `settings.max_crop_retries` (default 3).
+
+Verified against current code (mocked planner/compiler, real 100×100 container, `full_auto`, crop to 500×500):
+
+```
+batch_execute_failed image=a.jpg error=crop params out of bounds: left=0 top=0 right=500 bottom=500 image=100x100
+status: ImageStatus.FAILED | error: crop params out of bounds: ... | retry_count: 0
+```
+
+The failure surfaces from `_crop` ([pil_backend.py:64-68](vlm_photo_editor/ops/backends/pil_backend.py#L64)) during execution instead of from the validator during compilation, so the image lands in "Needs Attention" with a backend error message and no revision was attempted. A VLM that misjudges crop coordinates — the one failure mode the retry loop exists for — costs the user a manual retry per image in the high-volume path.
+
+Fix: call `validate_crop_bounds(result.op_graph, record.container.width, record.container.height)` inside `_plan_single` after compile, and re-plan via `planner.revise(...)` on failure up to `settings.max_crop_retries`, matching `edit_flow._route_after_compile`.
+
+---
+
+**PIP-B2: retrying a batch image drops the framing intent — the re-plan ignores the framing mode the user picked**
+**File:** [vlm_photo_editor/app/main.py:437-447](vlm_photo_editor/app/main.py#L437), [app/components/batch_review.py:175](vlm_photo_editor/app/components/batch_review.py#L175)
+
+```python
+anyio.run(
+    run_batch, [record], state.get("intent") or "", state.get("prefs"),
+    state.get("edit_mode") or "full",
+    None,                      # ← framing_intent
+    AcceptMode(...), 3, None,
+)
+```
+
+The initial run 40 lines below passes `fi = _build_framing_intent(framing_val)` ([main.py:484-495](vlm_photo_editor/app/main.py#L484)); every retry path passes a hardcoded `None`. In `frame` mode the framing intent is the entire instruction — the retried image gets planned against a different prompt than its 199 siblings, and nothing in the UI says so. `state.get("framing_mode")` is available at both call sites.
+
+Fix: build the framing intent once per render and pass it to all three `run_batch` call sites.
+
+---
+
+**PIP-B3: the plan cache key omits `detected_subject` and `genai_available` — toggling Character Focus or adding a provider key replays the stale plan**
+**File:** [vlm_photo_editor/pipeline/plan_cache.py:18-32](vlm_photo_editor/pipeline/plan_cache.py#L18), consumed by [app/main.py:96](vlm_photo_editor/app/main.py#L96)
+
+```python
+def key(self, container, mode, prefs, intent="", framing_mode=None) -> str:
+```
+
+The key covers image bytes, mode, prefs version, framing mode and intent. But `_do_generate_plan` also feeds the planner `detected_subject` and `genai_available` ([main.py:93-94](vlm_photo_editor/app/main.py#L93)), both of which change the system prompt and therefore the plan: `detected_subject` adds the subject bbox and the freeze instruction, `genai_available=False` bans genAI ops. Enable Character Focus (or switch detection backend, or paste a Replicate key in Settings) and re-plan the same image in the same mode inside the 1 h TTL, and the cache returns the plan built under the old conditions — the UI logs `plan_cache_hit` and shows a plan that ignores the setting the user just changed. The in-code comment on lines 28-30 documents exactly this class of bug for `intent`/`framing_mode` and stops one input short.
+
+Fix: add `detected_subject` (its bbox/source, or `None`) and `genai_available` to the key string; better, hash the rendered system prompt, which is the actual plan-determining input.
+
+---
+
+**PIP-B4: `_is_rate_limit` is a substring heuristic — false positives retry non-retryable errors, and common 429 shapes are missed**
+**File:** [vlm_photo_editor/pipeline/batch.py:30-33](vlm_photo_editor/pipeline/batch.py#L30)
+
+```python
+return name == "RateLimitError" or "429" in msg or "rate limit" in msg or "overloaded" in msg
+```
+
+`"429" in msg` matches any error text containing those digits — a file named `IMG_0429.jpg`, a pixel dimension, a model id — so a deterministic failure gets three exponential-backoff retries (up to ~7 s of sleeping) before failing anyway. In the other direction, providers that raise `APIStatusError(status_code=429)` with a body of `{"type": "too_many_requests"}`, or `HTTPError` with "Too Many Requests", match none of the four alternatives and fail on the first attempt — the DoD item "a simulated HTTP 429 triggers back-off and retry" is only satisfied for exception classes literally named `RateLimitError`.
+
+Fix: check `getattr(exc, "status_code", None) == 429` / `getattr(exc, "response", None).status_code` first, keep the name check, and drop the bare `"429" in msg` substring.
+
+---
+
+**PIP-B5: `classify_intent` returns "trivial" whenever the word appears anywhere in the reply**
+**File:** [vlm_photo_editor/pipeline/cost_router.py:31](vlm_photo_editor/pipeline/cost_router.py#L31)
+
+```python
+return "trivial" if "TRIVIAL" in text.upper() else "complex"
+```
+
+A 1.2B instruct model asked for one word routinely answers in a sentence. `"This is not TRIVIAL, it is COMPLEX."` classifies as trivial — the substring test is checked before, and independently of, `COMPLEX`. Latent today only because the module has no callers (PIP-O1); it becomes a live mis-routing bug the moment it is wired in.
+
+Fix: strip and compare the first token, or check `COMPLEX` first and fall through to `complex` on anything ambiguous (matching the module's stated fail-open intent).
+
+---
+
+### Security & Data Integrity
+
+**PIP-S1: raw provider exception text is logged through an unredacted logger and rendered verbatim in the UI**
+**File:** [vlm_photo_editor/pipeline/batch.py:87-89](vlm_photo_editor/pipeline/batch.py#L87), [batch.py:156-159](vlm_photo_editor/pipeline/batch.py#L156), surfaced at [app/components/batch_review.py:262](vlm_photo_editor/app/components/batch_review.py#L262)
+
+```python
+record.status = ImageStatus.FAILED
+record.error = str(exc)
+_log.error("batch_plan_failed image=%s error=%s", record.filename, exc)
+```
+
+Two sinks for the same untrusted string. The log call goes through `logging.getLogger(__name__)` ([batch.py:24](vlm_photo_editor/pipeline/batch.py#L24)) which **SR-P1** shows is never covered by `RedactionFilter` (it is attached to the root logger, not a handler). The UI copy is not filtered at all: `st.error(f"**{record.filename}**: {record.error}")`. Provider SDK exceptions routinely embed the request URL and sometimes header/body fragments; for the `google` provider the key travels as a query parameter and its format isn't even in the redaction regex (**SR-S1**). `record.error` additionally persists in Streamlit session state for the life of the session.
+
+Fix: log `type(exc).__name__` plus a truncated message, store a sanitised summary in `record.error`, and keep the full exception behind a debug-level log — after SR-P1 is fixed so that level is actually redacted.
+
+---
+
+**PIP-S2: no concurrency or cost ceiling on batch planning — up to 40 simultaneous paid VLM calls, with a correlated retry storm behind them**
+**File:** [vlm_photo_editor/pipeline/batch.py:122-136](vlm_photo_editor/pipeline/batch.py#L122)
+
+```python
+async with anyio.create_task_group() as tg:
+    for record in records:
+        tg.start_soon(_plan_single, record, planner, compiler, ...)
+```
+
+Every record is started immediately; the only limit is anyio's default thread limiter, verified at **40** on the installed version. Upload 200 images and the app opens 40 concurrent planner requests with no user-visible estimate and no confirmation step. When the provider pushes back, all 40 enter the same backoff ladder with only `random.uniform(0, 1)` of jitter, so they re-collide on each wave. `max_images_per_call` (PIP-P3) is the registry field that was supposed to govern this and is unread; nothing else caps it.
+
+Fix: bound the fan-out with an `anyio.CapacityLimiter` (or a semaphore) sized from `ModelEntry.max_images_per_call` / a settings value, and show the image count and estimated call count before the run starts.
+
+---
+
+### Code Smells / Maintainability
+
+**PIP-C1: `run_batch` is a second, lossier copy of the `edit_flow` graph — every divergence above is a missing branch of the original**
+**File:** [vlm_photo_editor/pipeline/batch.py:96-159](vlm_photo_editor/pipeline/batch.py#L96) vs [agents/edit_flow.py:66-121](vlm_photo_editor/agents/edit_flow.py#L66)
+
+Both implement plan → compile → auto-approve check → execute, and both call the same `_can_auto_approve` (batch imports the private helper across module boundaries, [batch.py:20](vlm_photo_editor/pipeline/batch.py#L20)). What the batch copy lacks: crop-bounds validation and the revise loop (PIP-B1), the recipe write (PIP-P1), the critic hook, and `crop_error` surfacing. `app/components/batch_review.py:147-171` then adds a *third* copy of plan→compile for the re-plan case, which is where PIP-P2 comes from. Three implementations of one flow, and the two derivatives are both missing pieces the original has.
+
+Fix: give the batch path one shared function — either drive `build_edit_graph()` per image inside the task group (each image gets its own thread/config), or extract the plan→validate→compile→revise core into a single coroutine that `edit_flow`, `run_batch`, and the re-plan button all call.
+
+---
+
+**PIP-C2: importing a private helper across modules**
+**File:** [vlm_photo_editor/pipeline/batch.py:20](vlm_photo_editor/pipeline/batch.py#L20)
+
+`from vlm_photo_editor.agents.edit_flow import _can_auto_approve` — an underscore-prefixed name imported from another package, and the only symbol `pipeline` takes from `agents` at module level (everything else in the file is deliberately lazy-imported inside functions to avoid import cost). Accept-mode risk gating is a policy decision used by at least three call sites; the leading underscore says it is nobody else's business.
+
+Fix: rename to `can_auto_approve` and export it, or move it to `config/policy.py` next to the other mode/risk policy tables.
+
+---
+
+**PIP-C3: `_MAX_DELAY = 60.0` is unreachable**
+**File:** [vlm_photo_editor/pipeline/batch.py:26-27](vlm_photo_editor/pipeline/batch.py#L26)
+
+With the default `max_retries=3` the sleeps are 1 s, 2 s, 4 s (+ ≤1 s jitter); the cap would need `attempt ≥ 6`, i.e. `max_retries ≥ 7`, which no call site passes (all three pass 3 or 0). Dead ceiling that reads like an active safety bound.
+
+---
+
+**PIP-C4: `pipeline/` has no `AGENTS.md` although it owns the module's least obvious invariants**
+**File:** [vlm_photo_editor/pipeline/batch.py:1-9](vlm_photo_editor/pipeline/batch.py#L1)
+
+The rules that matter here — "call `anyio.run(run_batch, ...)` directly, never inside `run_job()`", "`Planner._llm` is immutable so one instance is shared across worker threads", "execution is sequential on purpose" — live in a module docstring and two inline comments. Every other layer with cross-cutting rules (`ops`, `planner`, `agents`, `schema`, `secrets`, `background`, `detection`, `app`) has an `AGENTS.md`; per `agent_notes/structure.md` this is one of the six modules without one, and it is the one with threading rules.
+
+---
+
+**PIP-C5: `pipeline/__init__.py` is empty — the layer has no public surface**
+**File:** `vlm_photo_editor/pipeline/__init__.py`
+
+Every consumer reaches in by full path (`from vlm_photo_editor.pipeline.job_queue import run_job`), so `run_batch`, `run_job`, `get_plan_cache` and `PlanCache` have no single import point and no signal about which are stable. Same shape as the already-open **SC-C3** / **OE-C6**.
+
+---
+
+**PIP-C6: `PlanCache` is a process-global built once from settings**
+**File:** [vlm_photo_editor/pipeline/plan_cache.py:48-61](vlm_photo_editor/pipeline/plan_cache.py#L48)
+
+`_make_cache()` reads `get_settings().cache_ttl_seconds` on first use and the global is never rebuilt, so changing the TTL at runtime has no effect on the live cache. The instance is also shared by every Streamlit session in the process, and with `prefs=None` the prefs component of the key is the constant `"0"` — two sessions editing byte-identical images in the same mode share plans. Harmless under the stated single-user non-goal, but it is a process-wide mutable singleton with no documented lifetime.
+
+---
+
+### Performance
+
+**PIP-PF1: the batch path never consults the plan cache**
+**File:** [vlm_photo_editor/pipeline/batch.py:56-69](vlm_photo_editor/pipeline/batch.py#L56)
+
+`get_plan_cache()` is used only by `_do_generate_plan` in the single-image flow. Re-running a batch after tweaking one image, or a shoot containing near-duplicate frames, re-pays for every plan. The cache is keyed on image bytes so it would hit exactly on the re-run case; P10 built it for "large RAW" workflows, which is what P11 is.
+
+Fix: wrap the plan call in `_plan_single` with the same `cache.key(...)` / `cache.get` / `cache.set` sequence (after PIP-B3, so the key is sound).
+
+---
+
+**PIP-PF2: `PlanCache.key` copies the entire pixel buffer before hashing**
+**File:** [vlm_photo_editor/pipeline/plan_cache.py:26](vlm_photo_editor/pipeline/plan_cache.py#L26)
+
+```python
+img_hash = hashlib.sha256(container.pixels.tobytes()).hexdigest()[:16]
+```
+
+`ndarray.tobytes()` materialises a full copy — ~300 MB for a 50 MP 16-bit RGB frame — purely to feed a hash that accepts the buffer directly. `hashlib.sha256(container.pixels)` (or `.data` for a non-contiguous array) hashes in place. Same pattern as the already-open **DET-PF3**.
+
+---
+
+**PIP-PF3: expired cache entries are only evicted when re-requested**
+**File:** [vlm_photo_editor/pipeline/plan_cache.py:34-45](vlm_photo_editor/pipeline/plan_cache.py#L34)
+
+`get()` deletes on expiry, `set()` never sweeps, and there is no size cap. A long session that plans many distinct images retains one `HumanPlan` per key forever. Small per entry, unbounded in count.
+
+---
+
+**PIP-PF4: every original *and* every edited array is retained for the whole batch session**
+**File:** [vlm_photo_editor/pipeline/batch.py:138-145](vlm_photo_editor/pipeline/batch.py#L138)
+
+```python
+# Sequential execution for auto-approvable images (avoids N concurrent numpy arrays).
+```
+
+The comment is about the executor's transient arrays; the records themselves hold `container` *and* `edited_container` for every image ([schema/batch.py:27-28](vlm_photo_editor/schema/batch.py#L27)), and `state.set("batch_records", records)` keeps the whole list in session state until the next batch. 50 × 24 MP 8-bit RGB is ~7 GB before the executor allocates anything. Nothing streams to disk between execute and "Save All".
+
+Fix: write each executed image to its output path inside `_execute_record` (which PIP-P1 already argues for) and drop `edited_container`, keeping a thumbnail for the preview.
+
+---
+
+### Over-engineered / Unjustified Functionality
+
+**PIP-O1: `cost_router` has no callers — P10's cost-triage capability does not exist**
+**File:** [vlm_photo_editor/pipeline/cost_router.py:16-34](vlm_photo_editor/pipeline/cost_router.py#L16)
+
+Repo-wide grep for `classify_intent` finds the definition and nothing else; the only other references to the role are the registry entry ([config/registry.py:52](vlm_photo_editor/config/registry.py#L52)) and two tests that call `build_client("cost_router")` to check key handling. The P10 section describes "a cheap router that skips full VLM planning for trivial modes" as delivered key functionality, and no plan branch anywhere consults it — every intent, trivial or not, gets a full planner call. The module also interpolates raw user intent into a model prompt with no delimiter (the same injection shape as **PLN-D1**), which is only harmless because the result is dead.
+
+Fix: wire it into `_do_generate_plan`/`_plan_single` in front of the planner call (fixing PIP-B5 first), or delete the module and the registry role and drop the claim from P10.
+
+---
+
+**PIP-O2: `run_job` spins a fresh event loop and a worker thread per call to run a function synchronously**
+**File:** [vlm_photo_editor/pipeline/job_queue.py:16-37](vlm_photo_editor/pipeline/job_queue.py#L16)
+
+```python
+def run_job(fn, *args, on_progress=None):
+    return anyio.run(_run_in_thread, fn, args, on_progress)
+```
+
+`anyio.run()` blocks the calling thread until the coroutine completes, and the coroutine's only job is to await one `to_thread.run_sync`. Net effect is `fn(*args)` plus an event-loop start/stop and a thread hand-off — no concurrency is gained, the Streamlit script thread is blocked exactly as before, and the docstring says so ("Blocks the caller until done"). The `on_progress` hook can only ever fire once with the literal `1.0`, which is what the caller could do itself; the docstring's "Extend for incremental updates by passing a progress queue" describes an API that does not exist. It also cannot be called from inside an async context, which is why `batch.py`'s docstring has to warn about nesting.
+
+Fix: call `fn(*args)` directly at the four call sites, or make `run_job` genuinely non-blocking (return a handle the UI can poll) — the current shape has the cost of async with none of the benefit.
+
+---
+
+### UX
+
+**PIP-U1: the progress bar stops during the execution phase**
+**File:** [vlm_photo_editor/pipeline/batch.py:138-145](vlm_photo_editor/pipeline/batch.py#L138), [app/main.py:471-496](vlm_photo_editor/app/main.py#L471)
+
+`on_image_progress` is called only from `_plan_single`. After the task group closes, `run_batch` executes every auto-approvable image sequentially — the slowest part of the run when genAI backgrounds are involved — with no callback, so the bar sits at "Planned N/N images…" until everything finishes and `main.py` jumps it to "Done." In `full_auto` on a large batch that is minutes of apparent hang.
+
+Fix: give `run_batch` a second callback (or reuse `on_image_progress` with a phase argument) fired per executed record.
+
+---
+
+**PIP-U2: "Needs Attention" shows a backend exception string as the entire explanation, and the only action re-runs the same plan**
+**File:** [vlm_photo_editor/app/components/batch_review.py:260-268](vlm_photo_editor/app/components/batch_review.py#L260)
+
+The user sees e.g. `crop params out of bounds: left=0 top=0 right=500 bottom=500 image=100x100` (PIP-B1) with a Retry button that re-plans with the same intent and, per PIP-B2, without their framing mode. There is no way to edit the intent for just that image, and no indication of what would make the retry succeed.
+
+Fix: pair each failed record with an editable intent/feedback box that routes through the re-plan path, and map known failure classes to a plain-language cause.
+
+---
+
 ## Summary
 
 All issues across all batches, sorted by severity.
@@ -2086,6 +2387,7 @@ All issues across all batches, sorted by severity.
 | BG-B2 | High | replicate.py:49, openai_provider.py:38, google_provider.py:29, huggingface.py:41 | `np.array(img, dtype=uint16)` keeps 0-255 values in a 16-bit container (verified) — generated background renders near-black |
 | SR-P1 | High | secrets/redaction.py:20-21 | `install_redaction_filter()` adds the filter to the root *logger*, not a handler — every named logger in the app (verified) and all structlog output bypass redaction entirely; more fundamental than AGT-D2/SEC-C4 |
 | CFG-B1 | High | config/registry.py:78-83 | `ModelRegistry.set()` drops provider on cross-provider model swap (verified) — planner selector can build e.g. `ChatAnthropic(model="gpt-4o-mini")` |
+| PIP-P1 | High | pipeline/batch.py:148-159, batch_review.py:206-236 | No Recipe is ever written in the batch path — every batch-executed/saved edit is unreproducible; `genai_ops` (model/prompt/seed) discarded (Principle 5) |
 | B5 | Medium | main.py:37 | Uploaded image temp file never deleted |
 | B7 | Medium | main.py:128 | Saved file and recipe written to `/tmp` |
 | D6 | Medium | edit_flow.py:107 | Module-level `edit_graph` singleton breaks multi-worker deploy |
@@ -2150,6 +2452,17 @@ All issues across all batches, sorted by severity.
 | CFG-B2 | Medium | config/settings.py:18-19 | `output_dir`/`recipes_dir` fields never read anywhere — the wiring for already-open B7/D15 exists and is dead |
 | CFG-B3 | Medium | models/registry.py:70-82,151 | `model_entry_available()` greenlights `provider="replicate"`; `build_client()` has no branch for it and raises |
 | CFG-B4 | Medium | models/registry.py:156-164 | `install_loader_deps()` swallows pip output via `capture_output=True`; UI says "check the terminal" with nothing printed there (mirrors DET-B3) |
+| PIP-P2 | Medium | batch_review.py:154-163 | Batch re-plan drops `record.detected_subject` for both `revise()` and `compile()` — the subject-freeze region silently disappears (Principle 6) |
+| PIP-P3 | Medium | batch.py:122-145, registry.py:15 | P11 spec drift: `max_images_per_call` never read (no grouping/cap), `full_auto` executes but does not save; DoD boxes ticked anyway |
+| PIP-B1 | Medium | batch.py:56-73 | Batch never calls `validate_crop_bounds` and has no revise loop — an out-of-bounds crop the single-image path repairs is a terminal FAILED (verified) |
+| PIP-B2 | Medium | main.py:437-447, batch_review.py:175 | Every batch retry path hardcodes `framing_intent=None` — the re-plan ignores the framing mode the initial run used |
+| PIP-B3 | Medium | plan_cache.py:18-32, main.py:96 | Cache key omits `detected_subject` and `genai_available` — toggling Character Focus or adding a provider key replays the stale plan |
+| PIP-S1 | Medium | batch.py:87-89,156-159, batch_review.py:262 | Raw provider exception logged via an unredacted named logger (SR-P1) and rendered verbatim in the UI + session state |
+| PIP-S2 | Medium | batch.py:122-136 | No concurrency/cost ceiling — up to 40 concurrent paid VLM calls (verified limiter) with correlated ≤1 s-jitter retry waves |
+| PIP-C1 | Medium | batch.py:96-159 vs edit_flow.py:66-121 | `run_batch` is a lossier copy of the edit_flow graph (no crop validation, no revise, no recipe, no critic); batch_review adds a third copy |
+| PIP-PF1 | Medium | batch.py:56-69 | Batch never consults `PlanCache` — re-running a batch or near-duplicate frames re-pays for every plan |
+| PIP-PF4 | Medium | batch.py:138-145, schema/batch.py:27-28 | Both `container` and `edited_container` retained per record for the whole session — ~7 GB for 50 × 24 MP; nothing streams to disk |
+| PIP-O1 | Medium | cost_router.py:16-34 | `classify_intent` has no callers — P10's "cheap router that skips full VLM planning" does not exist; also interpolates raw intent into a prompt (PLN-D1 shape) |
 | S-C3 | Low | plan.py:23 | `HumanPlan.mode` and `EditDelta.mode` unvalidated bare strings |
 | S-C5 | Low | prefs.py:24 | `Preferences.version` uses UUID — no ordering or migration semantics |
 | S-C6 | Low | batch.py:25 | `BatchImageRecord` runtime types erased to `Any` |
@@ -2228,3 +2541,15 @@ All issues across all batches, sorted by severity.
 | SR-B1 | Low | secrets/redaction.py:11-14 | `except TypeError` too narrow — a `%(key)s`-dict formatting mismatch raises `KeyError` uncaught, crashing the log call (latent, unused pattern today) |
 | CFG-C1 | Low | config/settings.py:11 | `seam_quality_threshold` dead config, superseded by `seam_threshold` but never removed |
 | CFG-C2 | Low | config/registry.py:3, models/registry.py:38,55 | Ruff lint failures: unused `field` import, two lines >100 chars |
+| PIP-B4 | Low | batch.py:30-33 | `_is_rate_limit` substring test: any message containing "429" retries, while `status_code=429`/"Too Many Requests" exceptions are missed |
+| PIP-B5 | Low | cost_router.py:31 | `"TRIVIAL" in text` matches "not TRIVIAL, it is COMPLEX" — mis-routes as soon as the module is wired in |
+| PIP-C2 | Low | batch.py:20 | Private `_can_auto_approve` imported across packages — risk-gating policy hidden behind an underscore |
+| PIP-C3 | Low | batch.py:26-27 | `_MAX_DELAY = 60.0` unreachable — needs `max_retries ≥ 7`; no call site passes more than 3 |
+| PIP-C4 | Low | pipeline/ | No `AGENTS.md` for the one module with threading/nesting invariants (they live in a docstring) |
+| PIP-C5 | Low | pipeline/\_\_init\_\_.py | Empty — no public surface; every consumer imports by deep path (same shape as SC-C3/OE-C6) |
+| PIP-C6 | Low | plan_cache.py:48-61 | Process-global cache built once from settings — runtime TTL changes never apply; shared across Streamlit sessions |
+| PIP-PF2 | Low | plan_cache.py:26 | `pixels.tobytes()` copies the full buffer (~300 MB on 50 MP 16-bit) before hashing; hashlib accepts the array directly (same as DET-PF3) |
+| PIP-PF3 | Low | plan_cache.py:34-45 | Expired entries evicted only on re-request; no size cap |
+| PIP-O2 | Low | job_queue.py:16-37 | `run_job` starts an event loop + worker thread per call to run `fn(*args)` synchronously; `on_progress` can only ever fire `1.0` |
+| PIP-U1 | Low | batch.py:138-145, main.py:471-496 | Progress bar frozen at "Planned N/N" during the whole execution phase — minutes of apparent hang in full_auto |
+| PIP-U2 | Low | batch_review.py:260-268 | Failed images show a raw backend exception as the only explanation; Retry re-runs the same plan (minus framing, PIP-B2) |
