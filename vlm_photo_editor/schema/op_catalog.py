@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
 
-from vlm_photo_editor.schema.ops import Backend, OpName, RiskTier
+from vlm_photo_editor.schema.ops import Backend, FramingMode, OpName, RiskTier
 
 
 class BBoxClass(str, Enum):
@@ -24,6 +24,10 @@ class OpSpec:
     ps_expressible: bool
     doc_lines: tuple[str, ...]
     requires_bbox: bool = False
+    # SC-B1: allowed values for string params (name -> choices). Numeric ranges live
+    # in PARAM_BOUNDS; this closes the gap for enum-like params such as `frame.mode`
+    # and `region_edit.method`, where a bogus value otherwise validates and no-ops.
+    enum_params: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def render_doc(self) -> list[str]:
         return list(self.doc_lines)
@@ -170,6 +174,7 @@ register_op(
             '    method: "telea"|"ns"|"blur" (opencv only, default "telea"),',
             '    radius: float 0.5-50 (opencv method="blur" only, default 15, Gaussian blur strength)}',
         ),
+        enum_params=(("method", ("telea", "ns", "blur")),),
         requires_bbox=True,
     )
 )
@@ -202,5 +207,6 @@ register_op(
             "    center_symmetry, portrait_headroom, face_only, negative_space,",
             "    fill_frame, lead_room, horizon_third",
         ),
+        enum_params=(("mode", tuple(m.value for m in FramingMode)),),
     )
 )

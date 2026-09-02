@@ -38,6 +38,15 @@ def validate_op(
         if key not in op.params:
             raise ValueError(f"Op {op.op_name!r} missing required param {key!r}")
 
+    # SC-B1: reject out-of-vocabulary string params (e.g. frame.mode, region_edit.method).
+    # Without this an unknown value passes validation, the backend silently no-ops, and
+    # the executor reports success on an unchanged image.
+    for key, choices in get_spec(op.op_name).enum_params:
+        if key in op.params and str(op.params[key]) not in choices:
+            raise ValueError(
+                f"Op {op.op_name!r} param {key!r}={op.params[key]!r} not one of {choices}"
+            )
+
     for key, (lo, hi) in PARAM_BOUNDS.items():
         if key in op.params:
             val = _as_number(op.op_name, key, op.params[key])

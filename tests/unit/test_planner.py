@@ -299,6 +299,13 @@ def test_compiler_unknown_mode_raises_compiler_error():
         Compiler().compile(_plan(step), "invalid_mode")
 
 
+def test_compiler_rejects_bogus_frame_mode():
+    """SC-B1: an out-of-vocabulary frame mode is a silent no-op without enum validation."""
+    step = _step(["frame"], [{"mode": "bogus"}])
+    with pytest.raises(CompilerError, match="not one of"):
+        Compiler().compile(_plan(step), "full")
+
+
 # ---------------------------------------------------------------------------
 # Compiler — backend assignment
 # ---------------------------------------------------------------------------

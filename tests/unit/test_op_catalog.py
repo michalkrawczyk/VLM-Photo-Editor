@@ -101,6 +101,25 @@ def test_render_doc_returns_list_copy_of_doc_lines():
     assert len(doc) == 6  # mask's prose block is 6 lines
 
 
+@pytest.mark.parametrize(
+    "op_name,param,present,absent",
+    [
+        (OpName.FRAME, "mode", "rule_of_thirds", "bogus"),
+        (OpName.REGION_EDIT, "method", "blur", "biharmonic"),
+    ],
+)
+def test_enum_params_declared(op_name, param, present, absent):
+    """SC-B1: FRAME.mode and REGION_EDIT.method carry an allowed-value set."""
+    choices = dict(get_spec(op_name).enum_params)
+    assert param in choices
+    assert present in choices[param]
+    assert absent not in choices[param]
+
+
+def test_enum_params_default_empty_for_numeric_ops():
+    assert get_spec(OpName.EXPOSURE).enum_params == ()
+
+
 def test_system_prompt_byte_identical_to_pre_catalog_baseline():
     """Guards against silent prompt-wording drift from the doc_lines port into the
     catalog. Baseline captured from build_system_prompt("full", None, None, None)

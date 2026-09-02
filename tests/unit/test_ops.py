@@ -537,6 +537,42 @@ def test_cv_inpaint_rejects_invalid_method() -> None:
         apply_inpaint(container, op)
 
 
+# ---------------------------------------------------------------------------
+# SC-B1 — enum-param validation (frame.mode, region_edit.method)
+# ---------------------------------------------------------------------------
+
+
+_REGION_BBOX = BoundingBox(x=1, y=1, width=8, height=8)
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        _op(OpName.FRAME, {"mode": "bogus"}),
+        _op(OpName.FRAME, {"mode": "rule_of_third"}),  # near-miss typo
+        _op(
+            OpName.REGION_EDIT, {"method": "biharmonic"}, bbox=_REGION_BBOX, backend=Backend.OPENCV
+        ),
+    ],
+)
+def test_validator_rejects_unknown_enum_param(op) -> None:
+    with pytest.raises(ValueError, match="not one of"):
+        validate_op(op)
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        _op(OpName.FRAME, {"mode": "rule_of_thirds"}),
+        _op(OpName.FRAME, {"mode": "golden_ratio"}),
+        _op(OpName.REGION_EDIT, {"method": "ns"}, bbox=_REGION_BBOX, backend=Backend.OPENCV),
+        _op(OpName.REGION_EDIT, {"method": "blur"}, bbox=_REGION_BBOX, backend=Backend.OPENCV),
+    ],
+)
+def test_validator_accepts_known_enum_param(op) -> None:
+    validate_op(op)  # must not raise
+
+
 def test_cv_inpaint_via_executor_end_to_end() -> None:
     container, bbox = _container_with_spot(spot_value=0)
     op = Op(
