@@ -11,14 +11,24 @@ class PolicyMode(str, Enum):
     NO_PS = "no_ps"
 
 
+class EditMode(str, Enum):
+    FULL = "full"
+    BACKGROUND = "background"
+    FRAME = "frame"
+
+
 _OP_SETS: dict[str, set[OpName]] = {
     "full": set(OpName),
-    "background": {OpName.BACKGROUND_REPLACE, OpName.MASK},
+    "background": {OpName.BACKGROUND_REPLACE, OpName.FILL_MASK},
     "frame": {OpName.CROP},
+    # Policy modes: all ops reachable; backend enforcement is in the compiler
+    "auto": set(OpName),
+    "ps_strict": set(OpName),
+    "no_ps": set(OpName),
 }
 
 
-def allowed_ops_for_mode(mode: str) -> set[OpName]:
+def allowed_ops_for_mode(mode: EditMode | str) -> set[OpName]:
     try:
         return _OP_SETS[mode]
     except KeyError:

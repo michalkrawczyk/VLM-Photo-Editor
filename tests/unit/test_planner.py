@@ -3,17 +3,29 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
+_UUID1 = "00000000-0000-0000-0000-000000000001"
+_UUID2 = "00000000-0000-0000-0000-000000000002"
+
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from vlm_photo_editor.config.policy import allowed_ops_for_mode
 from vlm_photo_editor.planner.compiler import Compiler, CompilerError
-from vlm_photo_editor.schema.ops import OpName
+from vlm_photo_editor.schema.ops import FramingIntent, FramingMode, OpName
 from vlm_photo_editor.schema.plan import CompilerResult, HumanPlan, HumanStep
+from vlm_photo_editor.templates.planner import build_system_prompt
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _has_anthropic_key() -> bool:
+    """Deferred import: a module-level one lands after the _UUID constants (E402)."""
+    from vlm_photo_editor.secrets.store import SecretStore
+
+    return SecretStore.has("anthropic")
 
 
 def _step(
@@ -88,12 +100,12 @@ def test_allowed_ops_for_mode_unknown_raises():
     ],
 )
 def test_compiler_happy_path(op_name, params):
-    step = _step([op_name], [params], step_id="s1")
+    step = _step([op_name], [params], step_id=_UUID1)
     result = Compiler().compile(_plan(step), "full")
     assert isinstance(result, CompilerResult)
     assert len(result.op_graph.ops) == 1
     assert result.op_graph.ops[0].op_name.value == op_name
-    assert result.op_graph.ops[0].step_id == "s1"
+    assert result.op_graph.ops[0].step_id == _UUID1
     assert result.op_graph.ops[0].params == params
 
 
@@ -103,14 +115,14 @@ def test_compiler_happy_path(op_name, params):
 
 
 def test_compiler_step_id_linkage():
-    s1 = _step(["exposure", "rotate"], [{"ev": 0.5}, {"angle": 45.0}], step_id="step-001", index=1)
+    s1 = _step(["exposure", "rotate"], [{"ev": 0.5}, {"angle": 45.0}], step_id=_UUID1, index=1)
     s2 = _step(
-        ["crop"], [{"left": 0, "top": 0, "right": 200, "bottom": 150}], step_id="step-002", index=2
+        ["crop"], [{"left": 0, "top": 0, "right": 200, "bottom": 150}], step_id=_UUID2, index=2
     )
     result = Compiler().compile(_plan(s1, s2), "full")
-    assert result.op_graph.ops[0].step_id == "step-001"
-    assert result.op_graph.ops[1].step_id == "step-001"
-    assert result.op_graph.ops[2].step_id == "step-002"
+    assert result.op_graph.ops[0].step_id == _UUID1
+    assert result.op_graph.ops[1].step_id == _UUID1
+    assert result.op_graph.ops[2].step_id == _UUID2
 
 
 # ---------------------------------------------------------------------------
@@ -118,11 +130,134 @@ def test_compiler_step_id_linkage():
 # ---------------------------------------------------------------------------
 
 
-def test_compiler_pads_missing_params_validator_catches():
-    # crop needs left/top/right/bottom; op_params omitted → padded with {} → validator rejects
-    step = _step(["crop"], [])
-    with pytest.raises(CompilerError, match="missing required param"):
+@pytest.mark.parametrize(
+    "op_names,op_params",
+    [
+        (["crop"], []),  # fewer params than names
+        (["exposure"], [{"ev": 1.0}, {"ev": 2.0}]),  # more params than names
+    ],
+)
+def test_human_step_rejects_mismatched_op_params_length(op_names, op_params):
+    """Schema-level parity validator (S-B1) rejects this before the compiler runs."""
+    with pytest.raises(ValidationError, match="op_names.*op_params"):
+        _step(op_names, op_params)
+
+
+# ---------------------------------------------------------------------------
+# T4 — crop out-of-bounds validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "params,match",
+    [
+        ({"left": 100, "top": 0, "right": 50, "bottom": 80}, "left.*<.*right"),
+        ({"left": 0, "top": 80, "right": 100, "bottom": 40}, "top.*<.*bottom"),
+        ({"left": -1, "top": 0, "right": 100, "bottom": 80}, "non-negative"),
+    ],
+)
+def test_crop_out_of_bounds_raises(params, match):
+    step = _step(["crop"], [params])
+    with pytest.raises(CompilerError, match=match):
         Compiler().compile(_plan(step), "full")
+
+
+@pytest.mark.parametrize(
+    "params,w,h,match",
+    [
+        # bottom exceeds image height (exact failing case from user report)
+        (
+            {"left": 0, "top": 0, "right": 992, "bottom": 798},
+            1408,
+            768,
+            "bottom=798 > image height 768",
+        ),
+        # right exceeds image width
+        (
+            {"left": 0, "top": 0, "right": 1500, "bottom": 100},
+            1408,
+            768,
+            "right=1500 > image width 1408",
+        ),
+        # both right and bottom exceed bounds
+        (
+            {"left": 0, "top": 0, "right": 2000, "bottom": 1000},
+            1408,
+            768,
+            "right=2000 > image width 1408",
+        ),
+    ],
+)
+def test_validate_crop_bounds_raises(params, w, h, match):
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+
+    step = _step(["crop"], [params])
+    result = Compiler().compile(_plan(step), "full")
+    with pytest.raises(ValueError, match=match):
+        validate_crop_bounds(result.op_graph, w, h)
+
+
+def test_validate_crop_bounds_passes_when_within_image():
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+
+    step = _step(["crop"], [{"left": 0, "top": 0, "right": 100, "bottom": 80}])
+    result = Compiler().compile(_plan(step), "full")
+    validate_crop_bounds(result.op_graph, 200, 200)  # no exception
+
+
+@pytest.mark.parametrize("fail_count", [1, 2, 3])
+def test_validate_crop_bounds_retry_calls_revise(fail_count):
+    """Retry loop calls revise exactly fail_count times before succeeding."""
+    from unittest.mock import MagicMock
+
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+    from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
+
+    def _make_graph(right: int, w: int) -> OpGraph:
+        return OpGraph(
+            ops=[
+                Op(
+                    op_name=OpName.CROP,
+                    params={"left": 0, "top": 0, "right": right, "bottom": 50},
+                    backend=Backend.PIL,
+                    risk_tier=RiskTier.LOW,
+                    step_id="s1",
+                )
+            ]
+        )
+
+    w, h = 100, 80
+    bad_graph = _make_graph(right=200, w=w)  # right > w → fails
+    good_graph = _make_graph(right=80, w=w)  # right < w → passes
+
+    graphs = [bad_graph] * fail_count + [good_graph]
+    graph_iter = iter(graphs)
+
+    revise_feedbacks: list[str] = []
+
+    planner = MagicMock()
+    planner.revise.side_effect = lambda c, p, fb, *a, **kw: (revise_feedbacks.append(fb), p)[1]
+
+    container = MagicMock()
+    container.width = w
+    container.height = h
+    plan = MagicMock()
+    max_retries = 3
+
+    for _attempt in range(max_retries + 1):
+        op_graph = next(graph_iter)
+        try:
+            validate_crop_bounds(op_graph, container.width, container.height)
+            break
+        except ValueError as crop_err:
+            if _attempt >= max_retries:
+                raise
+            plan = planner.revise(container, plan, str(crop_err), None, "full", None)
+
+    assert planner.revise.call_count == fail_count
+    for fb in revise_feedbacks:
+        assert "right=200 > image width 100" in fb
+        assert "Revise crop to fit within" in fb
 
 
 # ---------------------------------------------------------------------------
@@ -150,16 +285,137 @@ def test_compiler_rejects_op_not_in_mode(op_name, mode, params):
 # ---------------------------------------------------------------------------
 
 
-def test_compiler_rejects_unknown_op_name():
-    step = _step(["sharpen"], [{}])
-    with pytest.raises(CompilerError, match="unknown op"):
+def test_schema_rejects_unknown_op_name():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        HumanStep(step_id=_UUID1, index=1, title="t", why="w", op_names=["sharpen"])
+
+
+def test_compiler_unknown_mode_raises_compiler_error():
+    """PLN-B1: KeyError from allowed_ops_for_mode is wrapped, not raw."""
+    step = _step(["exposure"], [{"ev": 1.0}])
+    with pytest.raises(CompilerError, match="Unknown edit mode"):
+        Compiler().compile(_plan(step), "invalid_mode")
+
+
+def test_compiler_rejects_bogus_frame_mode():
+    """SC-B1: an out-of-vocabulary frame mode is a silent no-op without enum validation."""
+    step = _step(["frame"], [{"mode": "bogus"}])
+    with pytest.raises(CompilerError, match="not one of"):
         Compiler().compile(_plan(step), "full")
 
 
-def test_compiler_unknown_mode_raises_key_error():
-    step = _step(["exposure"], [{"ev": 1.0}])
-    with pytest.raises(KeyError):
-        Compiler().compile(_plan(step), "invalid_mode")
+# ---------------------------------------------------------------------------
+# Compiler — backend assignment
+# ---------------------------------------------------------------------------
+
+
+from vlm_photo_editor.schema.ops import Backend  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "op_name,expected_backend",
+    [
+        ("background_replace", Backend.GENAI),
+        ("region_edit", Backend.GENAI),
+        ("exposure", Backend.PIL),
+        ("crop", Backend.PIL),
+    ],
+)
+def test_compiler_assigns_default_backend(op_name, expected_backend):
+    params: dict = {"prompt": "sky"} if op_name in {"background_replace", "region_edit"} else {}
+    if op_name == "crop":
+        params = {"left": 0, "top": 0, "right": 100, "bottom": 80}
+    elif op_name == "exposure":
+        params = {"ev": 1.0}
+    step = _step([op_name], [params])
+    with patch(
+        "vlm_photo_editor.planner.compiler.available_genai_providers",
+        return_value=["replicate", "openai", "google", "huggingface"],
+    ):
+        result = Compiler().compile(_plan(step), "full")
+    assert result.op_graph.ops[0].backend == expected_backend
+
+
+def test_compiler_reads_backend_from_op_params():
+    step = _step(["background_replace"], [{"backend": "opencv"}])
+    result = Compiler().compile(_plan(step), "full")
+    op = result.op_graph.ops[0]
+    assert op.backend == Backend.OPENCV
+    assert "backend" not in op.params  # stripped from params
+
+
+def test_compiler_raises_on_unknown_backend():
+    step = _step(["background_replace"], [{"backend": "turbo", "prompt": "sky"}])
+    with pytest.raises(CompilerError, match="unknown backend"):
+        Compiler().compile(_plan(step), "full")
+
+
+def test_compiler_no_genai_redirects_inpaint_to_opencv():
+    from unittest.mock import patch
+
+    from vlm_photo_editor.config.settings import AppSettings
+
+    step = _step(["background_replace"], [{"prompt": "remove"}])
+    with patch(
+        "vlm_photo_editor.config.settings.get_settings",
+        return_value=AppSettings(no_genai=True),
+    ):
+        result = Compiler().compile(_plan(step), "full")
+    assert result.op_graph.ops[0].backend == Backend.OPENCV
+
+
+def test_compiler_no_genai_does_not_affect_non_inpaint_ops():
+    from unittest.mock import patch
+
+    from vlm_photo_editor.config.settings import AppSettings
+
+    step = _step(["exposure"], [{"ev": 0.5}])
+    with patch(
+        "vlm_photo_editor.config.settings.get_settings",
+        return_value=AppSettings(no_genai=True),
+    ):
+        result = Compiler().compile(_plan(step), "full")
+    assert result.op_graph.ops[0].backend == Backend.PIL
+
+
+def test_compiler_no_genai_raises_for_non_inpaint_genai_op():
+    """PLN-B4: explicit backend=genai on a non-inpaint op must raise when no_genai=True."""
+    from unittest.mock import patch
+
+    from vlm_photo_editor.config.settings import AppSettings
+
+    step = _step(["exposure"], [{"ev": 0.5, "backend": "genai"}])
+    with patch(
+        "vlm_photo_editor.config.settings.get_settings",
+        return_value=AppSettings(no_genai=True),
+    ):
+        with pytest.raises(CompilerError, match="GenAI is disabled"):
+            Compiler().compile(_plan(step), "full")
+
+
+def test_compiler_genai_op_raises_when_provider_key_missing():
+    """Compiler must raise CompilerError when genai op's provider key is absent."""
+    step = _step(["region_edit"], [{"prompt": "blur background"}])
+    with patch(
+        "vlm_photo_editor.planner.compiler.available_genai_providers",
+        return_value=[],
+    ):
+        with pytest.raises(CompilerError, match="replicate"):
+            Compiler().compile(_plan(step), "full")
+
+
+def test_compiler_genai_op_passes_when_provider_key_present():
+    """Compiler must accept genai op when provider key is available."""
+    step = _step(["region_edit"], [{"prompt": "blur background"}])
+    with patch(
+        "vlm_photo_editor.planner.compiler.available_genai_providers",
+        return_value=["replicate"],
+    ):
+        result = Compiler().compile(_plan(step), "full")
+    genai_ops = [op for op in result.op_graph.ops if op.op_name.value == "region_edit"]
+    assert len(genai_ops) == 1
 
 
 def test_compiler_result_preserves_plan():
@@ -175,7 +431,7 @@ def test_compiler_result_preserves_plan():
 
 def test_compiler_params_are_shallow_copied():
     original_params = {"ev": 1.0}
-    step = _step(["exposure"], [original_params], step_id="s1")
+    step = _step(["exposure"], [original_params], step_id=_UUID1)
     result = Compiler().compile(_plan(step), "full")
     result.op_graph.ops[0].params["ev"] = 999.0
     assert original_params["ev"] == 1.0  # step params not mutated
@@ -188,7 +444,7 @@ def test_compiler_params_are_shallow_copied():
 
 def test_human_step_op_params_round_trip():
     step = HumanStep(
-        step_id="s1",
+        step_id=_UUID1,
         index=1,
         title="t",
         why="w",
@@ -201,7 +457,7 @@ def test_human_step_op_params_round_trip():
 
 
 def test_human_step_op_params_defaults_empty():
-    step = HumanStep(step_id="s1", index=1, title="t", why="w", op_names=[])
+    step = HumanStep(step_id=_UUID1, index=1, title="t", why="w", op_names=[])
     assert step.op_params == []
 
 
@@ -238,6 +494,19 @@ def test_planner_calls_llm_returns_human_plan(method):
         assert isinstance(result, HumanPlan)
         assert result.mode == "full"
         mock_llm.with_structured_output.return_value.invoke.assert_called_once()
+
+
+def test_planner_logs_via_structlog_not_stdlib():
+    """AGT-D2: stdlib logging bypasses the structlog RedactionProcessor — the VLM
+    prompt (which may echo a key-like string) must be logged through structlog."""
+    import logging as _stdlib_logging
+
+    from vlm_photo_editor.agents import planner as planner_mod
+
+    assert not hasattr(planner_mod, "_log")
+    assert not hasattr(planner_mod, "logging")
+    assert not isinstance(planner_mod.log, _stdlib_logging.Logger)
+    assert type(planner_mod.log).__module__.startswith("structlog")
 
 
 # ---------------------------------------------------------------------------
@@ -293,14 +562,12 @@ def test_frame_target_size(w, h, composition, expected):
 
 
 def test_system_prompt_includes_framing_instructions():
-    with patch("vlm_photo_editor.agents.planner.build_client"):
-        from vlm_photo_editor.agents.planner import Planner
-
-        planner = Planner()
-
-    prompt = planner._system_prompt(
-        "frame", None, composition="portrait_headroom", target_size=(2250, 3000)
+    fi = FramingIntent(
+        mode=FramingMode.PORTRAIT_HEADROOM,
+        focus_instruction="Leave breathing room above the head.",
+        frame_ratio="3:4",
     )
+    prompt = build_system_prompt("frame", None, fi, (2250, 3000))
     assert "FRAMING INSTRUCTIONS" in prompt
     assert "portrait_headroom" in prompt
     assert "2250" in prompt
@@ -309,12 +576,7 @@ def test_system_prompt_includes_framing_instructions():
 
 
 def test_system_prompt_no_framing_without_composition():
-    with patch("vlm_photo_editor.agents.planner.build_client"):
-        from vlm_photo_editor.agents.planner import Planner
-
-        planner = Planner()
-
-    prompt = planner._system_prompt("frame", None)
+    prompt = build_system_prompt("frame", None, None, None)
     assert "FRAMING INSTRUCTIONS" not in prompt
 
 
@@ -400,6 +662,8 @@ def test_encode_image_handles_bit_depth(dtype):
 
 
 @pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.skipif(not _has_anthropic_key(), reason="requires ANTHROPIC_API_KEY")
 def test_planner_compile_round_trip_integration():
     """Requires ANTHROPIC_API_KEY. Verifies end-to-end plan → compile."""
     from pathlib import Path

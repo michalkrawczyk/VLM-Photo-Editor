@@ -48,11 +48,13 @@ class RedactionFilter(logging.Filter):
 logging.getLogger().addFilter(RedactionFilter())
 ```
 
-A root-logger filter fires for every `LogRecord` before any handler (existing or future) dispatches it — the same "no unguarded sink" guarantee that was cited for structlog. No extra dependency needed.
+A root-logger filter fires for every `LogRecord` before any handler (existing or future) dispatches it — the same "no unguarded sink" guarantee that was cited for structlog. No extra dependency needed for redaction itself.
 
-Alternatives considered and rejected:
-- **structlog** — justified if structured/JSON logging or a remote sink is needed; see `future_improvements.md`.
-- **loguru** — per-sink filter hooks can't guarantee universal redaction.
+**structlog `>=24.0`** is a project dependency (`requirements.txt`), adopted for structured log output in `agents/aggregator.py` and `agents/critic.py` via `structlog.get_logger()`. It does not replace `RedactionFilter` as the redaction mechanism.
+
+**Unverified caveat:** no `structlog.configure(...)` call exists anywhere in the repo, so `structlog.get_logger()` uses structlog's default `PrintLogger`, which does not route through stdlib `logging`. `RedactionFilter` is attached to the root stdlib logger — it may not see log calls made through structlog in `aggregator.py`/`critic.py`. Needs a follow-up check against Global Invariant #2 (no API key ever appears in a log).
+
+Alternative rejected for redaction itself: **loguru** — per-sink filter hooks can't guarantee universal redaction the way a root-logger filter does.
 
 ---
 

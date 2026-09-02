@@ -1,6 +1,19 @@
-from .ops import Backend, BoundingBox, FramingMode, Op, OpGraph, OpName, RiskTier
+from .batch import BatchImageRecord, ImageStatus
+from .detection import DetectedSubject
+from .ops import (
+    AcceptMode,
+    Backend,
+    BoundingBox,
+    CharacterFocusBackend,
+    FramingIntent,
+    FramingMode,
+    Op,
+    OpGraph,
+    OpName,
+    RiskTier,
+)
 from .plan import CompilerResult, HumanPlan, HumanStep
-from .prefs import ExplicitRule, LearnedRule, Preferences
+from .prefs import EditDelta, ExplicitRule, LearnedRule, Preferences
 from .recipe import GenAIOp, Recipe
 
 __all__ = [
@@ -10,7 +23,11 @@ __all__ = [
     "Backend",
     "RiskTier",
     "FramingMode",
+    "FramingIntent",
+    "AcceptMode",
     "BoundingBox",
+    "CharacterFocusBackend",
+    "DetectedSubject",
     "HumanPlan",
     "HumanStep",
     "CompilerResult",
@@ -19,4 +36,7 @@ __all__ = [
     "Preferences",
     "ExplicitRule",
     "LearnedRule",
+    "EditDelta",
+    "BatchImageRecord",
+    "ImageStatus",
 ]

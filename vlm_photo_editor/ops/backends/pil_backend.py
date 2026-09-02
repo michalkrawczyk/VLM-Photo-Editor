@@ -15,6 +15,7 @@ def apply(container: ImageContainer, op: Op) -> ImageContainer:
         OpName.EXPOSURE: _exposure,
         OpName.DENOISE: _denoise,
         OpName.FRAME: _frame,
+        OpName.FILL_MASK: _fill_mask,
     }
     fn = dispatch.get(op.op_name)
     if fn is None:
@@ -108,6 +109,15 @@ def _denoise(container: ImageContainer, params: dict) -> ImageContainer:
     return _from_pil(img, container)
 
 
+def _fill_mask(container: ImageContainer, params: dict) -> ImageContainer:
+    fill = int(params.get("fill", 0))
+    max_val = 65535 if container.bit_depth == 16 else 255
+    fill = max(0, min(fill, max_val))
+    result = container.copy()
+    result.pixels = np.full_like(container.pixels, fill)
+    return result
+
+
 _FRAME_ASPECT: dict[str, tuple[int, int]] = {
     "rule_of_thirds": (4, 3),
     "golden_ratio": (1618, 1000),
@@ -133,23 +143,35 @@ def frame_target_size(w: int, h: int, composition: str) -> tuple[int, int] | Non
     return w, int(w * th / tw)
 
 
+def frame_crop_box(w: int, h: int, mode: str, params: dict) -> tuple[int, int, int, int] | None:
+    """Return (left, top, right, bottom) for a FRAME composition crop, or None for fill_frame."""
+    target = frame_target_size(w, h, mode)
+    if target is None:
+        return None
+    target_w, target_h = target
+
+    focus_keys = ("focus_x", "focus_y", "focus_w", "focus_h")
+    if all(k in params for k in focus_keys):
+        cx = float(params["focus_x"]) + float(params["focus_w"]) / 2
+        cy = float(params["focus_y"]) + float(params["focus_h"]) / 2
+        left = int(round(cx - target_w / 2))
+        top = int(round(cy - target_h / 2))
+    else:
+        left = (w - target_w) // 2
+        top = (h - target_h) // 2
+
+    left = max(0, min(left, w - target_w))
+    top = max(0, min(top, h - target_h))
+    return left, top, left + target_w, top + target_h
+
+
 def _frame(container: ImageContainer, params: dict) -> ImageContainer:
     mode = str(params.get("mode", "rule_of_thirds"))
     h, w = container.pixels.shape[:2]
-    aspect = _FRAME_ASPECT.get(mode, (4, 3))
-    if aspect == (0, 0):
+    box = frame_crop_box(w, h, mode, params)
+    if box is None:
         return container.copy()
-    tw, th = aspect
-    if w / h > tw / th:
-        new_w = int(h * tw / th)
-        left = (w - new_w) // 2
-        right = left + new_w
-        top, bottom = 0, h
-    else:
-        new_h = int(w * th / tw)
-        top = (h - new_h) // 2
-        bottom = top + new_h
-        left, right = 0, w
+    left, top, right, bottom = box
     result = container.copy()
     result.pixels = container.pixels[top:bottom, left:right]
     return result

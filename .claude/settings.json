@@ -1,17 +1,4 @@
 {
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash /media/tk/Programming1/Python/VLM-Photo-Editor/agent_notes/utility_scripts/cleanup.sh 2>/dev/null || true",
-            "statusMessage": "Running session cleanup..."
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "Bash(python -m pytest tests*)",
@@ -32,7 +19,90 @@
       "Bash(python3 -m pytest tests/unit/ -v)",
       "Bash(pip install *)",
       "Bash(.venv/bin/python -m pytest *)",
-      "Bash(.venv/bin/pytest *)"
+      "Bash(.venv/bin/pytest *)",
+      "Bash(pytest -x -q)",
+      "Bash(python -c ' *)",
+      "Bash(cd /media/tk/Programming1/Python/VLM-Photo-Editor *)",
+      "Skill(idea-reviewer)",
+      "Skill(idea-reviewer:*)",
+      "Bash(auto)",
+      "Bash(grep -n -i \"three accept\\\\|`auto`\" /media/tk/Programming1/Python/VLM-Photo-Editor/agent_notes/goal.md /media/tk/Programming1/Python/VLM-Photo-Editor/agent_notes/description.md)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('vlm_photo_editor/app/main.py'\\).read\\(\\)\\); ast.parse\\(open\\('vlm_photo_editor/app/components/plan_view.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(git status *)",
+      "Bash(python3 -)",
+      "Bash(python3)",
+      "Bash(awk '/^diff --git a\\\\/tests\\\\/unit\\\\/test_planner.py/,0' /tmp/tests2.diff)",
+      "Bash(cp /tmp/test_planner_v0.py /tmp/test_planner_final.py)",
+      "Bash(patch /tmp/test_planner_final.py)",
+      "Bash(git -C /media/tk/Programming1/Python/VLM-Photo-Editor hash-object /tmp/test_planner_final.py)",
+      "Bash(git -C /media/tk/Programming1/Python/VLM-Photo-Editor log --all --oneline -- tests/unit/test_planner.py)",
+      "Bash(git apply *)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_ops_backends_cv_backend.py.diff 0 2)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/tests_unit_test_ops.py.diff 2)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_ops_executor.py.diff 0 1)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_ops_backends_pil_backend.py.diff 2 3)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/tests_unit_test_ops.py.diff 0)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_ops_backends_cv_backend.py.diff 1)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_ops_executor.py.diff 2)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/validator.diff 1)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_templates_planner.py.diff 4)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/tests_unit_test_ops.py.diff 3)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_ops_backends_pil_backend.py.diff 0 1)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/validator.diff 0)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_ops_executor.py.diff 3)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/compiler.diff 1 2 3)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/vlm_photo_editor_templates_planner.py.diff 1 3)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/compiler.diff 0)",
+      "Bash(git reset *)",
+      "Bash(python3 - /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/compiler_final.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/compiler_commit6.py)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/media/tk/Programming1/Python/VLM-Photo-Editor/vlm_photo_editor/planner/compiler.py'\\).read\\(\\)\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/split_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/main2.diff)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/split_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/settings2.diff)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/split_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/batch_review2.diff)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/split_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/planner2.diff)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/extract_hunks.py /tmp/claude-1000/-media-tk-Programming1-Python-VLM-Photo-Editor/1e7b900b-7803-4832-8c65-449b4ae56852/scratchpad/settings2.diff 1)",
+      "Bash(ruff check *)",
+      "Bash(python -m pytest tests/unit/test_planner.py tests/unit/test_edit_flow.py tests/unit/test_p9_critic.py -q)",
+      "Bash(python -m pytest tests/* )",
+      "Skill(ralph-loop:ralph-loop)",
+      "Skill(ralph-loop:ralph-loop:*)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(ruff check *)",
+      "Bash(ruff format *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python3 - /tmp/claude-1000/-media-tk-Programming-Python-VLM-Photo-Editor/8a61d676-48cf-41a4-bde0-3a32b438a999/scratchpad/main_c4_critic.diff)",
+      "Bash(python3 /tmp/claude-1000/-media-tk-Programming-Python-VLM-Photo-Editor/8a61d676-48cf-41a4-bde0-3a32b438a999/scratchpad/pick_hunks.py /tmp/claude-1000/-media-tk-Programming-Python-VLM-Photo-Editor/8a61d676-48cf-41a4-bde0-3a32b438a999/scratchpad/main_full.diff /tmp/claude-1000/-media-tk-Programming-Python-VLM-Photo-Editor/8a61d676-48cf-41a4-bde0-3a32b438a999/scratchpad/main_c4_whole.diff 0 1 2 3 4 7 8 9)",
+      "Bash(python -m pytest tests/unit/test_recipe.py::test_store_save_atomic_on_write_failure tests/unit/test_prefs.py::test_preference_store_save_atomic_on_write_failure -q)",
+      "Bash(python -m pytest tests/* -q)",
+      "Bash(python -m pytest tests/unit/test_ops.py -q)",
+      "Bash(python -m pytest tests/unit/test_schema.py -q)",
+      "Bash(xargs -I{} sh -c 'grep -l \"op_name\" \"{}\"')",
+      "Bash(python -m pytest * -q | tail *)",
+      "Bash(python -m pytest tests/unit/test_ops.py tests/unit/test_p13_character_focus.py tests/unit/test_op_catalog.py -q)",
+      "Bash(python -m pytest -m \"not slow\" -q)",
+      "Bash(bash agent_notes/utility_scripts/run_checks.sh)",
+      "Bash(git diff *)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
     ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agent_notes/utility_scripts/cleanup.sh\" || true",
+            "statusMessage": "Running session cleanup..."
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "ralph-loop@claude-plugins-official": true
   }
 }

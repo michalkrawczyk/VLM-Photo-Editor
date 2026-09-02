@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class OpName(str, Enum):
@@ -13,6 +13,7 @@ class OpName(str, Enum):
     EXPOSURE = "exposure"
     DENOISE = "denoise"
     MASK = "mask"
+    FILL_MASK = "fill_mask"
     REGION_EDIT = "region_edit"
     BACKGROUND_REPLACE = "background_replace"
     FRAME = "frame"
@@ -44,6 +45,7 @@ class FramingMode(str, Enum):
     LEAD_ROOM = "lead_room"
     HORIZON_THIRD = "horizon_third"
     CUSTOM = "custom"
+    RECOMMEND_BEST = "recommend_best"
 
 
 class AcceptMode(str, Enum):
@@ -51,6 +53,13 @@ class AcceptMode(str, Enum):
     AUTO_LOW = "auto_low"  # auto-approve if all ops are LOW risk
     AUTO_MEDIUM = "auto_medium"  # auto-approve if all ops are LOW or MEDIUM risk
     FULL_AUTO = "full_auto"  # always auto-approve
+
+
+class CharacterFocusBackend(str, Enum):
+    OFF = "off"
+    MEDIAPIPE = "mediapipe"
+    YOLO_ONNX = "yolo_onnx"
+    U2NETP = "u2netp"
 
 
 class BoundingBox(BaseModel):
@@ -62,12 +71,28 @@ class BoundingBox(BaseModel):
 
 class Op(BaseModel):
     op_name: OpName
-    backend: Backend = Backend.PIL
+    backend: Backend
     params: dict[str, Any] = Field(default_factory=dict)
     bbox: BoundingBox | None = None
     risk_tier: RiskTier = RiskTier.LOW
     step_id: str
 
+    @model_validator(mode="after")
+    def _risk_tier_from_catalog(self) -> "Op":
+        # risk_tier gates auto-approval (AUTO_LOW/AUTO_MEDIUM); recipes are
+        # user-editable, so a supplied value can never be trusted over the catalog.
+        from vlm_photo_editor.schema.op_catalog import get_spec
+
+        self.risk_tier = get_spec(self.op_name).risk_tier
+        return self
+
 
 class OpGraph(BaseModel):
     ops: list[Op] = Field(default_factory=list)
+
+
+class FramingIntent(BaseModel):
+    mode: FramingMode
+    focus_instruction: str = ""
+    frame_ratio: str | None = None
+    user_instruction: str | None = None

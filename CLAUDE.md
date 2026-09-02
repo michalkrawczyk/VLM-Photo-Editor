@@ -1,12 +1,19 @@
 # VLM Photo Editor — Claude Instructions
 
-## Project Mission
+## Mission
 
 Photo editing app powered by a VLM: propose a human-readable plan → user approves → deterministic executor runs it. Backgrounds may use genAI; everything else uses ordinary imaging libs. Originals are never altered.
 
+For a photographer/editor who wants fast, explainable, reversible edits — not a black box. Four accept modes control automation level: `manual` always prompts; `auto_low`/`auto_medium` skip approval by risk tier (LOW / LOW+MEDIUM); `full_auto` executes with no pre-execution gate at all, including genAI ops — safe because subject pixels are frozen and saves are non-destructive, so a bad result only costs a rerun.
+
 **One-line architecture:** Planner (VLM) → human-readable plan → user approval → Compiler → validated OpGraph → Executor (deterministic code + optional genAI + optional Photoshop) → Recipe (non-destructive, replayable). An optional Critic verifies results.
 
-**Non-negotiable principles:**
+**Non-goals:** video/motion content, multi-user/team collaboration or cloud sync, mobile/web-hosted deployment, print-production color-managed workflows.
+
+**Maturity:** mature, not scaffold-stage. Build plan (`plans/photo_editor_build_plan.md`) spans P0–P13, most DoD checkboxes done — count the boxes there, don't trust a number quoted here. Follow it in order — DoD checkboxes are a gate, not a suggestion.
+
+### Non-negotiable principles
+
 1. **Originals are sacred.** Saves always write a new file. Writing over the source is a bug.
 2. **Keys are secret.** Never in code, recipes, sidecars, logs, prompts, or session state. Resolution: env → OS keyring → gitignored `.env`. Keys reach only the provider client at call time; UI shows them masked; redaction filter scrubs logs. Recipes store model name only.
 3. **Plan before action.** Human-readable plan is source of truth. Compiled ops link back by stable step-ID; never silently rewritten.
@@ -17,13 +24,61 @@ Photo editing app powered by a VLM: propose a human-readable plan → user appro
 8. **Planner ↔ Executor parity.** Planner may only propose ops the executor can run under the active policy (Auto / PS-strict / No-PS).
 9. **Photoshop is optional, never required.** One backend behind specific ops, not a dependency.
 
-**How to work on this project:**
-- Follow `plans/photo_editor_build_plan.md` in order. DoD checkboxes are a gate, not a suggestion.
-- When a file's path is already known, read it directly — don't use an Explore agent (it summarizes, losing precision). Use `codebase-navigation` to find the exact location of a symbol, class, or function within files. Use Explore only when the file's location is genuinely unknown.
+### Working notes
+
+- When a file's path is already known, read it directly — don't use an Explore agent (it summarizes, losing precision). See "Code search order" under `agent_notes/` below for locating unknown symbols.
 - If a request conflicts with a principle above, stop and flag it — don't quietly reinterpret.
 - Prefer the boring, deterministic path. Use genAI/Photoshop only where imaging libs genuinely can't do the job.
-- Make the invisible inspectable: plans, compiled ops, recipes, and learned preferences must be viewable and editable.
+- Make the invisible inspectable: plans, compiled ops, recipes, and learned preferences must stay viewable and editable.
 - Fail loudly and safely. Reject invalid plans/params with clear errors; never execute something unvalidated.
+
+---
+
+## Precedence
+
+`session instruction > CLAUDE.md > agent_notes/ > defaults.`
+
+---
+
+## Challenge
+
+Plan given ≠ plan accepted. Applies to plans, solutions, theories, claims, analyses — yours and the user's.
+
+Before executing or agreeing:
+- Name the weakest step/assumption/claim and why it's weakest
+- Name what breaks if it's wrong
+- Name the cheaper alternative if one exists
+
+Format: `Weak point: [what] → [consequence]. Alternative: [what].`
+Max 3, ranked by cost. Weak point exists → state it, always. Silence = you found none, and you own that.
+
+Flag explicitly: irreversible steps, data loss paths, unbounded scope, unverifiable success criteria,
+unstated assumptions, work duplicating something already in repo, reasoning that holds only in the happy path.
+
+Disagreement is not delay: state objection once, then proceed with user's choice unless T3-gated.
+
+---
+
+## Done Gate
+
+Task complete → read [agent_notes/done_gate.md](agent_notes/done_gate.md), run that tier.
+Tiers: T0 docs · T1 any code · T2 behavior change · T3 schema/migration/public API/dep/config.
+T1 minimum: `bash agent_notes/utility_scripts/run_checks.sh` → every BLOCK row PASS **except the
+known-red `ruff` row** (48 pre-existing errors on a clean tree, 1 auto-fixable). Interim pass
+condition: no new ruff errors in files your diff touched — state that, never claim green.
+Baseline table: `done_gate.md`.
+Scoped runs: `[PATH ...]`, `-k EXPR`, `-m MARKER`, `--ignore PATH`, `--short [N]` (tails pytest output only — Summary table and exit code stay intact). Full list: `done_gate.md`.
+pydocstyle is WARN-only, never blocks. Any `SKIP` row → tool not installed, say "unverified".
+T3 requires human confirm before commit, and `--full` green.
+Report: `Changed: … | Ran: cmd → result | Assumptions: … | Not done: …`
+No green claim without command output. Every changed line traces to request.
+
+---
+
+## Stuck
+
+Same error 3x → stop. Report diagnosis, attempts, what's needed.
+Never: skip/xfail, `# type: ignore`, `except: pass`, mock the failure, weaken assertion, delete test, `--no-verify`.
 
 ---
 
@@ -84,6 +139,8 @@ When your changes create orphans:
 
 The test: Every changed line should trace directly to the user's request.
 
+Formatter output wins over local style.
+
 ## 4. Goal-Driven Execution
 
 **Define success criteria. Loop until verified.**
@@ -104,39 +161,49 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ---
 
+## Subagents
+
+Before delegating: read [agent_notes/subagents.md](agent_notes/subagents.md).
+Never delegate: work needing this conversation's accumulated context · write/architecture/API
+decisions · the Done Gate · commits. Known-path reads are cheaper direct — don't brief an agent.
+A subagent's "tests pass" never satisfies T1–T3. Rerun the gate yourself.
+Report is a claim, not a fact — open the cited file:line before acting on it.
+Report delegation in your summary: `Delegated: [what] → [what came back].`
+
+---
+
 ## Testing
 
-Before creating new test units, check if tested methods can be added to existing pipelines. Markers: `slow` (long-running), `integration` (requires full pipeline).
-
-Fewer test functions, broader coverage. Use `@pytest.mark.parametrize` — never `for` loops. Merge related assertions (schema + round-trip + error case) into one test.
+Before writing a test: read [agent_notes/testing.md](agent_notes/testing.md).
+Extend existing coverage > new file. `@pytest.mark.parametrize` — never `for` loops.
+Markers (`pyproject.toml`): `slow` · `integration` · `e2e`. `addopts` excludes **e2e** by default,
+not slow; the fast gate run is an explicit `pytest -m "not slow"`.
+Session-written scripts → `.tmp_scripts/` (gitignored), never imported by the package.
 
 ---
 
 ## Git Commits
 
-Conventional Commits. Subject ≤50 chars (hard cap 72). Imperative mood. No trailing period. Format: `<type>(<scope>): <summary>`. Types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `build`, `ci`, `style`, `revert`. Body only for non-obvious why, breaking changes, migration notes, `Closes #N`. No AI attribution or emoji.
+Before any commit: read [agent_notes/git.md](agent_notes/git.md).
+Conventional Commits: `<type>(<scope>): <summary>`, subject ≤50 chars (hard cap 72), imperative, no
+trailing period. Never commit secrets, `.env`, generated files (`agent_ignore/`), binaries,
+`.tmp_scripts/`. No AI attribution or emoji. Never `--no-verify`.
 
 ---
 
-## Tech Stack
+## Architecture & Stack
 
-See [agent_notes/stack.md](agent_notes/stack.md) for full stack and rationale. Required: Pydantic≥2.7, structlog≥24.0, rawpy (not PIL) for RAW, LangChain+LangGraph, replicate≥0.30, Streamlit, anyio≥4.3.
+Layer locations and file tree: [agent_notes/structure.md](agent_notes/structure.md). Strict boundaries: `schema/` imports nothing from siblings; `planner/` never imports `imageio/`/`ops/`; `imageio/` never overwrites source; `secrets/` `RedactionFilter` on every log sink (stdlib `logging.Filter`, not a structlog processor — see `agent_notes/stack.md` for an open caveat on structlog-routed log calls).
 
----
+Required deps: Pydantic≥2.7, structlog≥24.0, rawpy (not PIL) for RAW, LangChain+LangGraph, replicate≥0.30, Streamlit, anyio≥4.3. Full stack + rationale: [agent_notes/stack.md](agent_notes/stack.md).
 
-## Architecture Rules
+Per-module invariants, import rules, common mistakes: `vlm_photo_editor/<module>/AGENTS.md`, where present (9/15 modules — see `agent_notes/structure.md` for current coverage).
 
-Layer locations: [agent_notes/structure.md](agent_notes/structure.md). Strict boundaries: `schema/` imports nothing from siblings; `planner/` never imports `imageio/`/`ops/`; `imageio/` never overwrites source; `secrets/` RedactionProcessor on every log sink.
-
-Per-module invariants, import rules, file map, and common mistakes: `vlm_photo_editor/<module>/AGENTS.md` — read it before editing that module.
-
----
-
-## Common Mistakes
+### Common Mistakes
 
 | Wrong | Correct |
 |-------|---------|
-| Log or print API key anywhere | Route all output through structlog with RedactionProcessor active |
+| Log or print API key anywhere | Route all output through logging with `RedactionFilter` active |
 | Store API key in Recipe JSON | Store model name only; key resolved at runtime via SecretStore |
 | Overwrite source image on save | Always write to new path; original is immutable |
 | Execute Op without schema validation | Pass ops through Executor.apply() which validates against OpGraph |
@@ -147,12 +214,18 @@ Per-module invariants, import rules, file map, and common mistakes: `vlm_photo_e
 
 ---
 
-## Reference Documentation
+## agent_notes/
 
-**Goal:** [agent_notes/goal.md](agent_notes/goal.md)  
-**Stack & Rationale:** [agent_notes/stack.md](agent_notes/stack.md)  
-**Project Structure:** [agent_notes/structure.md](agent_notes/structure.md)  
-**Product Description:** [agent_notes/description.md](agent_notes/description.md)  
-**Build Plan (P0–P10):** [plans/photo_editor_build_plan.md](plans/photo_editor_build_plan.md)  
-**Future/Deferred:** [agent_notes/future_improvements.md](agent_notes/future_improvements.md)  
-**Codebase Navigation:** invoke `Skill("codebase-navigation")` before any grep/find/search operation. Run `python agent_notes/generate_module_map.py` to regenerate module map.
+Project notes bundle — dir name is `agent_notes/`, not `.agent_notes/` (established convention, kept as-is). One concept per file. Read `agent_notes/index.md` at task start for the full map; terse version below.
+
+**Read-at-start:** `agent_notes/commands.md` (verified setup/run/test/lint/typecheck commands, before running anything) · `agent_notes/module_map.md` (how to generate/view/search the code index, before any grep/find)
+
+**Read-on-demand:** `agent_notes/done_gate.md` (T0–T3 ladder, run_checks row semantics — task complete) · `agent_notes/testing.md` (markers, fixtures, test layout — before writing a test) · `agent_notes/git.md` (commit format, never-commit list — before committing) · `agent_notes/subagents.md` (delegate-when, brief format — before delegating) · `agent_notes/goal.md` (one-paragraph pitch, accept modes) · `agent_notes/description.md` (full product description, MVP acceptance criteria, out-of-scope — scoping a feature) · `agent_notes/stack.md` (stack + rationale, before adding a dependency) · `agent_notes/structure.md` (module list + tree, finding where a file belongs) · `agent_notes/future_improvements.md` (deferred features, why-deferred, adoption trigger) · `agent_notes/insights.md` (cross-session gotchas worth carrying forward) · `agent_notes/log.md` (append-only history of bundle/convention changes)
+
+**Scripts:** `agent_notes/generate_module_map.py` / `view_module_map.py` / `search_module_map.py` (see `module_map.md`) · `agent_notes/utility_scripts/run_checks.sh` (Done Gate: lint + format + docstyle + tests; scoped/short pytest runs) · `agent_notes/utility_scripts/cleanup.sh` (end-of-session format + module-map regen) · `agent_notes/utility_scripts/run_all_reviews.sh` (loops `/batch_review` until `plans/plan_review.md` batches are done) · `agent_notes/utility_scripts/validate_okf.py` (run after adding/renaming a bundle file)
+
+**Code search order.** Locating classes, methods, functions; exploring subsystem structure; finding call sites; reading signatures; understanding file organization → invoke `Skill("codebase-navigation")` (wraps the module-map scripts) or read `agent_notes/module_map.md` directly, run the scripts it documents FIRST. grep/semantic search only after the map comes up short. Map stale/missing → `python agent_notes/generate_module_map.py`, or fall back to grep and flag it in the report.
+
+New durable fact (gotcha, why-this-design, API quirk, invalidated assumption) discovered mid-task → add it to the relevant file in this bundle before ending the session; cross-session observations go in `insights.md`, one dated line for a nontrivial bundle/convention change goes in `log.md`; update `agent_notes/index.md` if it's a new file. Skip if nothing durable was learned — say "no notes update needed", don't pad.
+
+Note contradicts code → code wins, fix note in the same commit.

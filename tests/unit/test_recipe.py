@@ -103,6 +103,26 @@ def test_store_branch_creates_separate_sidecars(tmp_path: Path) -> None:
     assert RecipeStore.load(v2_path).op_graph.ops[0].params["ev"] == 2.0
 
 
+def test_store_save_atomic_on_write_failure(tmp_path: Path, monkeypatch) -> None:
+    """A crash mid-write must not corrupt a previously-saved sidecar."""
+    src = tmp_path / "photo.jpg"
+    src.touch()
+    saved_path = RecipeStore.save(_make_recipe(src, ev=1.0))
+    original_bytes = saved_path.read_bytes()
+
+    def _crash_partway(self, data, *args, **kwargs):
+        with open(self, "w", encoding="utf-8") as f:
+            f.write(data[: len(data) // 2])
+        raise OSError("simulated crash mid-write")
+
+    monkeypatch.setattr(Path, "write_text", _crash_partway)
+    with pytest.raises(OSError):
+        RecipeStore.save(_make_recipe(src, ev=2.0))
+
+    assert saved_path.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_xmp_stubs_raise(tmp_path: Path) -> None:
     recipe = _make_recipe(tmp_path / "photo.jpg")
     with pytest.raises(NotImplementedError, match="deferred"):

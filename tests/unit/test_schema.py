@@ -1,7 +1,9 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from vlm_photo_editor.schema.ops import (
     Backend,
@@ -31,9 +33,9 @@ def test_plan_fixture():
     data = json.loads((FIXTURES / "sample_plan.json").read_text())
     plan = HumanPlan.model_validate(data)
     assert len(plan.steps) == 2
-    assert plan.steps[0].step_id == "step-001"
+    assert plan.steps[0].step_id == "00000000-0000-0000-0000-000000000001"
     assert plan.steps[0].title == "Crop to 4:3"
-    assert plan.steps[1].step_id == "step-002"
+    assert plan.steps[1].step_id == "00000000-0000-0000-0000-000000000002"
 
 
 def test_recipe_fixture():
@@ -55,7 +57,7 @@ def test_recipe_fixture():
     ],
 )
 def test_op_round_trip(op_name: OpName, params: dict) -> None:
-    op = Op(op_name=op_name, params=params, step_id="test-step")
+    op = Op(op_name=op_name, params=params, backend=Backend.PIL, step_id="test-step")
     restored = Op.model_validate(op.model_dump())
     assert restored.op_name == op_name
     assert restored.params == params
@@ -67,6 +69,7 @@ def test_op_with_bbox():
         op_name=OpName.REGION_EDIT,
         params={"prompt": "blurred bokeh"},
         bbox=BoundingBox(x=10, y=20, width=300, height=200),
+        backend=Backend.GENAI,
         risk_tier=RiskTier.HIGH,
         step_id="step-bbox",
     )
@@ -74,6 +77,24 @@ def test_op_with_bbox():
     assert restored.bbox is not None
     assert restored.bbox.width == 300
     assert restored.risk_tier == RiskTier.HIGH
+
+
+def test_op_risk_tier_always_derived_from_catalog() -> None:
+    """SC-P2: a caller-supplied risk_tier must never override the catalog value —
+    it gates auto-approval and recipes are user-editable/untrusted input."""
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={"prompt": "x"},
+        backend=Backend.GENAI,
+        risk_tier=RiskTier.LOW,
+        step_id="s1",
+    )
+    assert op.risk_tier == RiskTier.HIGH
+
+
+def test_op_backend_is_required() -> None:
+    with pytest.raises(ValidationError, match="backend"):
+        Op(op_name=OpName.CROP, params={"left": 0, "top": 0, "right": 1, "bottom": 1}, step_id="s1")
 
 
 def test_bounding_box_rejects_zero_dimension():
@@ -89,21 +110,23 @@ def test_bounding_box_rejects_negative_origin():
 
 
 def test_compiler_result_round_trip():
+    _sid = "00000000-0000-0000-0000-000000000001"
     plan = HumanPlan(
-        steps=[HumanStep(step_id="s1", index=1, title="Crop", why="Better composition")]
+        steps=[HumanStep(step_id=_sid, index=1, title="Crop", why="Better composition")]
     )
     graph = OpGraph(
         ops=[
             Op(
                 op_name=OpName.CROP,
                 params={"left": 0, "top": 0, "right": 400, "bottom": 300},
-                step_id="s1",
+                backend=Backend.PIL,
+                step_id=_sid,
             )
         ]
     )
     result = CompilerResult(plan=plan, op_graph=graph)
     restored = CompilerResult.model_validate(result.model_dump())
-    assert restored.plan.steps[0].step_id == "s1"
+    assert restored.plan.steps[0].step_id == _sid
     assert restored.op_graph.ops[0].op_name == OpName.CROP
 
 
@@ -142,3 +165,85 @@ def test_explicit_rule_overrides_by_priority():
     prefs = Preferences(explicit=[explicit], learned=[learned])
     assert prefs.explicit[0].description == "warm tones"
     assert prefs.learned[0].description == "cool tones"
+
+
+# ---------------------------------------------------------------------------
+# S-D1 — BatchImageRecord.filename path-traversal sanitisation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("normal.jpg", "normal.jpg"),
+        ("../etc/passwd", "passwd"),
+        ("/absolute/path/file.jpg", "file.jpg"),
+        ("subdir/image.png", "image.png"),
+    ],
+)
+def test_batch_filename_sanitisation(raw: str, expected: str) -> None:
+    from vlm_photo_editor.schema.batch import BatchImageRecord
+
+    record = BatchImageRecord(filename=raw)
+    assert record.filename == expected
+
+
+def test_batch_filename_rejects_null_bytes() -> None:
+    from pydantic import ValidationError
+
+    from vlm_photo_editor.schema.batch import BatchImageRecord
+
+    with pytest.raises((ValueError, ValidationError)):
+        BatchImageRecord(filename="evil\x00file.jpg")
+
+
+# ---------------------------------------------------------------------------
+# S-B2 — schema __init__ exports AcceptMode, FramingIntent, EditDelta
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# PLN-B6 — step_id must be a valid UUID string
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "",
+        "s1",
+        "step-001",
+        "not-a-uuid",
+        "123",
+        "c2f5e813-22b4-5d9g-0f7e-3g4b1d6c8e90",  # VLM hallucination pattern
+    ],
+)
+def test_human_step_rejects_non_uuid_step_id(bad_id: str) -> None:
+    with pytest.raises(ValidationError, match="not a valid UUID"):
+        HumanStep(step_id=bad_id, index=1, title="t", why="w")
+
+
+def test_human_step_accepts_valid_uuid_step_id() -> None:
+    import uuid
+
+    sid = str(uuid.uuid4())
+    step = HumanStep(step_id=sid, index=1, title="t", why="w")
+    assert step.step_id == sid
+
+
+def test_human_step_default_step_id_is_valid_uuid() -> None:
+    step = HumanStep(index=1, title="t", why="w")
+    assert re.match(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        step.step_id,
+        re.IGNORECASE,
+    )
+
+
+def test_schema_init_exports() -> None:
+    import vlm_photo_editor.schema as schema
+    from vlm_photo_editor.schema import AcceptMode, EditDelta, FramingIntent  # noqa: F401
+
+    assert "AcceptMode" in schema.__all__
+    assert "FramingIntent" in schema.__all__
+    assert "EditDelta" in schema.__all__

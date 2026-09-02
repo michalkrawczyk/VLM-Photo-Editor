@@ -15,9 +15,13 @@ include = ["vlm_photo_editor*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# e2e needs a live browser + real API calls; opt in with `pytest -m e2e`
+# (a -m on the command line overrides this one).
+addopts = ["-m", "not e2e"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring full pipeline",
+    "e2e: end-to-end browser tests against a live Streamlit server; real API calls, not run by default (select with '-m e2e')",
 ]
 
 [tool.black]

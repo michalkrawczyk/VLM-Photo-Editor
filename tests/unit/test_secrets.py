@@ -57,6 +57,27 @@ def test_secret_store_from_env(monkeypatch):
     assert key == "sk-testkey1234567890abcdef"
 
 
+def test_secret_store_replicate_reads_token_env(monkeypatch):
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_testtoken1234567890abcdef")
+    monkeypatch.delenv("REPLICATE_API_KEY", raising=False)
+    key = SecretStore.get("replicate")
+    assert key == "r8_testtoken1234567890abcdef"
+
+
+def test_secret_store_has_returns_true_when_key_present(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-present1234567890abcdef")
+    assert SecretStore.has("anthropic") is True
+
+
+def test_secret_store_has_returns_false_when_key_absent(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with (
+        patch("keyring.get_password", return_value=None),
+        patch("dotenv.find_dotenv", return_value=""),
+    ):
+        assert SecretStore.has("anthropic") is False
+
+
 def test_secret_store_env_takes_priority_over_keyring(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-value-1234567890abcd")
     with patch("keyring.get_password", return_value="sk-keyring-value-should-not-win"):
@@ -90,7 +111,8 @@ def test_secret_store_from_keyring(monkeypatch):
         ("sk-abc1234", "******1234"),
         ("ab", "****"),
         ("abcd", "****"),
-        ("abcde", "*bcde"),
+        ("abcde", "****"),
+        ("abcdefghi", "*****fghi"),
     ],
 )
 def test_secret_store_mask(key: str, expected: str) -> None:
@@ -101,7 +123,7 @@ def test_model_registry_default_roles():
     reg = get_registry()
     assert reg.get("planner") == "claude-sonnet-4-6"
     assert reg.get("critic") == "claude-sonnet-4-6"
-    assert reg.get("preference_aggregator") == "claude-haiku-4-5-20251001"
+    assert reg.get("preference_aggregator") == "LiquidAI/LFM2.5-1.2B-Instruct"
 
 
 def test_model_registry_set_takes_effect():
@@ -122,3 +144,34 @@ def test_model_registry_all_roles():
     roles = reg.all_roles()
     assert "planner" in roles
     assert "critic" in roles
+
+
+def test_redaction_filter_formats_percent_args():
+    """SEC-B2: key in args must be redacted after getMessage() formats the string."""
+    key = "sk-ant-abc123abcdefghij"
+    record = logging.LogRecord("test", logging.INFO, "", 0, "api key=%s", (key,), None)
+    RedactionFilter().filter(record)
+    assert "[REDACTED]" in record.msg
+    assert "sk-ant-" not in record.msg
+    assert record.args == ()
+
+
+def test_model_registry_set_preserves_extra_fields():
+    """SEC-B5: set() must not drop vllm_base_url, gguf_path, max_images_per_call."""
+    from vlm_photo_editor.config.registry import ModelEntry
+
+    reg = ModelRegistry()
+    entry = ModelEntry(
+        model_id="old-model",
+        provider="local",
+        loader="vllm",
+        vllm_base_url="http://my-server:9000/v1",
+        max_images_per_call=4,
+    )
+    reg.set_entry("planner", entry)
+    reg.set("planner", "new-model")
+    updated = reg.get_entry("planner")
+    assert updated.model_id == "new-model"
+    assert updated.vllm_base_url == "http://my-server:9000/v1"
+    assert updated.max_images_per_call == 4
+    assert updated.loader == "vllm"

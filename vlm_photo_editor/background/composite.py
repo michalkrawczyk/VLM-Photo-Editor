@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.ndimage import binary_dilation, binary_erosion, gaussian_filter, uniform_filter
+from scipy.ndimage import binary_dilation, gaussian_filter, uniform_filter
 from skimage.color import lab2rgb, rgb2lab
 
+from vlm_photo_editor.config.settings import get_settings
 from vlm_photo_editor.imageio.container import ImageContainer
 
 
@@ -95,9 +96,11 @@ def seam_blend(
     source: ImageContainer,
     generated: ImageContainer,
     mask: np.ndarray,
-    feather_px: int = 20,
+    feather_px: int | None = None,
 ) -> ImageContainer:
     """Feathered Gaussian blend at the mask boundary."""
+    if feather_px is None:
+        feather_px = get_settings().feather_px
     src_f = _to_float(source)
     gen_f = _to_float(generated)
 
@@ -113,12 +116,14 @@ def composite(
     source: ImageContainer,
     generated: ImageContainer,
     mask: np.ndarray,
-    feather_px: int = 20,
+    feather_px: int | None = None,
 ) -> ImageContainer:
     """Full pipeline: color_match → grain_match → seam_blend.
 
     Asserts that pixels well outside the feather zone are byte-identical to source.
     """
+    if feather_px is None:
+        feather_px = get_settings().feather_px
     matched = color_match(source, generated, mask)
     matched = grain_match(source, matched, mask)
     result = seam_blend(source, matched, mask, feather_px=feather_px)
@@ -129,7 +134,6 @@ def composite(
     # too small to have safe territory (e.g., small unit test fixtures).
     safe_outside = ~binary_dilation(mask, iterations=feather_px * 3)
     if safe_outside.any():
-        assert np.all(
-            result.pixels[safe_outside] == source.pixels[safe_outside]
-        ), "composite: subject pixels outside feather zone were modified"
+        if not np.all(result.pixels[safe_outside] == source.pixels[safe_outside]):
+            raise RuntimeError("composite: subject pixels outside feather zone were modified")
     return result

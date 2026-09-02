@@ -2,20 +2,25 @@ from __future__ import annotations
 
 import base64
 import io
-import logging
 from typing import TYPE_CHECKING
 
-_log = logging.getLogger(__name__)
-
+import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from vlm_photo_editor.config.policy import allowed_ops_for_mode
 from vlm_photo_editor.models.registry import build_client
+from vlm_photo_editor.schema.detection import DetectedSubject
+from vlm_photo_editor.schema.ops import FramingIntent, FramingMode
 from vlm_photo_editor.schema.plan import HumanPlan
 from vlm_photo_editor.schema.prefs import Preferences
+from vlm_photo_editor.templates.planner import build_system_prompt
 
 if TYPE_CHECKING:
     from vlm_photo_editor.imageio.container import ImageContainer
+
+# AGT-D2: structlog (not stdlib logging) so VLM prompt logs pass the RedactionProcessor.
+log = structlog.get_logger()
+
+_NO_TARGET_MODES = {FramingMode.RECOMMEND_BEST, FramingMode.CUSTOM, FramingMode.FILL_FRAME}
 
 
 class Planner:
@@ -28,22 +33,30 @@ class Planner:
         intent: str,
         prefs: Preferences | None = None,
         mode: str = "full",
-        composition: str | None = None,
+        framing_intent: FramingIntent | None = None,
+        detected_subject: DetectedSubject | None = None,
+        genai_available: bool = True,
     ) -> HumanPlan:
         from vlm_photo_editor.config.settings import get_debug_settings
         from vlm_photo_editor.ops.backends.pil_backend import frame_target_size
 
-        target_size = (
-            frame_target_size(container.width, container.height, composition)
-            if composition
-            else None
+        composition, target_size = self._derive_composition(
+            framing_intent, container.width, container.height, frame_target_size
         )
         messages = [
-            SystemMessage(content=self._system_prompt(mode, prefs, composition, target_size)),
-            HumanMessage(content=self._user_content(container, intent, composition, target_size)),
+            SystemMessage(
+                content=build_system_prompt(
+                    mode, prefs, framing_intent, target_size, detected_subject, genai_available
+                )
+            ),
+            HumanMessage(
+                content=self._user_content(
+                    container, intent, composition, target_size, detected_subject
+                )
+            ),
         ]
         if get_debug_settings().vlm_prompt_debug:
-            _log.debug("vlm_prompt system=%s user_text=%s", messages[0].content, intent)
+            log.debug("vlm_prompt", system=messages[0].content, user_text=intent)
         result = self._llm.invoke(messages)
         result.mode = mode
         return result
@@ -55,15 +68,15 @@ class Planner:
         feedback: str,
         prefs: Preferences | None = None,
         mode: str = "full",
-        composition: str | None = None,
+        framing_intent: FramingIntent | None = None,
+        detected_subject: DetectedSubject | None = None,
+        genai_available: bool = True,
     ) -> HumanPlan:
         from vlm_photo_editor.config.settings import get_debug_settings
         from vlm_photo_editor.ops.backends.pil_backend import frame_target_size
 
-        target_size = (
-            frame_target_size(container.width, container.height, composition)
-            if composition
-            else None
+        composition, target_size = self._derive_composition(
+            framing_intent, container.width, container.height, frame_target_size
         )
         prev_json = previous_plan.model_dump_json(indent=2)
         user_text = (
@@ -71,83 +84,35 @@ class Planner:
             "Revise to incorporate feedback. Keep step_ids stable where step is unchanged."
         )
         messages = [
-            SystemMessage(content=self._system_prompt(mode, prefs, composition, target_size)),
+            SystemMessage(
+                content=build_system_prompt(
+                    mode, prefs, framing_intent, target_size, detected_subject, genai_available
+                )
+            ),
             HumanMessage(
-                content=self._user_content(container, user_text, composition, target_size)
+                content=self._user_content(
+                    container, user_text, composition, target_size, detected_subject
+                )
             ),
         ]
         if get_debug_settings().vlm_prompt_debug:
-            _log.debug("vlm_prompt system=%s feedback=%s", messages[0].content, feedback)
+            log.debug("vlm_prompt", system=messages[0].content, feedback=feedback)
         result = self._llm.invoke(messages)
         result.mode = mode
         return result
 
-    def _system_prompt(
-        self,
-        mode: str,
-        prefs: Preferences | None,
-        composition: str | None = None,
-        target_size: tuple[int, int] | None = None,
-    ) -> str:
-        allowed = sorted(op.value for op in allowed_ops_for_mode(mode))
-        lines = [
-            "You are a photo-editing planner. Produce a concise human-readable editing plan.",
-            "",
-            f"ACTIVE MODE: {mode}",
-            f"ALLOWED OPS (use ONLY these): {allowed}",
-            "",
-            "OUTPUT SCHEMA (HumanPlan — fill all fields):",
-            "  plan_id: UUID string",
-            "  mode: must equal ACTIVE MODE",
-            "  steps: list of HumanStep:",
-            "    step_id: UUID string (stable)",
-            "    index: 1-based int",
-            "    title: ≤8 words",
-            "    why: one sentence visual reason",
-            "    op_names: list[str] from ALLOWED OPS only",
-            "    op_params: list[dict] — one dict per op_name (same order)",
-            "",
-            "PARAM CONSTRAINTS:",
-            "  crop: {left, top, right, bottom} (pixel ints; 0 ≤ left < right ≤ image_width, 0 ≤ top < bottom ≤ image_height)",
-            "  rotate: {angle} (float -360 to 360)",
-            "  white_balance: {temperature} (float 1000–20000 K)",
-            "  exposure: {ev} (float -10 to 10)",
-            "  denoise: {}",
-            "  mask: {}",
-            "  region_edit: {prompt: str}",
-            "  background_replace: {prompt: str}",
-            "  frame: {mode: str} — one of: rule_of_thirds, golden_ratio, golden_spiral,",
-            "    center_symmetry, portrait_headroom, face_only, negative_space,",
-            "    fill_frame, lead_room, horizon_third",
-            "",
-            "RULES:",
-            "  - Only ops from ALLOWED OPS. Never invent op names.",
-            "  - op_params[i] matches op_names[i]. Lengths must match.",
-            "  - ≤5 steps unless strictly necessary.",
-            "  - Never include API keys or secrets.",
-        ]
-        if composition and target_size:
-            tw, th = target_size
-            lines += [
-                "",
-                "FRAMING INSTRUCTIONS:",
-                f"  Composition: {composition}",
-                f"  Target crop: {tw}×{th} px",
-                "  - Output exactly one 'crop' step.",
-                f"  - Crop must satisfy: right - left == {tw}, bottom - top == {th}.",
-                "  - Position the crop to keep the primary subject (face, person, focal point) fully in frame.",
-                "  - Follow the composition style when choosing crop position.",
-            ]
-        if prefs:
-            active_explicit = [r.description for r in prefs.explicit if r.active]
-            active_learned = [r.description for r in prefs.learned if r.active and r.approved]
-            if active_explicit:
-                lines += ["", "USER PREFERENCES (highest priority):"]
-                lines += [f"  - {d}" for d in active_explicit]
-            if active_learned:
-                lines += ["", "LEARNED PREFERENCES:"]
-                lines += [f"  - {d}" for d in active_learned]
-        return "\n".join(lines)
+    @staticmethod
+    def _derive_composition(
+        framing_intent: FramingIntent | None,
+        width: int,
+        height: int,
+        frame_target_size_fn,
+    ) -> tuple[str | None, tuple[int, int] | None]:
+        if framing_intent is None or framing_intent.mode in _NO_TARGET_MODES:
+            return None, None
+        composition = framing_intent.mode.value
+        target_size = frame_target_size_fn(width, height, composition)
+        return composition, target_size
 
     def _user_content(
         self,
@@ -155,12 +120,20 @@ class Planner:
         intent: str,
         composition: str | None = None,
         target_size: tuple[int, int] | None = None,
+        detected_subject: DetectedSubject | None = None,
     ) -> list:
         b64 = self._encode_image(container)
         text = f"Image dimensions: {container.width}x{container.height} pixels\n"
         if composition and target_size:
             tw, th = target_size
             text += f"Target frame: {tw}x{th} px (composition: {composition})\n"
+        if detected_subject is not None:
+            b = detected_subject.bbox
+            text += (
+                f"Detected subject: {detected_subject.label} "
+                f"bbox=({b.x},{b.y},{b.width},{b.height}) "
+                f"confidence={detected_subject.confidence:.2f}\n"
+            )
         text += f"Edit intent: {intent}"
         return [
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},

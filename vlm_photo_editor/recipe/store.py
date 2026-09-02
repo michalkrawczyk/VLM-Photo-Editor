@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from pathlib import Path
 
 from vlm_photo_editor.schema.recipe import Recipe
+
+
+def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write via a sibling tmp file + os.replace() so a crash mid-write can't
+    leave a truncated sidecar that fails validation on next load."""
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(text, encoding=encoding)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 class RecipeStore:
@@ -30,7 +43,7 @@ class RecipeStore:
         dest_dir = Path(directory) if directory is not None else Path(recipe.source_path).parent
         path = dest_dir / RecipeStore.sidecar_path(recipe.source_path, recipe.branch).name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(recipe.model_dump_json(indent=2), encoding="utf-8")
+        _atomic_write_text(path, recipe.model_dump_json(indent=2))
         return path
 
     @staticmethod

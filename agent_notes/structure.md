@@ -1,8 +1,8 @@
 # Project File Structure
 
-Modules: `config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `framing` · `background` · `agents` · `planner` · `recipe` · `prefs` · `ps_bridge` · `app`
+Modules: `config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `detection` · `background` · `agents` · `planner` · `recipe` · `preferences` · `pipeline` · `templates` · `app`
 
-For per-module invariants, import rules, and common mistakes see `AGENTS.md` in each module directory.
+For per-module invariants, import rules, and common mistakes see `AGENTS.md`, where present: `agents`, `secrets`, `ops`, `background`, `detection`, `imageio`, `schema`, `planner`, `app`. Not yet written for `config`, `pipeline`, `recipe`, `preferences`, `models`, `templates`.
 
 ---
 
@@ -39,31 +39,30 @@ vlm_photo_editor/
 │
 ├── ops/
 │   ├── __init__.py
+│   ├── constants.py
 │   ├── executor.py
-│   ├── validator.py
 │   ├── mask.py
-│   └── backends/
-│       ├── __init__.py
-│       ├── pil_backend.py
-│       ├── cv_backend.py
-│       └── stubs.py
+│   └── validator.py
 │
-├── framing/
+├── detection/
 │   ├── __init__.py
-│   ├── detector.py
-│   └── modes.py
+│   ├── _common.py
+│   ├── mediapipe_backend.py
+│   ├── u2netp_backend.py
+│   └── yolo_onnx_backend.py
 │
 ├── background/
 │   ├── __init__.py
-│   ├── generator.py
 │   ├── composite.py
+│   ├── generator.py
 │   └── quality.py
 │
 ├── agents/
 │   ├── __init__.py
-│   ├── planner.py        ← VLM: image + intent → HumanPlan
-│   ├── critic.py         ← VLM: edit quality verification (P9)
 │   ├── aggregator.py     ← LLM: preference rule summarization (P8)
+│   ├── critic.py         ← VLM: edit quality verification (P9)
+│   ├── edit_flow.py
+│   ├── planner.py        ← VLM: image + intent → HumanPlan
 │   └── AGENTS.md
 │
 ├── planner/
@@ -72,18 +71,25 @@ vlm_photo_editor/
 │
 ├── recipe/
 │   ├── __init__.py
-│   ├── store.py
-│   └── renderer.py
+│   ├── renderer.py
+│   ├── session.py
+│   └── store.py
 │
-├── prefs/
+├── preferences/
 │   ├── __init__.py
-│   ├── explicit.py
-│   └── learned.py
+│   └── store.py
 │
-├── ps_bridge/
+├── pipeline/
 │   ├── __init__.py
-│   ├── client.py
-│   └── vocabulary.py
+│   ├── batch.py
+│   ├── cost_router.py
+│   ├── job_queue.py
+│   └── plan_cache.py
+│
+├── templates/
+│   ├── __init__.py
+│   ├── framing.py
+│   └── planner.py
 │
 └── app/
     ├── __init__.py
@@ -92,34 +98,45 @@ vlm_photo_editor/
     ├── stubs.py
     └── components/
         ├── __init__.py
-        ├── upload.py
-        ├── preview.py
-        ├── plan_view.py
+        ├── batch_review.py
+        ├── candidate_picker.py
         ├── canvas.py
+        ├── plan_view.py
         ├── prefs_panel.py
-        └── settings.py
+        ├── preview.py
+        ├── settings.py
+        └── upload.py
 
 tests/
 ├── fixtures/
-│   ├── images/
-│   │   ├── sample.jpg
-│   │   ├── sample.png
-│   │   └── sample.nef
+│   ├── face_portrait.jpg
+│   ├── prompts/
+│   │   └── base_prompt_full_mode.txt
 │   └── schemas/
-│       ├── sample_plan.json
 │       ├── sample_opgraph.json
+│       ├── sample_plan.json
 │       └── sample_recipe.json
 ├── unit/
-│   ├── test_schema.py
-│   ├── test_secrets.py
-│   ├── test_imageio.py
-│   ├── test_ops.py
-│   ├── test_recipe.py
-│   ├── test_planner.py
+│   ├── test_background.py
+│   ├── test_edit_flow.py
 │   ├── test_framing.py
-│   └── test_background.py
-└── integration/
-    └── test_pipeline.py
+│   ├── test_imageio.py
+│   ├── test_op_catalog.py
+│   ├── test_ops.py
+│   ├── test_p9_critic.py
+│   ├── test_p10_hardening.py
+│   ├── test_p11_batch.py
+│   ├── test_p13_character_focus.py
+│   ├── test_planner.py
+│   ├── test_prefs.py
+│   ├── test_recipe.py
+│   ├── test_schema.py
+│   └── test_secrets.py
+├── integration/
+└── e2e/                          # live-browser Playwright tests (real API + real MediaPipe), see agent_notes/commands.md
+    ├── conftest.py
+    ├── _helpers.py
+    └── test_full_edit_and_framing.py
 
 .env.example
 .gitignore

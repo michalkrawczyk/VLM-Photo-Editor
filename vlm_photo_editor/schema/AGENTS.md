@@ -16,9 +16,11 @@
 | File | Responsibility |
 |------|---------------|
 | ops.py | `Op`, `OpGraph`, `OpName` enum, `Backend` enum, `RiskTier` enum |
+| op_catalog.py | `OpSpec` registry: per-op required params, bounds, risk tier, default backend, bbox-eligibility class, planner doc text — single source of truth read by `ops/validator.py`, `planner/compiler.py`, `templates/planner.py` |
 | plan.py | `HumanPlan`, `HumanStep` (stable IDs), `CompilerResult` |
 | recipe.py | `Recipe`: op-graph + model + prompt + seed per genAI op |
 | prefs.py | `Preferences`, `ExplicitRule`, `LearnedRule`, `PrefsVersion` |
+| detection.py | `DetectedSubject`: bbox + label + confidence + source, from a local detector pre-pass |
 
 ## Tests
 - Location: `tests/unit/test_schema.py`

@@ -1,49 +1,119 @@
 from __future__ import annotations
 
-from vlm_photo_editor.schema.ops import Op, OpGraph, OpName
+from vlm_photo_editor.schema.op_catalog import PARAM_BOUNDS, BBoxClass, get_spec
+from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 
-_REQUIRED_PARAMS: dict[OpName, list[str]] = {
-    OpName.CROP: ["left", "top", "right", "bottom"],
-    OpName.ROTATE: ["angle"],
-    OpName.WHITE_BALANCE: ["temperature"],
-    OpName.EXPOSURE: ["ev"],
-    OpName.DENOISE: [],
-    OpName.MASK: [],
-    OpName.REGION_EDIT: ["prompt"],
-    OpName.BACKGROUND_REPLACE: ["prompt"],
-    OpName.FRAME: ["mode"],
-}
-
-_PARAM_BOUNDS: dict[str, tuple[float, float]] = {
-    "ev": (-10.0, 10.0),
-    "angle": (-360.0, 360.0),
-    "temperature": (1000.0, 20000.0),
-    "strength": (0.0, 1.0),
-}
-
-# Ops that change image dimensions cannot be confined to a bbox.
-_SIZE_CHANGING_OPS = {OpName.CROP, OpName.ROTATE, OpName.FRAME}
+from .constants import INPAINT_OPS as _INPAINT_OPS
 
 
-def validate_op(op: Op, allowed_ops: set[OpName] | None = None) -> None:
+def _as_number(op_name: OpName, key: str, value: object) -> float:
+    """Coerce a param to float, raising ValueError (never TypeError) for bad types.
+
+    `bool` is rejected explicitly — it is an `int` subclass and almost always a
+    planner mistake for a numeric param.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"Op {op_name!r} param {key!r} must be a number, got bool {value!r}")
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"Op {op_name!r} param {key!r} must be a number, got {type(value).__name__} {value!r}"
+        ) from None
+
+
+def validate_op(
+    op: Op, allowed_ops: set[OpName] | None = None, *, require_bbox: bool = False
+) -> None:
     if allowed_ops is not None and op.op_name not in allowed_ops:
         raise ValueError(f"Op {op.op_name!r} not in allowed set")
 
-    required = _REQUIRED_PARAMS.get(op.op_name, [])
+    if require_bbox and get_spec(op.op_name).requires_bbox and op.bbox is None:
+        raise ValueError(f"Op {op.op_name!r} requires a bbox but none was provided")
+
+    # PL-P1: a subject-protection edit (invert=True) with no region is a whole-image
+    # edit — the executor never consults `invert` on the bbox-is-None branch, so this
+    # combination silently violates Principle 6. Only reject at execution time
+    # (require_bbox); the compiler emits it deliberately for the app layer to repair
+    # by injecting a detected/drawn bbox before running.
+    if require_bbox and op.bbox is None and op.params.get("invert"):
+        raise ValueError(
+            f"Op {op.op_name!r} has invert=True but no bbox: a masked edit with no "
+            "region would modify the whole image. Resolve a bbox (detected subject "
+            "or drawn region selection) before execution."
+        )
+
+    required = list(get_spec(op.op_name).required_params)
+    if op.op_name in _INPAINT_OPS and op.backend != Backend.GENAI:
+        required = [r for r in required if r != "prompt"]
     for key in required:
         if key not in op.params:
             raise ValueError(f"Op {op.op_name!r} missing required param {key!r}")
 
-    for key, (lo, hi) in _PARAM_BOUNDS.items():
+    # SC-B1: reject out-of-vocabulary string params (e.g. frame.mode, region_edit.method).
+    # Without this an unknown value passes validation, the backend silently no-ops, and
+    # the executor reports success on an unchanged image.
+    for key, choices in get_spec(op.op_name).enum_params:
+        if key in op.params and str(op.params[key]) not in choices:
+            raise ValueError(
+                f"Op {op.op_name!r} param {key!r}={op.params[key]!r} not one of {choices}"
+            )
+
+    for key, (lo, hi) in PARAM_BOUNDS.items():
         if key in op.params:
-            val = float(op.params[key])
+            val = _as_number(op.op_name, key, op.params[key])
             if not (lo <= val <= hi):
                 raise ValueError(f"Param {key!r}={val} out of bounds [{lo}, {hi}]")
 
-    if op.bbox is not None and op.op_name in _SIZE_CHANGING_OPS:
+    if op.op_name == OpName.CROP:
+        left, top, right, bottom = (
+            _as_number(op.op_name, k, op.params[k]) for k in ("left", "top", "right", "bottom")
+        )
+        for k, v in (("left", left), ("top", top), ("right", right), ("bottom", bottom)):
+            if v != int(v):
+                raise ValueError(f"Crop: {k} ({v}) must be a whole number of pixels")
+        if left < 0 or top < 0:
+            raise ValueError(f"Crop: coordinates must be non-negative, got left={left} top={top}")
+        if left >= right:
+            raise ValueError(f"Crop: left ({left}) must be < right ({right})")
+        if top >= bottom:
+            raise ValueError(f"Crop: top ({top}) must be < bottom ({bottom})")
+
+    if op.bbox is not None and get_spec(op.op_name).bbox_class is BBoxClass.SIZE_CHANGING:
         raise ValueError(f"Op {op.op_name!r} changes image size; bbox not allowed")
 
 
-def validate_op_graph(graph: OpGraph, allowed_ops: set[OpName] | None = None) -> None:
+def validate_op_graph(
+    graph: OpGraph, allowed_ops: set[OpName] | None = None, *, require_bbox: bool = False
+) -> None:
     for op in graph.ops:
-        validate_op(op, allowed_ops=allowed_ops)
+        validate_op(op, allowed_ops=allowed_ops, require_bbox=require_bbox)
+
+
+def validate_crop_bounds(op_graph: OpGraph, w: int, h: int) -> None:
+    """Raise ValueError if any CROP op exceeds the image dimensions."""
+    for op in op_graph.ops:
+        if op.op_name != OpName.CROP:
+            continue
+        p = op.params
+        left, top, right, bottom = int(p["left"]), int(p["top"]), int(p["right"]), int(p["bottom"])
+        violations = []
+        if left < 0:
+            violations.append(f"left={left} < 0")
+        if top < 0:
+            violations.append(f"top={top} < 0")
+        if right > w:
+            violations.append(f"right={right} > image width {w}")
+        if bottom > h:
+            violations.append(f"bottom={bottom} > image height {h}")
+        if right <= left:
+            violations.append(f"right={right} <= left={left}")
+        if bottom <= top:
+            violations.append(f"bottom={bottom} <= top={top}")
+        if violations:
+            raise ValueError(
+                f"Crop out of bounds for {w}x{h} image "
+                f"(left={left} top={top} right={right} bottom={bottom}): "
+                + "; ".join(violations)
+                + f". Revise crop to fit within [0,{w}] x [0,{h}]."
+            )

@@ -5,11 +5,13 @@ pydantic>=2.7
 python-dotenv>=1.0
 keyring>=25.0
 
-# Logging & Redaction — stdlib logging + root-level RedactionFilter (see config/secrets)
+# Logging & Redaction — structlog + root-level RedactionFilter (see config/secrets)
+structlog>=24.0
 
 # Image I/O
 Pillow>=10.3
 rawpy>=0.23
+tifffile>=2024.1  # 16-bit multichannel TIFF writes (Pillow has no 16-bit RGB mode)
 
 # Image Processing
 numpy>=1.26
