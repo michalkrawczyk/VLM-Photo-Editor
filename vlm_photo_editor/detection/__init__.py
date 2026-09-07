@@ -8,7 +8,12 @@ from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.detection import DetectedSubject
 from vlm_photo_editor.schema.ops import CharacterFocusBackend
 
-__all__ = ["available_backends", "detect_subject", "install_backend_deps"]
+__all__ = [
+    "available_backends",
+    "detect_subject",
+    "install_backend_deps",
+    "ready_backends",
+]
 
 
 def available_backends() -> list[str]:
@@ -20,6 +25,29 @@ def available_backends() -> list[str]:
         result.append(CharacterFocusBackend.YOLO_ONNX.value)
         result.append(CharacterFocusBackend.U2NETP.value)
     return result
+
+
+_BACKEND_PATH_ATTR: dict[str, str] = {
+    CharacterFocusBackend.MEDIAPIPE.value: "mediapipe_model_path",
+    CharacterFocusBackend.YOLO_ONNX.value: "yolo_onnx_model_path",
+    CharacterFocusBackend.U2NETP.value: "u2netp_model_path",
+}
+
+
+def ready_backends() -> list[str]:
+    """Backends whose package is importable AND whose model-path setting resolves.
+
+    These are the ones safe to offer in the main flow — selecting any other backend
+    would guarantee a misconfiguration ``ValueError`` from ``detect_subject()``.
+    """
+    from vlm_photo_editor.config.settings import get_settings
+
+    settings = get_settings()
+    return [
+        backend
+        for backend in available_backends()
+        if getattr(settings, _BACKEND_PATH_ATTR[backend], None)
+    ]
 
 
 _BACKEND_REQS: dict[str, str] = {

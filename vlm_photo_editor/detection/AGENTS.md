@@ -17,10 +17,16 @@ box before planning, for use as framing/crop context.
   `-> DetectedSubject | None`). `ValueError` is reserved for misconfiguration
   (missing model path, unknown/off backend). Callers treat `None` as "plan
   without subject context" — the default, gracefully-handled path.
-- **`mediapipe_model_path` has an env-var fallback:** `config/settings.py` defaults it
-  from `MEDIAPIPE_MODEL_PATH` if set, else `None` (still no auto-download — just one
-  more way to supply the path, added for `tests/e2e/` to configure a subprocess-launched
-  app). `yolo_onnx_model_path`/`u2netp_model_path` are unchanged (plain `None` default).
+- **Model-path resolution (`config/settings.py::_path_setting`):** each
+  `AppSettings.*_model_path` resolves `<NAME>_MODEL_PATH` (`MEDIAPIPE_MODEL_PATH` /
+  `YOLO_ONNX_MODEL_PATH` / `U2NETP_MODEL_PATH`) from the environment, then from `.env`
+  (read via `dotenv_values`, so co-located API keys never enter `os.environ`), then —
+  `yolo_onnx` only — the bundled `infer_models/yolo/yolo26s.onnx` if that file exists,
+  else `None`. Still no auto-download and still no silent fallback to another backend.
+- **`ready_backends()` vs `available_backends()`:** `available_backends()` is
+  package-presence only; `ready_backends()` additionally requires the model path to
+  resolve. The main-flow picker offers `ready_backends()`; the Settings expander uses
+  `available_backends()` so it can still show an "importable, path not set" badge.
 - **Deterministic pre-pass:** detection runs once per plan/revise call, before the
   planner is invoked. It is not exposed to the planner as a callable tool.
 - **Bbox always clamped:** every backend clamps its result into `[0, width) x [0, height)`
@@ -35,15 +41,15 @@ new backend:
 1. Add a `CharacterFocusBackend` member in `schema/ops.py`.
 2. Add a `<name>_backend.py` file with
    `detect(container: ImageContainer) -> DetectedSubject | None`.
-3. Add its presence check to `available_backends()` and its dispatch branch to
-   `detect_subject()` in `__init__.py`.
+3. Add its presence check to `available_backends()`, a `_BACKEND_PATH_ATTR` entry,
+   and its dispatch branch in `detect_subject()` — all in `__init__.py`.
 4. Add its model-path field to `AppSettings` (`config/settings.py`).
 
 ## Files
 
 | File | Responsibility |
 |------|---------------|
-| `__init__.py` | `available_backends()`, `detect_subject(container, backend)` |
+| `__init__.py` | `available_backends()`, `ready_backends()`, `detect_subject(container, backend)` |
 | `_common.py` | `clamp_bbox()`, `to_rgb_uint8()` — shared by all backends |
 | `mediapipe_backend.py` | MediaPipe `ObjectDetector` (TFLite) |
 | `yolo_onnx_backend.py` | YOLO via `onnxruntime` — manual letterbox/NMS |
@@ -51,9 +57,10 @@ new backend:
 
 ## Tests
 - Location: `tests/unit/test_p13_character_focus.py`
-- Key scenarios: `available_backends()` reflects installed packages only; each
-  backend's bbox is clamped inside image bounds; missing model path raises with
-  the setting name in the message.
+- Key scenarios: `available_backends()` reflects installed packages only;
+  `ready_backends()` additionally drops backends with no resolvable model path (and
+  the main-flow picker hides them); each backend's bbox is clamped inside image
+  bounds; missing model path raises with the setting name in the message.
 
 ## Common mistakes
 

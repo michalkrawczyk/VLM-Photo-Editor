@@ -22,6 +22,10 @@ conventions. Newest at the bottom.
   choice instead of the OKF spec. Standalone; not wired into `run_checks.sh` or `cleanup.sh`.
   Also fixed two CLAUDE.md drifts it now guards: the Done Gate's "every BLOCK row PASS" (unreachable
   while the ruff baseline is 48 errors) and the hand-copied "67/75 DoD checkboxes" (now a pointer).
+- 2026-09-07 — Renamed the local inference-model dir `.test_models/` → `infer_models/` and
+  nested the YOLO export under `infer_models/yolo/yolo26s.onnx`; it is now the app's bundled
+  `yolo_onnx_model_path` default (was e2e-fixture-only). `.gitignore`, `commands.md`, e2e
+  conftest/tests updated. Still gitignored (38 MB, Ultralytics AGPL).
 - 2026-08-24 — Fixed the `Stop` hook in `.claude/settings.json`: it pointed at
   `/media/tk/Programming1/…` (nonexistent — repo is `/media/tk/Programming/…`) and hid the failure
   behind `2>/dev/null`, so `cleanup.sh` had never run. Now `$CLAUDE_PROJECT_DIR`-relative, stderr
