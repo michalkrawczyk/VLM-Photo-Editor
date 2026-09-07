@@ -240,6 +240,20 @@ def test_human_step_default_step_id_is_valid_uuid() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "raw_id",
+    [
+        "a1c4e7b9d2f64830b5e1c9a7d4f2068e",  # GPT-5.6: bare 32-hex, no dashes
+        "A1C4E7B9D2F64830B5E1C9A7D4F2068E",  # uppercase
+        "urn:uuid:a1c4e7b9-d2f6-4830-b5e1-c9a7d4f2068e",
+        "{a1c4e7b9-d2f6-4830-b5e1-c9a7d4f2068e}",
+    ],
+)
+def test_human_step_normalizes_non_canonical_uuid_step_id(raw_id: str) -> None:
+    step = HumanStep(step_id=raw_id, index=1, title="t", why="w")
+    assert step.step_id == "a1c4e7b9-d2f6-4830-b5e1-c9a7d4f2068e"
+
+
 def test_schema_init_exports() -> None:
     import vlm_photo_editor.schema as schema
     from vlm_photo_editor.schema import AcceptMode, EditDelta, FramingIntent  # noqa: F401
