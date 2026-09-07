@@ -86,6 +86,45 @@ def test_build_client_llamacpp_without_gguf_path_raises():
             build_client("cost_router")
 
 
+# ── B2. build_client — OpenAI reasoning knobs ────────────────────────────────
+
+
+def _openai_entry(**kw):
+    from vlm_photo_editor.config.registry import ModelEntry
+
+    return ModelEntry(model_id="gpt-5.6-luna", provider="openai", **kw)
+
+
+@pytest.mark.parametrize(
+    "entry_kw, expected_extra",
+    [
+        ({}, {}),
+        ({"reasoning_effort": "none"}, {"reasoning_effort": "none"}),
+        ({"use_responses_api": True}, {"use_responses_api": True}),
+        (
+            {"reasoning_effort": "high", "use_responses_api": True},
+            {"reasoning_effort": "high", "use_responses_api": True},
+        ),
+    ],
+)
+def test_build_client_openai_passes_reasoning_knobs(entry_kw, expected_extra):
+    from vlm_photo_editor.models.registry import build_client
+
+    entry = _openai_entry(**entry_kw)
+    mock_cls = MagicMock()
+    mock_openai_mod = MagicMock()
+    mock_openai_mod.ChatOpenAI = mock_cls
+
+    with (
+        patch("vlm_photo_editor.config.registry.ModelRegistry.get_entry", return_value=entry),
+        patch("vlm_photo_editor.models.registry.SecretStore.get", return_value="sk-test"),
+        patch.dict(sys.modules, {"langchain_openai": mock_openai_mod}),
+    ):
+        build_client("planner")
+
+    mock_cls.assert_called_once_with(model="gpt-5.6-luna", api_key="sk-test", **expected_extra)
+
+
 # ── C. available_loaders ──────────────────────────────────────────────────────
 
 

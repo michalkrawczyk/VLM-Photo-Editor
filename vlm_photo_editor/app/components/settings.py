@@ -41,6 +41,7 @@ from vlm_photo_editor.app.stubs import (
 from vlm_photo_editor.config.registry import (
     AGGREGATOR_PRESETS,
     CRITIC_PRESETS,
+    PLANNER_PRESETS,
     ModelEntry,
     get_registry,
 )
@@ -180,6 +181,49 @@ def render() -> None:
                 if _unavail2:
                     st.caption(
                         "Not available: " + ", ".join(f"{n} ({r})" for n, r in _unavail2.items())
+                    )
+
+            elif role == "planner":
+                _avail3: list[str] = []
+                _unavail3: dict[str, str] = {}
+                for name, entry in PLANNER_PRESETS.items():
+                    ok, reason = model_entry_available(entry)
+                    if ok:
+                        _avail3.append(name)
+                    else:
+                        _unavail3[name] = reason
+
+                current_preset = state.get("planner_preset") or (_avail3[0] if _avail3 else "")
+                if current_preset not in _avail3 and _avail3:
+                    st.warning(
+                        f"'{current_preset}' unavailable"
+                        f" ({_unavail3.get(current_preset, 'unknown reason')})."
+                        " Select a working model."
+                    )
+                    current_preset = _avail3[0]
+                    state.set("planner_preset", current_preset)
+
+                if _avail3:
+                    selected_preset = st.selectbox(
+                        "Planner:",
+                        options=_avail3,
+                        index=_avail3.index(current_preset) if current_preset in _avail3 else 0,
+                        key="model_planner",
+                    )
+                    if selected_preset != current_preset:
+                        registry.set_entry(role, PLANNER_PRESETS[selected_preset])
+                        state.set("planner_preset", selected_preset)
+                        state.log_intent(
+                            "model_selected", {"role": role, "preset": selected_preset}
+                        )
+                else:
+                    st.error(
+                        "No planner models available. Add an API key or install a local backend."
+                    )
+
+                if _unavail3:
+                    st.caption(
+                        "Not available: " + ", ".join(f"{n} ({r})" for n, r in _unavail3.items())
                     )
 
             else:

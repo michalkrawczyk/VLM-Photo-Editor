@@ -13,6 +13,9 @@ class ModelEntry:
     vllm_base_url: str = "http://localhost:8000/v1"
     gguf_path: str | None = None
     max_images_per_call: int = 1
+    # OpenAI-only knobs (ignored for other providers):
+    reasoning_effort: str | None = None  # "none" | "low" | "medium" | "high"; None = API default
+    use_responses_api: bool = False  # route via /v1/responses — needed for reasoning + tools
 
     @property
     def is_local(self) -> bool:
@@ -29,6 +32,14 @@ AGGREGATOR_PRESETS: dict[str, ModelEntry] = {
     ),
     "claude-haiku-4.5": ModelEntry("claude-haiku-4-5-20251001"),
     "gpt-4.1-mini": ModelEntry("gpt-4.1-mini", provider="openai"),
+    "gpt-5.6-luna": ModelEntry("gpt-5.6-luna", provider="openai", use_responses_api=True),
+    "gpt-5.6-luna (no reasoning)": ModelEntry(
+        "gpt-5.6-luna", provider="openai", reasoning_effort="none"
+    ),
+    "gpt-5.6-terra": ModelEntry("gpt-5.6-terra", provider="openai", use_responses_api=True),
+    "gpt-5.6-terra (no reasoning)": ModelEntry(
+        "gpt-5.6-terra", provider="openai", reasoning_effort="none"
+    ),
 }
 
 # Named presets for the critic role — shown in the UI model switcher.
@@ -41,6 +52,31 @@ CRITIC_PRESETS: dict[str, ModelEntry] = {
     ),
     "claude-sonnet-4.6": ModelEntry("claude-sonnet-4-6"),
     "gpt-4o": ModelEntry("gpt-4o", provider="openai"),
+    "gpt-5.6-luna": ModelEntry("gpt-5.6-luna", provider="openai", use_responses_api=True),
+    "gpt-5.6-luna (no reasoning)": ModelEntry(
+        "gpt-5.6-luna", provider="openai", reasoning_effort="none"
+    ),
+    "gpt-5.6-terra": ModelEntry("gpt-5.6-terra", provider="openai", use_responses_api=True),
+    "gpt-5.6-terra (no reasoning)": ModelEntry(
+        "gpt-5.6-terra", provider="openai", reasoning_effort="none"
+    ),
+}
+
+# Named presets for the planner role — shown in the UI model switcher.
+PLANNER_PRESETS: dict[str, ModelEntry] = {
+    "claude-sonnet-4.6": ModelEntry("claude-sonnet-4-6"),
+    "claude-haiku-4.5": ModelEntry("claude-haiku-4-5-20251001"),
+    "claude-opus-4.8": ModelEntry("claude-opus-4-8"),
+    "gpt-4o": ModelEntry("gpt-4o", provider="openai"),
+    "gpt-4.1-mini": ModelEntry("gpt-4.1-mini", provider="openai"),
+    "gpt-5.6-luna": ModelEntry("gpt-5.6-luna", provider="openai", use_responses_api=True),
+    "gpt-5.6-luna (no reasoning)": ModelEntry(
+        "gpt-5.6-luna", provider="openai", reasoning_effort="none"
+    ),
+    "gpt-5.6-terra": ModelEntry("gpt-5.6-terra", provider="openai", use_responses_api=True),
+    "gpt-5.6-terra (no reasoning)": ModelEntry(
+        "gpt-5.6-terra", provider="openai", reasoning_effort="none"
+    ),
 }
 
 _DEFAULT_ENTRIES: dict[str, ModelEntry] = {
