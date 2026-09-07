@@ -55,6 +55,88 @@ def test_available_backends(specs_present, expected):
 
 
 # ---------------------------------------------------------------------------
+# ready_backends() — package importable AND model path resolves
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "specs_present, paths, expected",
+    [
+        # importable but no path -> not ready
+        (["mediapipe", "onnxruntime"], {}, []),
+        # path set only for the ones whose package is also importable
+        (["mediapipe"], {"mediapipe_model_path": "/m.tflite"}, ["mediapipe"]),
+        (
+            ["onnxruntime"],
+            {"yolo_onnx_model_path": "/y.onnx"},
+            ["yolo_onnx"],
+        ),
+        (
+            ["mediapipe", "onnxruntime"],
+            {"mediapipe_model_path": "/m", "yolo_onnx_model_path": "/y", "u2netp_model_path": "/u"},
+            ["mediapipe", "yolo_onnx", "u2netp"],
+        ),
+        # path set but package missing -> still not ready
+        ([], {"yolo_onnx_model_path": "/y.onnx"}, []),
+    ],
+)
+def test_ready_backends(specs_present, paths, expected):
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import ready_backends
+
+    def fake_find_spec(name):
+        return MagicMock() if name in specs_present else None
+
+    settings = get_settings()
+    saved = {
+        attr: getattr(settings, attr)
+        for attr in ("mediapipe_model_path", "yolo_onnx_model_path", "u2netp_model_path")
+    }
+    for attr in saved:
+        setattr(settings, attr, paths.get(attr))
+    try:
+        with patch("importlib.util.find_spec", side_effect=fake_find_spec):
+            assert ready_backends() == expected
+    finally:
+        for attr, value in saved.items():
+            setattr(settings, attr, value)
+
+
+# ---------------------------------------------------------------------------
+# _path_setting() — env var > .env > bundled default > None
+# ---------------------------------------------------------------------------
+
+
+def test_path_setting_env_var_wins(monkeypatch, tmp_path):
+    from vlm_photo_editor.config.settings import _path_setting
+
+    bundled = tmp_path / "bundled.onnx"
+    bundled.write_bytes(b"x")
+    monkeypatch.setenv("VLM_TEST_MODEL_PATH", "/from/env")
+    assert _path_setting("VLM_TEST_MODEL_PATH", bundled) == "/from/env"
+
+
+def test_path_setting_reads_dotenv_when_env_unset(monkeypatch, tmp_path):
+    from vlm_photo_editor.config.settings import _path_setting
+
+    monkeypatch.delenv("VLM_TEST_MODEL_PATH", raising=False)
+    (tmp_path / ".env").write_text("VLM_TEST_MODEL_PATH=/from/dotenv\n")
+    monkeypatch.chdir(tmp_path)
+    assert _path_setting("VLM_TEST_MODEL_PATH") == "/from/dotenv"
+
+
+def test_path_setting_bundled_default_only_when_file_exists(monkeypatch, tmp_path):
+    from vlm_photo_editor.config.settings import _path_setting
+
+    monkeypatch.delenv("VLM_TEST_MODEL_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)  # no .env here
+    assert _path_setting("VLM_TEST_MODEL_PATH", tmp_path / "missing.onnx") is None
+    present = tmp_path / "present.onnx"
+    present.write_bytes(b"x")
+    assert _path_setting("VLM_TEST_MODEL_PATH", present) == str(present)
+
+
+# ---------------------------------------------------------------------------
 # detect_subject() — mediapipe / yolo_onnx, bbox clamped inside image bounds
 # ---------------------------------------------------------------------------
 
@@ -200,11 +282,20 @@ def test_detect_subject_drops_below_confidence_floor():
     ],
 )
 def test_detect_subject_missing_model_path_raises(backend, expected_setting):
+    from vlm_photo_editor.config.settings import get_settings
     from vlm_photo_editor.detection import detect_subject
 
+    # yolo_onnx_model_path has a bundled default (infer_models/yolo/yolo26s.onnx) that
+    # may exist on the dev box — force every backend's path unset for this check.
+    settings = get_settings()
+    saved = getattr(settings, expected_setting)
+    setattr(settings, expected_setting, None)
     container = _container()
-    with pytest.raises(ValueError, match=expected_setting):
-        detect_subject(container, backend)
+    try:
+        with pytest.raises(ValueError, match=expected_setting):
+            detect_subject(container, backend)
+    finally:
+        setattr(settings, expected_setting, saved)
 
 
 def test_detect_subject_off_raises():
@@ -433,23 +524,43 @@ def test_frame_focus_crop_stays_within_bounds():
 # ---------------------------------------------------------------------------
 
 
-def _run_main_with_image(find_spec_present: tuple[str, ...] = ()):
+def _run_main_with_image(
+    find_spec_present: tuple[str, ...] = (),
+    model_paths: dict[str, str | None] | None = None,
+    extra_state: dict[str, object] | None = None,
+):
     import streamlit as st
     from streamlit.testing.v1 import AppTest
+
+    from vlm_photo_editor.config.settings import get_settings
 
     st.cache_data.clear()  # settings.py caches available-backend status for 60s
 
     def fake_find_spec(name):
         return MagicMock() if name in find_spec_present else None
 
-    with patch("importlib.util.find_spec", side_effect=fake_find_spec):
-        at = AppTest.from_file("vlm_photo_editor/app/main.py")
-        fake_file = SimpleNamespace(name="fake.jpg", size=123)
-        at.session_state["uploaded_file"] = fake_file
-        at.session_state["_loaded_file_id"] = "fake.jpg:123"
-        at.session_state["container"] = _container()
-        at.session_state["ui_phase"] = "has_image"
-        at.run(timeout=30)
+    settings = get_settings()
+    path_attrs = ("mediapipe_model_path", "yolo_onnx_model_path", "u2netp_model_path")
+    saved = {attr: getattr(settings, attr) for attr in path_attrs}
+    # Neutralise the bundled yolo_onnx default so the picker is deterministic; callers
+    # opt specific backends back in via model_paths.
+    for attr in path_attrs:
+        setattr(settings, attr, (model_paths or {}).get(attr))
+
+    try:
+        with patch("importlib.util.find_spec", side_effect=fake_find_spec):
+            at = AppTest.from_file("vlm_photo_editor/app/main.py")
+            fake_file = SimpleNamespace(name="fake.jpg", size=123)
+            at.session_state["uploaded_file"] = fake_file
+            at.session_state["_loaded_file_id"] = "fake.jpg:123"
+            at.session_state["container"] = _container()
+            at.session_state["ui_phase"] = "has_image"
+            for key, value in (extra_state or {}).items():
+                at.session_state[key] = value
+            at.run(timeout=30)
+    finally:
+        for attr, value in saved.items():
+            setattr(settings, attr, value)
     return at
 
 
@@ -460,11 +571,60 @@ def test_character_focus_selectbox_lists_only_off_with_no_backends_installed():
     assert cf.options == ["off"]
 
 
-def test_character_focus_selectbox_lists_installed_backends():
-    at = _run_main_with_image(find_spec_present=("mediapipe",))
+def test_character_focus_selectbox_lists_installed_backend_with_model_path():
+    at = _run_main_with_image(
+        find_spec_present=("mediapipe",),
+        model_paths={"mediapipe_model_path": "/fake/model.tflite"},
+    )
     assert not at.exception
     cf = next(sb for sb in at.selectbox if sb.label == "Character Focus:")
     assert cf.options == ["off", "mediapipe"]
+
+
+def test_character_focus_selectbox_hides_installed_backend_without_model_path():
+    at = _run_main_with_image(find_spec_present=("mediapipe",))  # importable, no path
+    assert not at.exception
+    cf = next(sb for sb in at.selectbox if sb.label == "Character Focus:")
+    assert cf.options == ["off"]
+
+
+def test_generate_plan_surfaces_backend_misconfig_instead_of_crashing():
+    """A Character Focus backend that raises must set an error banner, not crash the app.
+
+    Guards the fix that moved the detection call inside ``_do_generate_plan``'s
+    ``try`` block. Reframe Only + a preset composition auto-generates on load, so a
+    single run drives the whole path; ``detect_subject`` is patched to raise the
+    misconfiguration ``ValueError``.
+    """
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+
+    from vlm_photo_editor.config.settings import get_settings
+
+    st.cache_data.clear()
+    settings = get_settings()
+    saved = settings.yolo_onnx_model_path
+    settings.yolo_onnx_model_path = "/fake/model.onnx"  # keep yolo_onnx in the picker
+
+    try:
+        with patch(
+            "vlm_photo_editor.detection.detect_subject",
+            side_effect=ValueError("yolo_onnx_model_path is not set"),
+        ):
+            at = AppTest.from_file("vlm_photo_editor/app/main.py")
+            at.session_state["uploaded_file"] = SimpleNamespace(name="fake.jpg", size=123)
+            at.session_state["_loaded_file_id"] = "fake.jpg:123"
+            at.session_state["container"] = _container()
+            at.session_state["ui_phase"] = "has_image"
+            at.session_state["edit_mode"] = "frame"  # Reframe Only -> auto-generates
+            at.session_state["framing_mode"] = "rule_of_thirds"
+            at.session_state["character_focus"] = "yolo_onnx"
+            at.run(timeout=30)
+    finally:
+        settings.yolo_onnx_model_path = saved
+
+    assert not at.exception  # the ValueError must not escape to module scope
+    assert "yolo_onnx_model_path" in (at.session_state["error"] or "")
 
 
 def test_settings_character_focus_expander_shows_status_badges():

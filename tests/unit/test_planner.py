@@ -496,6 +496,36 @@ def test_planner_calls_llm_returns_human_plan(method):
         mock_llm.with_structured_output.return_value.invoke.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "provider, expected_kwargs",
+    [
+        ("anthropic", {}),
+        ("local", {}),
+        ("openai", {"method": "function_calling"}),
+    ],
+)
+def test_planner_structured_output_method_per_provider(provider, expected_kwargs):
+    """OpenAI's strict json_schema can't express HumanPlan.op_params — the planner must
+    request method='function_calling' for that provider only."""
+    from vlm_photo_editor.config.registry import ModelEntry
+
+    with (
+        patch("vlm_photo_editor.agents.planner.build_client") as mock_build,
+        patch(
+            "vlm_photo_editor.config.registry.ModelRegistry.get_entry",
+            return_value=ModelEntry("m", provider=provider),
+        ),
+    ):
+        mock_llm = MagicMock()
+        mock_build.return_value = mock_llm
+
+        from vlm_photo_editor.agents.planner import Planner
+
+        Planner()
+
+        mock_llm.with_structured_output.assert_called_once_with(HumanPlan, **expected_kwargs)
+
+
 def test_planner_logs_via_structlog_not_stdlib():
     """AGT-D2: stdlib logging bypasses the structlog RedactionProcessor — the VLM
     prompt (which may echo a key-like string) must be logged through structlog."""

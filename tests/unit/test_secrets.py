@@ -146,6 +146,37 @@ def test_model_registry_all_roles():
     assert "critic" in roles
 
 
+def test_planner_presets_cover_local_and_cloud() -> None:
+    from vlm_photo_editor.config.registry import PLANNER_PRESETS
+
+    assert any(not e.is_local for e in PLANNER_PRESETS.values()), "need a cloud planner preset"
+    assert any("gpt" in n.lower() for n in PLANNER_PRESETS), "need a gpt planner preset"
+    # Default entry must be selectable from the preset switcher.
+    assert PLANNER_PRESETS["claude-sonnet-4.6"].model_id == get_registry().get("planner")
+
+
+@pytest.mark.parametrize(
+    "preset_name,provider,reasoning_effort,use_responses_api",
+    [
+        ("claude-sonnet-4.6", "anthropic", None, False),
+        ("gpt-4o", "openai", None, False),
+        ("gpt-5.6-luna", "openai", None, True),
+        ("gpt-5.6-luna (no reasoning)", "openai", "none", False),
+        ("gpt-5.6-terra", "openai", None, True),
+        ("gpt-5.6-terra (no reasoning)", "openai", "none", False),
+    ],
+)
+def test_planner_preset_entries(
+    preset_name: str, provider: str, reasoning_effort: str | None, use_responses_api: bool
+) -> None:
+    from vlm_photo_editor.config.registry import PLANNER_PRESETS
+
+    entry = PLANNER_PRESETS[preset_name]
+    assert entry.provider == provider
+    assert entry.reasoning_effort == reasoning_effort
+    assert entry.use_responses_api is use_responses_api
+
+
 def test_redaction_filter_formats_percent_args():
     """SEC-B2: key in args must be redacted after getMessage() formats the string."""
     key = "sk-ant-abc123abcdefghij"

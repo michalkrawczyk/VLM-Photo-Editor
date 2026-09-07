@@ -160,11 +160,32 @@ def test_critic_presets_cover_local_and_cloud() -> None:
         ("LFM2.5-VL-1.6B (local)", "local"),
         ("claude-sonnet-4.6", "anthropic"),
         ("gpt-4o", "openai"),
+        ("gpt-5.6-luna", "openai"),
+        ("gpt-5.6-luna (no reasoning)", "openai"),
+        ("gpt-5.6-terra", "openai"),
+        ("gpt-5.6-terra (no reasoning)", "openai"),
     ],
 )
 def test_critic_preset_providers(preset_name: str, expected_provider: str) -> None:
     entry = CRITIC_PRESETS[preset_name]
     assert entry.provider == expected_provider
+
+
+@pytest.mark.parametrize(
+    "preset_name,reasoning_effort,use_responses_api",
+    [
+        ("gpt-5.6-luna", None, True),
+        ("gpt-5.6-luna (no reasoning)", "none", False),
+        ("gpt-5.6-terra", None, True),
+        ("gpt-5.6-terra (no reasoning)", "none", False),
+    ],
+)
+def test_critic_openai_reasoning_variants(
+    preset_name: str, reasoning_effort: str | None, use_responses_api: bool
+) -> None:
+    entry = CRITIC_PRESETS[preset_name]
+    assert entry.reasoning_effort == reasoning_effort
+    assert entry.use_responses_api is use_responses_api
 
 
 # ── PS-strict planner prompt ──────────────────────────────────────────────────

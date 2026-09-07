@@ -298,8 +298,29 @@ def test_aggregator_presets_cover_all_three_options() -> None:
         ("LFM2.5-1.2B (local)", "local"),
         ("claude-haiku-4.5", "anthropic"),
         ("gpt-4.1-mini", "openai"),
+        ("gpt-5.6-luna", "openai"),
+        ("gpt-5.6-luna (no reasoning)", "openai"),
+        ("gpt-5.6-terra", "openai"),
+        ("gpt-5.6-terra (no reasoning)", "openai"),
     ],
 )
 def test_aggregator_preset_providers(preset_name: str, expected_provider: str) -> None:
     entry = AGGREGATOR_PRESETS[preset_name]
     assert entry.provider == expected_provider
+
+
+@pytest.mark.parametrize(
+    "preset_name,reasoning_effort,use_responses_api",
+    [
+        ("gpt-5.6-luna", None, True),
+        ("gpt-5.6-luna (no reasoning)", "none", False),
+        ("gpt-5.6-terra", None, True),
+        ("gpt-5.6-terra (no reasoning)", "none", False),
+    ],
+)
+def test_aggregator_openai_reasoning_variants(
+    preset_name: str, reasoning_effort: str | None, use_responses_api: bool
+) -> None:
+    entry = AGGREGATOR_PRESETS[preset_name]
+    assert entry.reasoning_effort == reasoning_effort
+    assert entry.use_responses_api is use_responses_api

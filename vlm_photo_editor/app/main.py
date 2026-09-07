@@ -90,7 +90,6 @@ def _do_generate_plan() -> None:
 
     framing_val = state.get("framing_mode")
     fi = _build_framing_intent(framing_val) if framing_val else None
-    detected_subject = _detect_subject_if_enabled(container)
     genai_available = default_provider_available()
 
     cache = get_plan_cache()
@@ -98,6 +97,9 @@ def _do_generate_plan() -> None:
     cached_plan = cache.get(cache_key)
 
     try:
+        # Inside the try so a misconfigured Character Focus backend surfaces as an
+        # error banner instead of crashing the Streamlit script.
+        detected_subject = _detect_subject_if_enabled(container)
         planner = None
         _progress = None
         if cached_plan is not None:
@@ -181,9 +183,11 @@ def _do_revise_plan(change: str) -> None:
 
     framing_val = state.get("framing_mode")
     fi = _build_framing_intent(framing_val) if framing_val else None
-    detected_subject = _detect_subject_if_enabled(container)
     genai_available = default_provider_available()
     try:
+        # Inside the try so a misconfigured Character Focus backend surfaces as an
+        # error banner instead of crashing the Streamlit script.
+        detected_subject = _detect_subject_if_enabled(container)
         log_ = state.get("change_requests_log") or []
         log_.append(change)
         state.set("change_requests_log", log_)
@@ -745,9 +749,11 @@ with main_col:
                 st.text_input("Framing guidance (optional)", key="framing_hint")
 
             # Character Focus selector — local subject detection, off by default.
-            from vlm_photo_editor.detection import available_backends
+            # Only offer backends with a resolvable model path; the rest would raise
+            # a misconfiguration error the moment a plan is generated.
+            from vlm_photo_editor.detection import ready_backends
 
-            _cf_opts = ["off"] + available_backends()
+            _cf_opts = ["off"] + ready_backends()
             _cf_current = state.get("character_focus") or "off"
             if _cf_current not in _cf_opts:
                 _cf_current = "off"

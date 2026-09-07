@@ -114,7 +114,7 @@ See `CLAUDE.md` §Non-negotiable principles for all global invariants. Two invar
 **User-facing result.** Sees a clear plan before anything happens. In manual mode, can keep asking for changes in chat and gets a revised plan each time, approving only when satisfied — then it runs. Auto and full-auto modes reduce friction for trusted or low-stakes workflows.
 
 **Definition of Done.**
-- [ ] End-to-end on a sample image in all three accept modes.
+- [x] End-to-end on a sample image in all three accept modes. *(Closed by the P8.5 gate — `tests/integration/test_p8_5_mvp_gate.py` covers accept-mode risk gating on real compiled graphs plus full_auto/auto_low execution; `tests/e2e/test_full_edit_and_framing.py` adds the live manual full-combo + full_auto Playwright pass.)*
 - [x] In manual mode, no op executes before explicit approval.
 - [x] A chat-box change request produces a regenerated plan and a fresh approval prompt, looping until approval is given.
 - [x] Each human step maps to ops by stable ID.
@@ -199,61 +199,44 @@ See `CLAUDE.md` §Non-negotiable principles for all global invariants. Two invar
 
 ---
 
-## Step P9 — Optional Layers: Critic, PS-strict, MCP Bridge
+## Step P8.5 — MVP Integration Gate
 
-**What.** Critic VLM as an optional checkbox. PS-strict mode constraining the planner to Photoshop-expressible ops. No-PS mode. MCP server wrapping UXP/ExtendScript with capability discovery.
+**What.** Not a build step — a verification gate. One end-to-end pass proving the four core capabilities work together, checked against the acceptance criteria in `agent_notes/description.md`.
 
-**Why.** An optional second-opinion quality gate; Photoshop power without making PS a hard dependency.
+**Why.** Every phase has its own DoD; none proves the whole. P4's "end-to-end in all three accept modes" box is still open and P5–P8 built on top of it. This gate closes that gap before the optional layer (P9+) gets effort.
 
-**Key functionality.** Critic verifies result vs intent and loops on failure; PS op vocabulary is fed into the planner prompt so only PS-expressible edits are proposed; mode disables cleanly with a clear message when PS is unavailable. Local Critic: set the `"critic"` registry role to `LiquidAI/LFM2.5-VL-1.6B` in the Settings UI — `ModelEntry.is_local` (derived from `provider=="local"`) is the authoritative check; no separate env var needed.
+**Definition of Done.**
+- [x] One real image: upload → plan shown → chat change request → revised plan → accept → background edit + framing + a small correction all applied → save new file → original byte-identical. (Subsumes P4's open end-to-end box, manual mode.) *(Headless: `test_p8_5_mvp_gate.py::test_manual_background_reframe_and_correction_all_apply_then_save_preserves_original` — real Compiler/Executor/recipe-store, VLM + genAI provider faked. Live: `tests/e2e` `test_manual_mode_full_combo_saves_new_file_and_leaves_original_byte_identical` — real app + Anthropic API.)*
+- [x] Same image through `auto_low` / `auto_medium` and `full_auto` — risk gating and the `full_auto` ceiling + post-run review behave as specified. *(Risk gating on real compiled graphs + full_auto/auto_low execution: `test_p8_5_mvp_gate.py`; UI-level "full_auto skips the gate": `tests/e2e::test_full_auto_mode_executes_without_an_accept_click`. Single-image post-run review = the preview + explicit "Save New File" step. The **aggregate per-run genAI ceiling** is not built here — it stays a tracked open item under P11; the gate verifies only the existing per-op `n ∈ [1, 8]` bound (`test_genai_candidate_count_above_eight_is_rejected_by_validation`).)*
+- [x] Each bullet in `agent_notes/description.md` §"What Good Looks Like" is demonstrably true, except those tied to deferred P12. *(Subject-freeze, reversible/reproducible/new-file-only, failures-surfaced, and keys-safety each have a named assertion in `test_p8_5_mvp_gate.py` or a cross-reference to `tests/unit/test_secrets.py`.)*
+- [x] P8 preference learning: one approved edit produces a candidate rule that changes the next plan. *(`test_p8_5_mvp_gate.py::test_approved_learned_preference_appears_in_next_planner_prompt`.)*
 
-**User-facing result.** Optional automatic quality check; the option to force pure-Photoshop edits when desired.
+---
+
+## Step P9 — Optional Layer: Critic
+
+**What.** Critic VLM as an optional checkbox.
+
+**Why.** An optional second-opinion quality gate.
+
+**Key functionality.** Critic verifies result vs intent and loops on failure. Local Critic: set the `"critic"` registry role to `LiquidAI/LFM2.5-VL-1.6B` in the Settings UI — `ModelEntry.is_local` (derived from `provider=="local"`) is the authoritative check; no separate env var needed.
+
+PS-strict enforcement (constrain the planner to Photoshop-expressible ops), No-PS mode, and the MCP server wrapping UXP/ExtendScript are deferred — see `plans/future_improvements.md`. The `AcceptMode` / policy enums and `ps_expressible` flag stay.
+
+**User-facing result.** Optional automatic quality check.
 
 **Definition of Done.**
 - [x] With Critic on, an intentionally-bad edit is caught.
-- [x] PS-strict only ever proposes PS-expressible ops.
-- [x] The mode disables with a clear message when PS is absent.
 
 ---
 
 ## Step P10 — Hardening
 
-**What.** Async job queue for large RAW; plan caching; cheap cost-router triage; full log-redaction audit; error surfaces.
+**What.** Async job queue for large RAW; plan caching; cheap cost-router triage; full log-redaction audit; error surfaces. One local loader (`transformers` or `ollama`, existing defaults) is sufficient for MVP; additional loaders (vLLM, llama.cpp) and loader auto-detect / on-demand install are deferred — see `plans/future_improvements.md` (the code already in the tree stays).
 
 **Why.** Performance, cost, robustness, and final security closure.
 
-**Key functionality.** Non-blocking processing with progress; cache keyed by image hash + mode + prefs version; a cheap router that skips full VLM planning for trivial modes — recommended model: `LiquidAI/LFM2.5-1.2B-Instruct` (local, `cost_router` registry role), receives active mode + user intent text and returns `trivial` / `complex` with no API call; an audit confirming zero key leakage.
-
-**Local loader backends (P10 extension).** Two additional `loader` values for the `local` provider in `ModelEntry`, selectable via `registry.set_entry()` or `AppSettings`:
-- `"vllm"` — wraps a running vLLM server's OpenAI-compatible endpoint via `langchain_openai.ChatOpenAI(base_url=...)`. GPU-oriented; highest throughput for P11 batch runs. Configure via `ModelEntry.vllm_base_url` (default: `"http://localhost:8000/v1"`). No new dep on the editor side — `requirements-openai.txt` covers the LangChain adapter; vLLM itself is installed on the GPU server.
-- `"llamacpp"` — runs a local GGUF file inline via `langchain_community.chat_models.ChatLlamaCpp`. CPU-friendly; suited for the 1.2B text-only models (`cost_router`, `input_guard`). Set `ModelEntry.gguf_path` to the `.gguf` file path. Install: `pip install -r requirements-llamacpp.txt` (`langchain-community>=0.2` + `llama-cpp-python>=0.2.90`).
-
-Existing `"transformers"` and `"ollama"` loaders are unaffected and remain the defaults for all three local roles (critic, cost_router, input_guard). `ModelEntry` gains three new optional fields with defaults: `vllm_base_url: str`, `gguf_path: str | None`, and `max_images_per_call: int` (the last is used by the P11 batch scheduler).
-
-**Loader auto-detection and on-demand install (P10 extension).** Two new functions in `vlm_photo_editor/models/registry.py`:
-
-- `available_loaders() -> list[str]` — probes installed packages via `importlib.util.find_spec` and returns which loaders are ready to use:
-  - `"ollama"` — `langchain_ollama` importable
-  - `"transformers"` — `langchain_huggingface` importable
-  - `"llamacpp"` — both `langchain_community` and `llama_cpp` importable
-  - `"vllm"` — `langchain_openai` importable **and** the configured `vllm_base_url` responds to an HTTP health probe (GET `/health` or `/v1/models`); presence of `langchain_openai` alone is not sufficient because OpenAI API users also have it
-
-- `install_loader_deps(loader: str) -> bool` — runs `sys.executable -m pip install -r requirements-{loader}.txt` as a subprocess; returns `True` on exit code 0. Each loader maps to one requirements file:
-
-  | loader | requirements file |
-  |---|---|
-  | `"ollama"` | `requirements-ollama.txt` (new: `langchain-ollama>=0.1`) |
-  | `"transformers"` | `requirements-huggingface.txt` |
-  | `"vllm"` | `requirements-openai.txt` |
-  | `"llamacpp"` | `requirements-llamacpp.txt` |
-
-  Unknown loader → raises `ValueError`. Uses `sys.executable` to guarantee the correct venv.
-
-**UI surface** (`vlm_photo_editor/app/components/settings.py` — new "Local Model Backends" expander):
-- Lists all four loaders; each row shows name, description, and status badge ("ready" / "not installed" / "server unreachable" for vLLM).
-- Unavailable loaders show an **Install** button; clicking it calls `install_loader_deps()` inside `st.spinner`. On success: badge updates to "ready"; on failure: error message shown.
-- vLLM row additionally shows the server URL field and a **Ping** button that calls the health probe.
-- `available_loaders()` is called once per page render (cached via `st.cache_data(ttl=60)`); the Install button clears the cache so status refreshes immediately after install.
+**Key functionality.** Non-blocking processing with progress; cache keyed by image hash + mode + prefs version; a cheap router that skips full VLM planning for trivial modes — recommended model: `LiquidAI/LFM2.5-1.2B-Instruct` (local, `cost_router` registry role), receives active mode + user intent text and returns `trivial` / `complex` with no API call; an audit confirming zero key leakage. `ModelEntry` carries `max_images_per_call: int`, read by the P11 batch scheduler.
 
 **User-facing result.** Responsive on large files, cheaper to run, reliable.
 
@@ -261,13 +244,6 @@ Existing `"transformers"` and `"ollama"` loaders are unaffected and remain the d
 - [x] A large RAW processes without blocking the UI (progress shown).
 - [x] A cache hit avoids re-planning.
 - [x] The redaction audit finds zero key leakage across logs and errors.
-- [x] `build_client()` with `loader="vllm"` returns `ChatOpenAI` pointed at `vllm_base_url`; unit test with mock confirms `base_url` and `model` forwarding.
-- [x] `build_client()` with `loader="llamacpp"` and a valid `gguf_path` returns `ChatLlamaCpp`; unit test confirms `model_path` forwarding.
-- [x] `build_client()` with `loader="llamacpp"` and `gguf_path=None` raises `ValueError` with a clear message.
-- [x] `available_loaders()` returns only loaders whose packages are importable (+ server reachable for vLLM); unit test mocks `find_spec` and HTTP probe.
-- [x] `install_loader_deps("llamacpp")` runs `pip install -r requirements-llamacpp.txt` via `sys.executable`; unit test patches `subprocess.run` and confirms correct args.
-- [x] `install_loader_deps("unknown")` raises `ValueError`.
-- [x] Settings UI shows correct badge state per loader; Install button triggers install and refreshes status.
 
 ---
 
@@ -282,12 +258,14 @@ Existing `"transformers"` and `"ollama"` loaders are unaffected and remain the d
 - VLM batch size determined by model capability: if the active planner model supports multi-image input, images are grouped into batches up to a user-configurable max; if the model only supports one image at a time, images are sent one-by-one. A `model_registry` entry declares `max_images_per_call`; the batch scheduler reads this at runtime.
 - Async execution via `anyio` task group: planning and execution run concurrently across images without blocking the UI. Streamlit progress bar per image and overall.
 - Rate-limit handling: exponential back-off + jitter on HTTP 429 / provider-specific errors; configurable max retries per image.
-- Accept-mode awareness: `full_auto` executes and saves every image without prompting; `auto` executes images whose compiled ops all fall under the configured risk threshold and queues the rest for manual review; `manual` queues every image for review.
-- Mixed-result handling: after async planning completes, images split into **auto-executed** (already done) and **needs review** (risk too high, plan error, or manual mode). UI shows a summary banner ("12 auto-saved · 3 need review") and opens the review panel on the first pending image. Auto-executed images are accessible read-only with a "revert" option. User iterates pending images with ← → navigation; each can be accepted, rejected, or sent back for re-planning via the chat box.
+- Accept-mode awareness: `full_auto` plans and executes every image with no pre-execution prompt, subject to a per-run ceiling (`max_genai_generations` / spend cap in `AppSettings`); it does **not** finalise — every auto-executed image lands in the post-run review queue for accept / revert before "Save All Accepted". `auto` executes images whose compiled ops all fall under the configured risk threshold and queues the rest for manual review; `manual` queues every image for review.
+- Mixed-result handling: after async planning completes, images split into **auto-executed** (already done) and **needs review** (risk too high, plan error, or manual mode). In `full_auto`, every image is "needs review" — auto-executed, not auto-final. UI shows a summary banner ("12 auto-saved · 3 need review") and opens the review panel on the first pending image. Auto-executed images are accessible read-only with a "revert" option. User iterates pending images with ← → navigation; each can be accepted, rejected, or sent back for re-planning via the chat box.
 - "Save All Accepted" writes each accepted edit to a new file (never overwriting source), with a download ZIP option.
 - Failed images (plan error, execution error, user reject) are collected in a "needs attention" list and are re-triable individually.
 
 **User-facing result.** Upload a folder of images, review AI plans in bulk, save accepted edits — without waiting for one image to finish before the next starts.
+
+Follow-ups deferred past this phase — see `plans/future_improvements.md`: per-image preview strip before the run, per-op (not just per-image) progress with the op named, and a shared Composition / Character Focus selector block so batch mode stops silently inheriting the single-image flow's framing state (tracked as `plans/issues.md` D7).
 
 **Definition of Done.**
 - [x] N images are planned concurrently; total wall time < N × single-image time.
@@ -296,10 +274,14 @@ Existing `"transformers"` and `"ollama"` loaders are unaffected and remain the d
 - [x] `auto` mode auto-executes low-risk images and queues high-risk ones; summary banner reflects the split.
 - [x] "Save All Accepted" writes N new files; originals byte-identical.
 - [x] Rejected images do not produce output files.
+- [ ] `full_auto` batch stops at the review queue with every image listed; no output file is written until the user accepts or clicks "Save All Accepted".
+- [ ] A per-run genAI-generation ceiling halts further generation and surfaces a notice when hit.
 
 ---
 
 ## Step P12 — Input Safety Guardrails
+
+**Status: deferred to post-MVP / official release.** MVP scope is a single local user; the prompt-injection / off-topic / secret-exfiltration surface from the three free-text inputs is accepted and tracked (`plans/issues.md`). The phase spec below is the implementation brief for when it is picked up; DoD boxes stay unchecked until then.
 
 **What.** A lightweight pre-filter that screens user-provided text (change requests, explicit preferences, framing instructions) for relevance to photo editing and absence of unsafe/injective content, before any text reaches the planner or preference store.
 

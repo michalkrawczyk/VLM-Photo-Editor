@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-import re
 import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .ops import FramingMode, OpGraph, OpName
-
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
 
 
 class HumanStep(BaseModel):
@@ -20,10 +14,12 @@ class HumanStep(BaseModel):
     @field_validator("step_id", mode="before")
     @classmethod
     def _require_uuid_format(cls, v: object) -> str:
-        s = str(v)
-        if not _UUID_RE.match(s):
-            raise ValueError(f"step_id {s!r} is not a valid UUID")
-        return s
+        # Accept any RFC-4122 spelling (dashed, bare 32-hex, urn:, braces — VLMs vary);
+        # store the canonical dashed form so step-ID linkage stays byte-comparable.
+        try:
+            return str(uuid.UUID(str(v)))
+        except ValueError:
+            raise ValueError(f"step_id {v!r} is not a valid UUID") from None
 
     index: int = Field(ge=0)
     title: str

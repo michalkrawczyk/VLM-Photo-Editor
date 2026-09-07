@@ -223,3 +223,6 @@ agent_ignore/
 # e2e test artifacts / downloaded model cache
 tests/e2e/artifacts/
 tests/e2e/models/
+
+# local inference model files (large, not redistributable — e.g. Ultralytics AGPL)
+infer_models/

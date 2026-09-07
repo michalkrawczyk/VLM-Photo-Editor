@@ -75,7 +75,12 @@ def build_client(role: str) -> "BaseChatModel":
                 "langchain-openai not installed. Run: pip install -r requirements-openai.txt"
             ) from exc
         api_key = SecretStore.get("openai")
-        return ChatOpenAI(model=model_id, api_key=api_key)  # type: ignore[call-arg]
+        kwargs: dict[str, object] = {}
+        if entry.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = entry.reasoning_effort
+        if entry.use_responses_api:
+            kwargs["use_responses_api"] = True
+        return ChatOpenAI(model=model_id, api_key=api_key, **kwargs)  # type: ignore[call-arg]
 
     raise ValueError(
         f"No client for role {role!r}: model={model_id!r}, provider={entry.provider!r}"

@@ -25,7 +25,16 @@ _NO_TARGET_MODES = {FramingMode.RECOMMEND_BEST, FramingMode.CUSTOM, FramingMode.
 
 class Planner:
     def __init__(self, role: str = "planner") -> None:
-        self._llm = build_client(role).with_structured_output(HumanPlan)
+        from vlm_photo_editor.config.registry import get_registry
+
+        client = build_client(role)
+        # OpenAI strict json_schema rejects HumanPlan's free-form op_params; reasoning
+        # models also refuse function tools on /v1/chat/completions. function_calling +
+        # (per-entry) reasoning_effort="none" or use_responses_api makes the OpenAI path work.
+        if get_registry().get_entry(role).provider == "openai":
+            self._llm = client.with_structured_output(HumanPlan, method="function_calling")
+        else:
+            self._llm = client.with_structured_output(HumanPlan)
 
     def plan(
         self,
