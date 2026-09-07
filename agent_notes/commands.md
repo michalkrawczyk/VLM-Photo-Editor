@@ -58,6 +58,8 @@ pytest -m e2e tests/e2e/ -v                          # real Anthropic API + real
 ```
 Drives the real Streamlit app (`streamlit run`, subprocess) with real API calls — costs money, needs `ANTHROPIC_API_KEY` in `.env`. First run downloads a ~4.6MB MediaPipe object-detector model to `tests/e2e/models/` (gitignored); set `E2E_MEDIAPIPE_MODEL_PATH` to point at an existing `.tflite` file to skip the download. Screenshots per test checkpoint land in `tests/e2e/artifacts/` (gitignored) — read them after a run to visually confirm behavior. A failing test also drops `<test>_FAIL.png`, `<test>_FAIL.html`, and `<test>_FAIL.serverlog.txt` there.
 
+`test_character_focus_yolo_onnx_gpt56` (Character Focus via the `yolo_onnx` backend, planned by the gpt-5.6 presets) additionally needs `onnxruntime` (`pip install -r requirements-onnxruntime.txt`), a live `OPENAI_API_KEY`, and a YOLO detection `.onnx` — it defaults to `infer_models/yolo/yolo26s.onnx` (gitignored; also the app's bundled `yolo_onnx_model_path` default) and is overridable with `E2E_YOLO_ONNX_MODEL_PATH` (a v8+ Ultralytics **detection** export at `imgsz=640` — not yolo-world, not v5/v7). Missing onnxruntime or model → the test skips.
+
 ## Lint / format / typecheck
 
 All checks in one run (`ruff`, `black`, `isort`, `pydocstyle`, `pytest`), status table + exit 1 if any blocking step fails:

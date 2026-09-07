@@ -7,6 +7,7 @@ startup / model download cost across the handful of e2e tests.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import socket
@@ -24,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLES_DIR = REPO_ROOT / "samples"
 ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts"
 MODELS_DIR = Path(__file__).resolve().parent / "models"
+YOLO_ONNX_DEFAULT_PATH = REPO_ROOT / "infer_models" / "yolo" / "yolo26s.onnx"
 
 MEDIAPIPE_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/object_detector/"
@@ -132,10 +134,51 @@ def mediapipe_usable(mediapipe_model_path: Path) -> bool:
 
 
 @pytest.fixture(scope="session")
+def yolo_onnx_model_path() -> Path | None:
+    """Local YOLO detection ``.onnx`` for the ``yolo_onnx`` Character Focus backend.
+
+    No download (Ultralytics AGPL, no hosted asset): ``E2E_YOLO_ONNX_MODEL_PATH``
+    if set, else the gitignored local ``infer_models/yolo/yolo26s.onnx`` (also the
+    app's bundled default), else ``None`` — the ``yolo_onnx`` e2e case then skips.
+    """
+    override = os.environ.get("E2E_YOLO_ONNX_MODEL_PATH")
+    if override:
+        path = Path(override)
+        if not path.is_file():
+            pytest.fail(f"E2E_YOLO_ONNX_MODEL_PATH={override!r} does not point to a file")
+        return path
+    return YOLO_ONNX_DEFAULT_PATH if YOLO_ONNX_DEFAULT_PATH.is_file() else None
+
+
+@pytest.fixture(scope="session")
+def yolo_onnx_usable(yolo_onnx_model_path: Path | None) -> bool:
+    """Whether the ``yolo_onnx`` backend can actually load the configured model here.
+
+    onnxruntime's CPU EP raises an ordinary exception on a missing/incompatible
+    file — no AVX-SIGILL trap like mediapipe's TFLite binary — so an in-process
+    probe is enough.
+    """
+    if yolo_onnx_model_path is None or importlib.util.find_spec("onnxruntime") is None:
+        return False
+    try:
+        import onnxruntime as ort
+
+        ort.InferenceSession(str(yolo_onnx_model_path), providers=["CPUExecutionProvider"])
+    except Exception:
+        return False
+    return True
+
+
+@pytest.fixture(scope="session")
 def streamlit_server(mediapipe_model_path: Path) -> Iterator[str]:
     port = _free_port()
     env = os.environ.copy()
     env["MEDIAPIPE_MODEL_PATH"] = str(mediapipe_model_path)
+    _yolo_path = os.environ.get("E2E_YOLO_ONNX_MODEL_PATH") or (
+        str(YOLO_ONNX_DEFAULT_PATH) if YOLO_ONNX_DEFAULT_PATH.is_file() else None
+    )
+    if _yolo_path:
+        env["YOLO_ONNX_MODEL_PATH"] = _yolo_path
 
     ARTIFACTS_DIR.mkdir(exist_ok=True)
     log_path = ARTIFACTS_DIR / "streamlit_server.log"

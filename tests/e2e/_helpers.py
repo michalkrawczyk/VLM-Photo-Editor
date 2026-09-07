@@ -154,6 +154,31 @@ def accept_plan_and_wait_executed(page: Page, timeout: int = EXECUTE_TIMEOUT_MS)
     _wait_for_or_fail(page, page.get_by_text("Executed ✓", exact=True), timeout, "execution")
 
 
+def wait_for_executed(page: Page, timeout: int = EXECUTE_TIMEOUT_MS) -> None:
+    """Wait for execution without accepting — for auto/full_auto modes that run
+    the plan with no pre-execution gate."""
+    _wait_for_or_fail(page, page.get_by_text("Executed ✓", exact=True), timeout, "auto execution")
+
+
+def set_accept_mode(page: Page, label: str) -> None:
+    """Pick an Accept Mode radio option (Manual / Auto-Accept Low Risk /
+    Auto-Accept Medium Risk / Full Auto)."""
+    wait_for_idle(page)
+    page.get_by_role("radio", name=label, exact=True).check()
+    wait_for_idle(page)
+
+
+def request_plan_change(page: Page, text: str) -> None:
+    """Type a chat change request and wait for the regenerated plan."""
+    box = page.get_by_label("Request changes:")
+    box.fill(text)
+    box.press("Tab")  # blur so Streamlit commits the value before the click
+    wait_for_idle(page)
+    click_button(page, "Request Changes")
+    wait_for_idle(page)
+    wait_for_plan_ready(page)
+
+
 def save_and_get_path(page: Page, timeout: int = 30_000) -> Path:
     wait_for_idle(page)
     page.get_by_role("button", name="Save New File", exact=True).click()
