@@ -4,7 +4,7 @@
 
 Photo editing app powered by a VLM: propose a human-readable plan → user approves → deterministic executor runs it. Backgrounds may use genAI; everything else uses ordinary imaging libs. Originals are never altered.
 
-For a photographer/editor who wants fast, explainable, reversible edits — not a black box. Four accept modes control automation level: `manual` always prompts; `auto_low`/`auto_medium` skip approval by risk tier (LOW / LOW+MEDIUM); `full_auto` executes with no pre-execution gate at all, including genAI ops — safe because subject pixels are frozen and saves are non-destructive, so a bad result only costs a rerun.
+For a photographer/editor who wants fast, explainable, reversible edits — not a black box. Four accept modes control automation level: `manual` always prompts; `auto_low`/`auto_medium` skip approval by risk tier (LOW / LOW+MEDIUM); `full_auto` executes with no pre-execution gate at all, including genAI ops — safe because subject pixels are frozen and saves are non-destructive, so a bad result only costs a rerun (bounded by a per-run genAI ceiling; batch `full_auto` still requires post-run review before "Save All").
 
 **One-line architecture:** Planner (VLM) → human-readable plan → user approval → Compiler → validated OpGraph → Executor (deterministic code + optional genAI + optional Photoshop) → Recipe (non-destructive, replayable). An optional Critic verifies results.
 
