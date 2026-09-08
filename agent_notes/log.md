@@ -26,6 +26,13 @@ conventions. Newest at the bottom.
   nested the YOLO export under `infer_models/yolo/yolo26s.onnx`; it is now the app's bundled
   `yolo_onnx_model_path` default (was e2e-fixture-only). `.gitignore`, `commands.md`, e2e
   conftest/tests updated. Still gitignored (38 MB, Ultralytics AGPL).
+- 2026-09-08 — `yolo_onnx` now requires a sibling `classes.txt` (0-based, human/person class)
+  to be `ready`; it populates `DetectedSubject.label`. Added `infer_models/yolo/classes.txt`
+  (COCO-80) committed via a `.gitignore` negation (`!infer_models/**/classes.txt`). New public
+  `detection` API: `detector_labels()`, `detector_has_label()`, `requires_classes_txt()`.
+  `FramingMode.FACE_ONLY` is hidden from the Composition dropdown / RECOMMEND_BEST menu unless
+  the active Character Focus backend has a "face" label (carried on new
+  `FramingIntent.face_framing_allowed`). Schema left permissive by design.
 - 2026-08-24 — Fixed the `Stop` hook in `.claude/settings.json`: it pointed at
   `/media/tk/Programming1/…` (nonexistent — repo is `/media/tk/Programming/…`) and hid the failure
   behind `2>/dev/null`, so `cleanup.sh` had never run. Now `$CLAUDE_PROJECT_DIR`-relative, stderr

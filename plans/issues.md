@@ -1380,6 +1380,8 @@ The `ndim == 2` and `shape[2] == 4` cases are handled; `shape[2] == 1` falls thr
 
 The path comes from a free-text settings field ([settings.py:407-411](vlm_photo_editor/app/components/settings.py#L407)) and is handed straight to `ort.InferenceSession` / `BaseOptions(model_asset_path=…)`. ONNX and TFLite graphs are executable artifacts with custom-op loading paths; neither existence, suffix, nor size is checked first. At minimum check the file exists with the expected suffix and fail with a clear message rather than an `onnxruntime` C++ abort.
 
+_Partial (2026-09-08):_ `yolo_onnx` now reads a sibling `classes.txt` before inference (`_common.load_class_labels`) — a missing/unreadable file, or a class-count mismatch vs the model output, fails with a clear `ValueError`. That is a pre-load sanity gate for `yolo_onnx` only; mediapipe/u2netp still hand the raw path straight to the runtime, and the `.onnx`/`.tflite` itself is still unvalidated.
+
 ---
 
 ### Code Smells / Maintainability
@@ -1408,6 +1410,11 @@ Same lazy `get_settings()` import, same falsiness check, same three-line message
 **File:** [vlm_photo_editor/detection/AGENTS.md:41-45](vlm_photo_editor/detection/AGENTS.md#L41)
 
 The test section claims "each backend's bbox is clamped inside image bounds" as a covered scenario, but `tests/unit/test_p13_character_focus.py` exercises only mediapipe and yolo_onnx — u2netp, the backend with the most post-processing (threshold, connected components, confidence derivation), has no clamp test. The import rules also list `opencv` among the lazily-imported optional SDKs, though `opencv-python-headless` is a base dependency ([requirements.txt:17](requirements.txt#L17)) and `available_backends()` never checks for it.
+
+**DET-D3: a stale cached `face_only` plan replays after the face detector is turned off**
+**File:** [vlm_photo_editor/schema/op_catalog.py:198-213](vlm_photo_editor/schema/op_catalog.py#L198)
+
+`FramingMode.FACE_ONLY` is filtered from the Composition dropdown and the planner RECOMMEND_BEST menu by `detection.detector_has_label(cf, "face")` (2026-09-08), but `FRAME`'s `enum_params` stay permissive by design — schema validation must not depend on `detection`/session state. So a plan compiled while a `face`-labelled detector was active, then replayed from the plan cache with Character Focus off, still carries `frame.mode == "face_only"`. Accepted: `pil_backend._FRAME_ASPECT["face_only"] == (3,4)` is identical to `portrait_headroom`, so the crop is valid, just not "tight to the face". No crash, no silent no-op.
 
 ---
 
@@ -2171,7 +2178,8 @@ All issues across all batches, sorted by severity.
 | OE-O1 | Low | executor.py:15-120 | Origin-remapping machinery is half-built: it skips `CROP`'s own params (OE-B1) and any `ROTATE` disables it outright |
 | DET-B4 | Low | _common.py:21-24 | `to_rgb_uint8` leaves `HxWx1` arrays single-channel (verified) — opaque SDK shape failure downstream |
 | DET-B6 | Low | mediapipe_backend.py:23,31-38 | `max_results=1` picks the top-scoring detection of any class as "the subject"; no-category fallback emits `confidence=0.0` with nothing gating on it |
-| DET-D2 | Low | u2netp_backend.py:31, yolo_onnx_backend.py:46, mediapipe_backend.py:22 | Free-text model path handed to `InferenceSession`/`BaseOptions` unvalidated — no existence or suffix check before loading executable graph content |
+| DET-D2 | Low | u2netp_backend.py:31, yolo_onnx_backend.py:46, mediapipe_backend.py:22 | Free-text model path handed to `InferenceSession`/`BaseOptions` unvalidated — no existence or suffix check before loading executable graph content (partial 2026-09-08: yolo_onnx now pre-checks its sibling `classes.txt`) |
+| DET-D3 | Low | op_catalog.py:198-213 | Stale cached `face_only` plan replays as `portrait_headroom` geometry after the face detector is turned off — `FRAME.enum_params` left permissive by design (accepted) |
 | DET-C1 | Low | detection/\_\_init\_\_.py:14-58 | Backend list encoded three different ways (find_spec chain, `_BACKEND_REQS`, dispatch if-chain); AGENTS.md documents the resulting 4-edit checklist as design |
 | DET-C2 | Low | detection/\_\_init\_\_.py:56-58 | Unconditional u2netp fallthrough in `detect_subject()` — a new enum member silently routes to the wrong backend (same shape as OE-C5) |
 | DET-C3 | Low | mediapipe_backend.py:10-17, u2netp_backend.py:14-21, yolo_onnx_backend.py:29-36 | Model-path lookup + ValueError preamble copy-pasted into all three backends; belongs in `_common.py` |

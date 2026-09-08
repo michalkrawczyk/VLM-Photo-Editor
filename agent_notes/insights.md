@@ -115,3 +115,26 @@ bundled, gitignored `infer_models/yolo/yolo26s.onnx` (renamed from `.test_models
 **Apply:** never add a blanket `load_dotenv()` at startup; extend `_path_setting` instead.
 The main-flow Character Focus picker offers `detection.ready_backends()` (package + path),
 not `available_backends()` (package only).
+
+---
+
+## `yolo_onnx` needs a sibling `classes.txt`; `face_only` is gated on a "face" label
+
+Discovered 2026-09-08. `yolo_onnx` reads `classes.txt` from the model file's *directory*
+(`_common.load_class_labels`, 0-based line index == class id). It must name a `human`/`person`
+class (case-insensitive) or `ready_backends()` drops the backend and `detect()` raises — same
+"no silent fallback" contract as a missing model path. `detect()` also raises on a class-count
+mismatch vs the model's output. The bundled COCO-80 `infer_models/yolo/classes.txt` is now
+committed via a `.gitignore` negation (`!infer_models/**/classes.txt`); the `.onnx` stays ignored.
+
+`FramingMode.FACE_ONLY` is offered in the Composition dropdown and the planner RECOMMEND_BEST
+menu **only** when `detection.detector_has_label(active_cf_backend, "face")` — carried to the
+template on `FramingIntent.face_framing_allowed` (default `True`). The static schema
+(`op_catalog` `enum_params`, `ops/validator.py`) stays permissive: a cached/hand-edited
+`frame.mode == "face_only"` still validates and replays (degrades to `portrait_headroom`
+geometry — both are a 3:4 centred/centroid crop). mediapipe returns `None` from
+`detector_labels()` (labels embedded in the tflite, not introspected), so `face_only` is
+hidden under mediapipe too.
+
+**Apply:** don't move the `face_only` gate into schema validation — it must not depend on
+`detection`/Streamlit state. Gate at the presentation layer only.
