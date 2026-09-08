@@ -14,6 +14,8 @@ _DEFAULTS: dict[str, Any] = {
     "batch_records": None,
     "batch_review_index": 0,
     "batch_retry_id": None,
+    "batch_apply_all": True,  # the mode checkbox; default ON = Mode A
+    "batch_per_intents": {},  # Mode B: {filename: instruction}
     "output_format": "same",
     "source_name": None,  # original upload filename, for output/recipe naming
     "container": None,  # ImageContainer after loading the uploaded file

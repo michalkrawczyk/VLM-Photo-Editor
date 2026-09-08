@@ -6,6 +6,11 @@ backoff with jitter before retry.
 
 Call anyio.run(run_batch, ...) directly from the UI — do NOT wrap in run_job(),
 which itself calls anyio.run() and cannot be nested.
+
+``apply_plan_to_batch`` is the Mode-A ("apply the same edit to every image")
+counterpart: one already-approved ``HumanPlan`` is recompiled against each
+image's dimensions + ``detected_subject`` and executed. It makes no VLM call, so
+it is plain-sync — call it directly, no ``anyio.run`` wrapper.
 """
 
 from __future__ import annotations
@@ -73,7 +78,7 @@ async def _plan_single(
             plan = await anyio.to_thread.run_sync(
                 lambda: planner.plan(
                     record.container,
-                    intent,
+                    record.intent or intent,  # per-image overrides the batch-wide fallback
                     prefs,
                     mode,
                     framing_intent,
@@ -159,6 +164,48 @@ async def run_batch(
         ):
             _execute_record(record)
 
+    return records
+
+
+def apply_plan_to_batch(
+    records: list[BatchImageRecord],
+    plan: Any,  # HumanPlan — Any to match module style
+    mode: str,
+    on_image_progress: Callable[[str], None] | None = None,
+) -> list[BatchImageRecord]:
+    """Recompile one approved HumanPlan against each image, then execute.
+
+    Per record: compile the plan against THIS image's detected_subject, validate
+    crop bounds against THIS image's dimensions, then execute. Any failure marks
+    the record FAILED with a sanitised error and the loop continues. Progress
+    fires once per record (image_id), matching run_batch's on_image_progress
+    contract.
+
+    Plain-sync: no VLM call, so no task group and no ``anyio.run`` wrapper.
+    """
+    from vlm_photo_editor.ops.validator import validate_crop_bounds
+    from vlm_photo_editor.planner.compiler import Compiler
+
+    compiler = Compiler()  # stateless
+    for record in records:
+        record.status = ImageStatus.PLANNING
+        try:
+            result = compiler.compile(plan, mode, detected_subject=record.detected_subject)
+            record.plan = result.plan
+            record.op_graph = result.op_graph  # per-image graph -> accurate Recipe sidecar
+            validate_crop_bounds(result.op_graph, record.container.width, record.container.height)
+        except Exception as exc:
+            record.status = ImageStatus.FAILED
+            record.error = _safe_error(exc)
+            _log.error(
+                "batch_apply_compile_failed image=%s error=%s", record.filename, record.error
+            )
+            if on_image_progress is not None:
+                on_image_progress(record.image_id)
+            continue
+        _execute_record(record)  # Executor().apply -> AUTO_EXECUTED | FAILED
+        if on_image_progress is not None:
+            on_image_progress(record.image_id)
     return records
 
 

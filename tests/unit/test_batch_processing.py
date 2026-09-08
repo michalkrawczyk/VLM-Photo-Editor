@@ -1,4 +1,10 @@
-"""P11 Batch Processing — unit tests covering all DoD items."""
+"""Batch Processing — unit tests.
+
+Covers the original P11 DoD items (concurrent planning, rate-limit back-off,
+progress callback, accept-mode split, Save All, sidecars) plus the two-mode
+extension: per-image ``intent`` override (Mode B) and ``apply_plan_to_batch``
+(Mode A — one approved plan recompiled per image).
+"""
 
 from __future__ import annotations
 
@@ -110,12 +116,14 @@ def test_concurrent_planning_wall_time():
     assert all(r.status == ImageStatus.NEEDS_REVIEW for r in records)
 
 
-async def _run_batch_helper(records, accept_mode, on_progress=None, max_retries=0):
+async def _run_batch_helper(
+    records, accept_mode, on_progress=None, max_retries=0, intent="brighten"
+):
     from vlm_photo_editor.pipeline.batch import run_batch
 
     return await run_batch(
         records,
-        intent="brighten",
+        intent=intent,
         prefs=None,
         mode="full",
         framing_intent=None,
@@ -407,3 +415,236 @@ def test_replan_record_forwards_detected_subject():
 
     assert revise.call_args.kwargs["detected_subject"] is subject
     assert compile_.call_args.kwargs["detected_subject"] is subject
+
+
+# ── Two-mode extension ───────────────────────────────────────────────────────
+#
+# Mode B: per-image `intent` override threaded through `_plan_single` / `run_batch`
+#         and `_replan_record`.
+# Mode A: `apply_plan_to_batch` — one approved HumanPlan recompiled per image,
+#         each failure isolated, progress fired per record.
+
+
+def _compile_result_with_graph(step_id: str):
+    """A compile result whose op_graph is a real, distinct OpGraph (one LOW-risk op)."""
+    result = MagicMock()
+    result.plan = _fake_plan()
+    result.op_graph = OpGraph(
+        ops=[Op(op_name=OpName.EXPOSURE, params={"ev": 0.1}, backend=Backend.PIL, step_id=step_id)]
+    )
+    return result
+
+
+def _patched_apply(compile_results):
+    """Patch Compiler + Executor for an `apply_plan_to_batch` call.
+
+    Returns (compiler_patch, executor_patch, mock_compiler_cls, mock_executor_cls).
+    """
+    mock_compiler_cls = MagicMock()
+    mock_compiler_cls.return_value.compile.side_effect = list(compile_results)
+
+    exec_result = MagicMock()
+    exec_result.genai_ops = []
+    mock_executor_cls = MagicMock()
+    mock_executor_cls.return_value.apply.return_value = exec_result
+
+    return (
+        patch(_COMPILER_PATH, mock_compiler_cls),
+        patch("vlm_photo_editor.ops.executor.Executor", mock_executor_cls),
+        mock_compiler_cls,
+        mock_executor_cls,
+    )
+
+
+def test_batch_record_intent_default():
+    rec = BatchImageRecord(filename="a.jpg")
+    assert rec.intent == ""
+    roundtrip = BatchImageRecord.model_validate(rec.model_dump())
+    assert roundtrip.intent == ""
+
+
+@pytest.mark.parametrize("record_intent,expected", [("", "SHARED"), ("warmer", "warmer")])
+def test_plan_single_prefers_record_intent(record_intent, expected):
+    """`record.intent` overrides the batch-wide fallback; blank falls back to it."""
+    records = [_make_record("img.jpg")]
+    records[0].intent = record_intent
+
+    planner_patch, compiler_patch = _patched_batch()
+    with planner_patch as mock_planner, compiler_patch:
+        anyio.run(_run_batch_helper, records, AcceptMode.MANUAL, None, 0, "SHARED")
+
+    assert mock_planner.return_value.plan.call_args.args[1] == expected
+
+
+def test_apply_plan_to_batch_recompiles_per_image():
+    from vlm_photo_editor.pipeline.batch import apply_plan_to_batch
+
+    subjects = ["subj-0", "subj-1", "subj-2"]
+    records = []
+    for i, s in enumerate(subjects):
+        r = _make_record(f"img{i}.jpg")
+        r.detected_subject = s
+        records.append(r)
+
+    results = [_compile_result_with_graph(f"s{i}") for i in range(3)]
+    compiler_patch, executor_patch, mock_compiler, _ = _patched_apply(results)
+
+    with compiler_patch, executor_patch:
+        out = apply_plan_to_batch(records, _fake_plan(), "full")
+
+    assert out is records
+    calls = mock_compiler.return_value.compile.call_args_list
+    assert len(calls) == 3
+    for i, call in enumerate(calls):
+        assert call.kwargs["detected_subject"] == subjects[i]
+    assert all(r.status == ImageStatus.AUTO_EXECUTED for r in records)
+    for r, res in zip(records, results):
+        assert r.op_graph is res.op_graph
+    assert len({id(r.op_graph) for r in records}) == 3
+
+
+def test_apply_plan_to_batch_progress_per_image():
+    from vlm_photo_editor.pipeline.batch import apply_plan_to_batch
+
+    records = [_make_record(f"img{i}.jpg") for i in range(3)]
+    results = [_compile_result_with_graph(f"s{i}") for i in range(3)]
+    compiler_patch, executor_patch, _, _ = _patched_apply(results)
+    seen: list[str] = []
+
+    with compiler_patch, executor_patch:
+        apply_plan_to_batch(records, _fake_plan(), "full", seen.append)
+
+    assert len(seen) == 3
+    assert set(seen) == {r.image_id for r in records}
+
+
+def test_apply_plan_to_batch_crop_oob_isolated():
+    from vlm_photo_editor.pipeline.batch import apply_plan_to_batch
+
+    records = [_make_record(f"img{i}.jpg") for i in range(3)]
+    results = [_compile_result_with_graph(f"s{i}") for i in range(3)]
+    compiler_patch, executor_patch, _, _ = _patched_apply(results)
+
+    calls = [0]
+
+    def fake_validate(*_a, **_k):
+        calls[0] += 1
+        if calls[0] == 2:
+            raise ValueError("crop out of bounds")
+
+    seen: list[str] = []
+    with (
+        compiler_patch,
+        executor_patch,
+        patch("vlm_photo_editor.ops.validator.validate_crop_bounds", fake_validate),
+    ):
+        apply_plan_to_batch(records, _fake_plan(), "full", seen.append)
+
+    assert records[0].status == ImageStatus.AUTO_EXECUTED
+    assert records[1].status == ImageStatus.FAILED
+    assert records[1].error is not None
+    assert records[2].status == ImageStatus.AUTO_EXECUTED
+    assert len(seen) == 3  # loop not aborted; progress fired for every record
+
+
+def test_apply_plan_to_batch_executor_error_isolated():
+    from vlm_photo_editor.pipeline.batch import apply_plan_to_batch
+
+    records = [_make_record(f"img{i}.jpg") for i in range(3)]
+    results = [_compile_result_with_graph(f"s{i}") for i in range(3)]
+
+    mock_compiler_cls = MagicMock()
+    mock_compiler_cls.return_value.compile.side_effect = results
+
+    apply_calls = [0]
+
+    def flaky_apply(*_a, **_k):
+        apply_calls[0] += 1
+        if apply_calls[0] == 2:
+            raise RuntimeError("executor boom")
+        res = MagicMock()
+        res.genai_ops = []
+        return res
+
+    mock_executor_cls = MagicMock()
+    mock_executor_cls.return_value.apply.side_effect = flaky_apply
+
+    with (
+        patch(_COMPILER_PATH, mock_compiler_cls),
+        patch("vlm_photo_editor.ops.executor.Executor", mock_executor_cls),
+    ):
+        apply_plan_to_batch(records, _fake_plan(), "full")
+
+    assert records[0].status == ImageStatus.AUTO_EXECUTED
+    assert records[1].status == ImageStatus.FAILED
+    assert records[1].error is not None
+    assert records[2].status == ImageStatus.AUTO_EXECUTED
+
+
+def test_apply_plan_to_batch_sets_op_graph_for_sidecar(tmp_path):
+    from vlm_photo_editor.app.components.batch_review import _save_all_accepted
+    from vlm_photo_editor.pipeline.batch import apply_plan_to_batch
+    from vlm_photo_editor.recipe.store import RecipeStore
+
+    records = [_make_record(f"img{i}.jpg") for i in range(2)]
+    results = [_compile_result_with_graph(f"step-{i}") for i in range(2)]
+    compiler_patch, executor_patch, _, _ = _patched_apply(results)
+
+    with compiler_patch, executor_patch:
+        apply_plan_to_batch(records, _fake_plan(), "full")
+
+    assert records[0].op_graph.ops[0].step_id == "step-0"
+    assert records[1].op_graph.ops[0].step_id == "step-1"
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    recipes_dir = tmp_path / "recipes"
+    saved_paths = [out_dir / f"img{i}_edited.jpg" for i in range(2)]
+
+    with patch(
+        "vlm_photo_editor.app.components.batch_review._save",
+        MagicMock(side_effect=saved_paths),
+    ):
+        _save_all_accepted(records, "same", out_dir, recipes_dir)
+
+    sidecars = sorted(recipes_dir.glob("*.edit.json"))
+    assert len(sidecars) == 2
+    step_ids = {RecipeStore.load(s).op_graph.ops[0].step_id for s in sidecars}
+    assert step_ids == {"step-0", "step-1"}
+
+
+def test_apply_plan_to_batch_is_sync():
+    from vlm_photo_editor.pipeline.batch import apply_plan_to_batch
+
+    records = [_make_record("img.jpg")]
+    compiler_patch, executor_patch, _, _ = _patched_apply([_compile_result_with_graph("s0")])
+
+    with compiler_patch, executor_patch:
+        result = apply_plan_to_batch(records, _fake_plan(), "full")  # no anyio.run
+
+    assert result is records
+    assert records[0].status == ImageStatus.AUTO_EXECUTED
+
+
+def test_replan_record_prefers_record_intent():
+    import vlm_photo_editor.app.components.batch_review as br
+
+    rec = BatchImageRecord(
+        filename="p.jpg",
+        container=MagicMock(),
+        plan=None,  # fallback branch -> anyio.run(run_batch, ...)
+        intent="foo",
+        status=ImageStatus.FAILED,
+    )
+
+    fake_anyio_run = MagicMock()
+    with (
+        patch("vlm_photo_editor.pipeline.batch.run_batch", MagicMock()),
+        patch.object(br.state, "get", lambda k: None),
+        patch.object(br.st, "error", MagicMock()),
+        patch("anyio.run", fake_anyio_run),
+    ):
+        br._replan_record(rec, "make it warmer")
+
+    # anyio.run(run_batch, [record], intent, prefs, mode, None, accept_mode, 3, None)
+    assert fake_anyio_run.call_args.args[2] == "foo"

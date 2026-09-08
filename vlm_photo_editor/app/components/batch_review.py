@@ -140,7 +140,7 @@ def _replan_record(record: BatchImageRecord, feedback: str) -> None:
 
     from vlm_photo_editor.pipeline.batch import run_batch
 
-    intent = state.get("intent") or ""
+    intent = record.intent or state.get("intent") or ""
     prefs = state.get("prefs")
     mode = state.get("edit_mode") or "full"
     accept_mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)

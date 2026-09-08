@@ -385,21 +385,8 @@ def _do_aggregate() -> None:
         st.info(f"{len(candidates)} new preference candidate(s) ready for review.")
 
 
-def _render_batch_panel(files: list) -> None:
-    import anyio
-
-    from vlm_photo_editor.pipeline.batch import run_batch
-    from vlm_photo_editor.schema.batch import BatchImageRecord
-
-    st.subheader(f"Batch Processing — {len(files)} images")
-
-    intent = st.text_area(
-        "What would you like to do with these images?",
-        height=80,
-        key="batch_intent_input",
-    )
-    state.set("intent", intent)
-
+def _render_batch_edit_mode_buttons() -> None:
+    """Full / Background / Reframe toggles shared by both batch modes."""
     _edit_mode = state.get("edit_mode") or "full"
     col_full, col_bg, col_frame = st.columns(3)
     with col_full:
@@ -430,56 +417,204 @@ def _render_batch_panel(files: list) -> None:
             state.set("edit_mode", "frame")
             st.rerun()
 
-    records: list[BatchImageRecord] | None = state.get("batch_records")
 
-    # Handle retry for a single image
+def _handle_batch_retry(records: list | None) -> None:
+    """Re-plan one image flagged for retry from the Needs Attention panel."""
+    import anyio
+
+    from vlm_photo_editor.pipeline.batch import run_batch
+
     retry_id = state.get("batch_retry_id")
-    if retry_id and records:
-        record = next((r for r in records if r.image_id == retry_id), None)
-        if record:
-            state.set("batch_retry_id", None)
-            with st.spinner(f"Re-planning {record.filename}…"):
-                anyio.run(
-                    run_batch,
-                    [record],
-                    state.get("intent") or "",
-                    state.get("prefs"),
-                    state.get("edit_mode") or "full",
-                    None,
-                    AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value),
-                    3,
-                    None,
+    if not (retry_id and records):
+        return
+    record = next((r for r in records if r.image_id == retry_id), None)
+    if record is None:
+        return
+    state.set("batch_retry_id", None)
+    with st.spinner(f"Re-planning {record.filename}…"):
+        anyio.run(
+            run_batch,
+            [record],
+            record.intent or state.get("intent") or "",
+            state.get("prefs"),
+            state.get("edit_mode") or "full",
+            None,
+            AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value),
+            3,
+            None,
+        )
+    st.rerun()
+
+
+def _batch_load_records(files: list, *, per_image_intent: bool = False) -> list:
+    """Load every uploaded file into a BatchImageRecord."""
+    from vlm_photo_editor.schema.batch import BatchImageRecord
+
+    per = state.get("batch_per_intents") or {}
+    shared = state.get("intent") or ""
+    records: list = []
+    for f in files:
+        container = _load_uploaded(f)
+        kwargs: dict = {
+            "filename": f.name,
+            "container": container,
+            "detected_subject": _detect_subject_if_enabled(container),
+        }
+        if per_image_intent:
+            kwargs["intent"] = (per.get(f.name) or shared).strip()
+        records.append(BatchImageRecord(**kwargs))
+    return records
+
+
+def _render_batch_panel(files: list) -> None:
+    st.subheader(f"Batch Processing — {len(files)} images")
+
+    if state.get("error"):
+        st.error(state.get("error"))
+
+    apply_all = st.checkbox(
+        "Apply the same edit to every image",
+        value=bool(state.get("batch_apply_all")),
+        key="batch_apply_all_cb",
+    )
+    state.set("batch_apply_all", apply_all)
+
+    _render_batch_edit_mode_buttons()
+
+    _handle_batch_retry(state.get("batch_records"))
+
+    if apply_all:
+        _render_batch_mode_a(files)
+    else:
+        _render_batch_mode_b(files)
+
+    records = state.get("batch_records")
+    if records:
+        batch_review.render(records)
+
+
+def _render_batch_mode_a(files: list) -> None:
+    """Mode A — one shared instruction, plan approved once, recompiled per image."""
+    records = state.get("batch_records")
+
+    intent = st.text_area(
+        "What would you like to do with all these images?",
+        height=80,
+        key="batch_intent_input",
+    )
+    state.set("intent", intent)
+    st.caption(
+        "The plan is re-derived per image, but framing/composition choices come "
+        "from the first image; images whose crop can't fit are skipped and listed "
+        "under Needs Attention."
+    )
+
+    if st.button(
+        "Preview plan on first image",
+        key="batch_preview_plan_btn",
+        disabled=not intent,
+        type="primary",
+    ):
+        with st.spinner("Generating plan…"):
+            _do_generate_plan()
+        st.rerun()
+
+    current_plan = state.get("current_plan")
+    if current_plan is None:
+        return
+
+    plan_view.render(current_plan, state.get("current_opgraph"), executed=bool(records))
+
+    change = state.get("change_request") or ""
+    if change:
+        with st.spinner("Revising plan…"):
+            _do_revise_plan(change)
+        st.rerun()
+
+    if state.get("plan_approved") and not records:
+        st.caption(f"Applies to all {len(files)} images.")
+        if st.button(
+            f"Apply to all {len(files)} images",
+            key="batch_apply_all_btn",
+            type="primary",
+        ):
+            from vlm_photo_editor.pipeline.batch import apply_plan_to_batch
+
+            with st.spinner("Loading images…"):
+                new_records = _batch_load_records(files)
+            state.set("batch_records", new_records)
+
+            completed = [0]
+            bar = st.progress(0.0, text="Applying to images…")
+
+            def _on_done(image_id: str) -> None:
+                completed[0] += 1
+                bar.progress(
+                    completed[0] / len(new_records),
+                    text=f"Processed {completed[0]}/{len(new_records)} images…",
                 )
+
+            apply_plan_to_batch(
+                new_records,
+                state.get("current_plan"),
+                state.get("edit_mode") or "full",
+                _on_done,
+            )
+            bar.progress(1.0, text="Done.")
+            state.set("batch_records", new_records)
             st.rerun()
+
+
+def _render_batch_mode_b(files: list) -> None:
+    """Mode B — a shared fallback box plus one instruction box per image."""
+    shared = st.text_area(
+        "Shared instruction (used for any image left blank)",
+        height=80,
+        key="batch_intent_input",
+    )
+    state.set("intent", shared)
+
+    per: dict[str, str] = dict(state.get("batch_per_intents") or {})
+    for i, f in enumerate(files):
+        c_img, c_txt = st.columns([1, 3])
+        with c_img:
+            st.image(f.getvalue(), width=140)
+        with c_txt:
+            per[f.name] = st.text_area(
+                f"Instruction — {f.name}",
+                key=f"batch_intent_{i}_{f.name}",
+                value=per.get(f.name, ""),
+                height=80,
+            )
+    state.set("batch_per_intents", per)
+
+    def _effective(f) -> str:
+        return (per.get(f.name) or shared).strip()
+
+    all_ready = all(_effective(f) for f in files)
 
     if st.button(
         "Start Batch Processing",
         key="start_batch_btn",
-        disabled=not intent,
+        disabled=not all_ready,
         type="primary",
     ):
+        import anyio
+
+        from vlm_photo_editor.pipeline.batch import run_batch
+
         with st.spinner("Loading images…"):
-            new_records: list[BatchImageRecord] = []
-            for f in files:
-                container = _load_uploaded(f)
-                new_records.append(
-                    BatchImageRecord(
-                        filename=f.name,
-                        container=container,
-                        detected_subject=_detect_subject_if_enabled(container),
-                    )
-                )
+            new_records = _batch_load_records(files, per_image_intent=True)
         state.set("batch_records", new_records)
-        records = new_records
 
-        completed: list[int] = [0]
-        overall_bar = st.progress(0.0, text="Planning images…")
+        completed = [0]
+        bar = st.progress(0.0, text="Planning images…")
 
-        def _on_image_done(image_id: str) -> None:
+        def _on_done(image_id: str) -> None:
             completed[0] += 1
-            overall_bar.progress(
-                completed[0] / len(records),
-                text=f"Planned {completed[0]}/{len(records)} images…",
+            bar.progress(
+                completed[0] / len(new_records),
+                text=f"Planned {completed[0]}/{len(new_records)} images…",
             )
 
         accept_mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)
@@ -488,21 +623,18 @@ def _render_batch_panel(files: list) -> None:
 
         anyio.run(
             run_batch,
-            records,
-            intent,
+            new_records,
+            shared,
             state.get("prefs"),
             state.get("edit_mode") or "full",
             fi,
             accept_mode,
             3,
-            _on_image_done,
+            _on_done,
         )
-        overall_bar.progress(1.0, text="Done.")
-        state.set("batch_records", records)
+        bar.progress(1.0, text="Done.")
+        state.set("batch_records", new_records)
         st.rerun()
-
-    if records:
-        batch_review.render(records)
 
 
 def _do_save() -> None:

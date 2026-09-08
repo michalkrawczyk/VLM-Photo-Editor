@@ -21,6 +21,7 @@
 | recipe.py | `Recipe`: op-graph + model + prompt + seed per genAI op |
 | prefs.py | `Preferences`, `ExplicitRule`, `LearnedRule`, `PrefsVersion` |
 | detection.py | `DetectedSubject`: bbox + label + confidence + source, from a local detector pre-pass |
+| batch.py | `BatchImageRecord` (per-image state for P11 batch runs), `ImageStatus` enum. `intent: str = ""` is an optional per-image instruction override (Mode B); `""` falls back to the batch-wide intent |
 
 ## Tests
 - Location: `tests/unit/test_schema.py`
