@@ -96,7 +96,7 @@ Batches derived from directory structure only (module/layer boundaries), not fil
 
 ## Batch 12: Tests
 
-**Files:** `tests/__init__.py`, `tests/integration/__init__.py`, `tests/unit/__init__.py`, `tests/unit/test_background.py`, `test_edit_flow.py`, `test_framing.py`, `test_imageio.py`, `test_op_catalog.py`, `test_ops.py`, `test_p9_critic.py`, `test_p10_hardening.py`, `test_p11_batch.py`, `test_p13_character_focus.py`, `test_planner.py`, `test_prefs.py`, `test_recipe.py`, `test_schema.py`, `test_secrets.py`, plus `tests/fixtures/` (face_portrait.jpg, `prompts/base_prompt_full_mode.txt`, `schemas/sample_opgraph.json`, `schemas/sample_plan.json`, `schemas/sample_recipe.json`)
+**Files:** `tests/__init__.py`, `tests/integration/__init__.py`, `tests/unit/__init__.py`, `tests/unit/test_background.py`, `test_edit_flow.py`, `test_framing.py`, `test_imageio.py`, `test_op_catalog.py`, `test_ops.py`, `test_p9_critic.py`, `test_p10_hardening.py`, `test_batch_processing.py`, `test_p13_character_focus.py`, `test_planner.py`, `test_prefs.py`, `test_recipe.py`, `test_schema.py`, `test_secrets.py`, plus `tests/fixtures/` (face_portrait.jpg, `prompts/base_prompt_full_mode.txt`, `schemas/sample_opgraph.json`, `schemas/sample_plan.json`, `schemas/sample_recipe.json`)
 
 **Rationale:** `test_ops.py` (626 lines) and `test_planner.py` (656 lines) are the two largest test files, and several test files (`test_op_catalog.py`, `fixtures/prompts/`) are untracked/new alongside the schema changes in Batch 1 — worth checking whether new code has matching new coverage or whether tests still reflect the pre-change contract.
 

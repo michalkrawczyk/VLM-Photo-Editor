@@ -48,6 +48,26 @@ edit_graph = build_edit_graph()
 
 ---
 
+### D7: Batch mode omits Composition, Character Focus, and plan-preview controls
+**File:** [vlm_photo_editor/app/main.py:388](vlm_photo_editor/app/main.py#L388) (`_render_batch_panel`), contrast [main.py:734](vlm_photo_editor/app/main.py#L734) and [main.py:751](vlm_photo_editor/app/main.py#L751)
+
+The single-image flow renders a Composition selectbox (`main.py:734-746`), a Character Focus selectbox (`main.py:751-766`), and a Generate/Regenerate Plan button (`main.py:778-791`). `_render_batch_panel` renders only the intent box, mode buttons, and Start button.
+
+`_render_batch_panel` *reads* `state.get("framing_mode")` at `main.py:486` to build a `FramingIntent`, but no batch widget sets it — a batch run silently inherits whatever value the single-image flow last left in session state, or the default. `character_focus` is never consulted for batch at all. There is no per-image plan preview before the run commits.
+
+Fix: render the Composition and Character Focus selectors in `_render_batch_panel` — extract the shared block from the single-image flow into a helper so the two paths can't drift — thread `character_focus` into the `run_batch` call, and gate "Start Batch Processing" behind an optional per-image plan preview (the deferred per-image preview strip follow-up under `plans/photo_editor_build_plan.md` P11 / P11.5).
+
+**Partially addressed** (two-mode batch change): Mode B now renders a per-image
+instruction box + thumbnail per image, and Mode A gates the run behind an explicit
+"Preview plan on first image" → approve → "Apply to all" preview loop. Character
+Focus *is* honoured for batch (`_detect_subject_if_enabled` runs per image at record
+load in both modes). Still open: a shared **Composition** selector and a shared
+**Character Focus** selector are not rendered in the batch panel — batch still
+inherits `framing_mode` / `character_focus` from whatever the single-image flow last
+left in session state.
+
+---
+
 ## MISSING TESTS
 
 ### T2: No test for revision error path in UI (uncovers B2)

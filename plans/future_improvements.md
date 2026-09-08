@@ -4,23 +4,6 @@ Items deferred from the current build plan — not required for MVP but worth tr
 
 ---
 
-## Batch Processing
-
-Allow users to apply the same edit plan to multiple images in a single session.
-
-**Motivation:** Photographers often shoot a sequence under identical conditions (same lighting, framing intent, color treatment). Re-running the plan one image at a time is tedious once the plan is approved.
-
-**Proposed design:**
-- After the user approves a plan on the first image, expose a "Apply to all" button that runs the Executor against every image in `state["uploaded_files"]`.
-- Progress shown via `st.progress` bar; individual errors reported per-file without aborting the batch.
-- Each output file gets its own recipe sidecar (`{stem}_edited.edit.json`).
-- Batch results shown as a summary table (filename, status, saved path) after all images complete.
-- Per-image preview strip before **Start Batch Processing** — thumbnails with prev/next navigation reusing `app/components/preview.py`, so the user can confirm the upload set and (once staged planning / per-image framing lands) review each image's plan before committing the batch.
-
-**Dependencies:** D10 multi-image navigation must be in place first (upload already supports `accept_multiple_files=True`).
-
----
-
 ## vLLM & llama.cpp Local Loader Backends + Loader Auto-Detect / On-Demand Install
 
 Moved out of build-plan P10. MVP needs only one local loader (`transformers` or `ollama`, the existing defaults) for the `critic` / `cost_router` / `input_guard` roles.
@@ -62,7 +45,7 @@ Name each operation as it runs instead of a single indeterminate bar.
 **Proposed design:**
 - Extend `run_job` / `Executor.apply` with an `on_step(index, total, op_name)` callback; the executor calls it per op inside the `for op in op_graph.ops` loop (`ops/executor.py:49`).
 - UI passes `st.progress((i + 1) / total, text=f"{i + 1}/{total}: {op_name}…")`.
-- Batch panel reuses the same callback per image (the existing "individual errors reported per-file" bullet under Batch Processing already assumes per-item iteration — same hook).
+- Batch panel reuses the same callback per image (P11's per-image iteration + "needs attention" per-file error list already assume the same hook).
 
 **Trigger for adoption:** whenever plans routinely exceed 3–4 ops, or batch runs make the single bar feel unresponsive.
 
