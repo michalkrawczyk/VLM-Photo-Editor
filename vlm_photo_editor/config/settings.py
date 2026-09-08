@@ -67,6 +67,9 @@ class AppSettings:
     # Character Focus (P13) detector model files — no auto-download. Each resolves
     # <NAME>_MODEL_PATH from env, then .env; yolo_onnx also falls back to the bundled
     # infer_models/yolo/yolo26s.onnx when present. See _path_setting().
+    # yolo_onnx additionally requires a sibling classes.txt (same directory as the
+    # .onnx; one class name per line, 0-based line index == class id, must name a
+    # human/person class) — see detection/_common.py::load_class_labels.
     mediapipe_model_path: str | None = field(
         default_factory=lambda: _path_setting("MEDIAPIPE_MODEL_PATH")
     )

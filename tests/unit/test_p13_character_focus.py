@@ -67,14 +67,11 @@ def test_available_backends(specs_present, expected):
         # path set only for the ones whose package is also importable
         (["mediapipe"], {"mediapipe_model_path": "/m.tflite"}, ["mediapipe"]),
         (
-            ["onnxruntime"],
-            {"yolo_onnx_model_path": "/y.onnx"},
-            ["yolo_onnx"],
-        ),
-        (
+            # yolo_onnx path set but no sibling classes.txt -> not ready
+            # (see test_ready_backends_yolo_requires_classes_txt for the ready case)
             ["mediapipe", "onnxruntime"],
             {"mediapipe_model_path": "/m", "yolo_onnx_model_path": "/y", "u2netp_model_path": "/u"},
-            ["mediapipe", "yolo_onnx", "u2netp"],
+            ["mediapipe", "u2netp"],
         ),
         # path set but package missing -> still not ready
         ([], {"yolo_onnx_model_path": "/y.onnx"}, []),
@@ -100,6 +97,120 @@ def test_ready_backends(specs_present, paths, expected):
     finally:
         for attr, value in saved.items():
             setattr(settings, attr, value)
+
+
+def _yolo_bundle(tmp_path: Path, classes: tuple[str, ...] | None = ("person",)) -> str:
+    """Write a dummy .onnx + optional sibling classes.txt; return the model path."""
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"\x00")
+    if classes is not None:
+        (tmp_path / "classes.txt").write_text("\n".join(classes) + "\n", encoding="utf-8")
+    return str(model)
+
+
+@pytest.mark.parametrize(
+    "classes, ready",
+    [
+        (("person", "bicycle"), True),
+        (("Human",), True),
+        (("dog", "cat"), False),  # no human/person class
+        (None, False),  # no classes.txt at all
+    ],
+)
+def test_ready_backends_yolo_requires_classes_txt(tmp_path, classes, ready):
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import ready_backends
+
+    model_path = _yolo_bundle(tmp_path, classes)
+    settings = get_settings()
+    attrs = ("mediapipe_model_path", "yolo_onnx_model_path", "u2netp_model_path")
+    saved = {a: getattr(settings, a) for a in attrs}
+    settings.mediapipe_model_path = None
+    settings.u2netp_model_path = None
+    settings.yolo_onnx_model_path = model_path
+    try:
+        with patch(
+            "importlib.util.find_spec",
+            side_effect=lambda n: MagicMock() if n == "onnxruntime" else None,
+        ):
+            assert ("yolo_onnx" in ready_backends()) is ready
+    finally:
+        for a, v in saved.items():
+            setattr(settings, a, v)
+
+
+# ---------------------------------------------------------------------------
+# classes.txt parsing helpers
+# ---------------------------------------------------------------------------
+
+
+def test_load_class_labels_keeps_interior_blanks(tmp_path):
+    from vlm_photo_editor.detection._common import load_class_labels
+
+    (tmp_path / "classes.txt").write_text("person\n\nbicycle\n", encoding="utf-8")
+    assert load_class_labels(tmp_path / "model.onnx") == ["person", "", "bicycle"]
+
+
+def test_load_class_labels_missing_file_raises(tmp_path):
+    from vlm_photo_editor.detection._common import load_class_labels
+
+    with pytest.raises(ValueError, match="classes.txt"):
+        load_class_labels(tmp_path / "model.onnx")
+
+
+@pytest.mark.parametrize("contents", ["", "   \n\n"])
+def test_load_class_labels_no_names_raises(tmp_path, contents):
+    from vlm_photo_editor.detection._common import load_class_labels
+
+    (tmp_path / "classes.txt").write_text(contents, encoding="utf-8")
+    with pytest.raises(ValueError, match="classes.txt"):
+        load_class_labels(tmp_path / "model.onnx")
+
+
+@pytest.mark.parametrize(
+    "labels, expected",
+    [
+        (["person"], True),
+        (["Human"], True),
+        ([" PERSON "], True),
+        (["dog", "cat"], False),
+        ([], False),
+    ],
+)
+def test_has_human_label(labels, expected):
+    from vlm_photo_editor.detection._common import has_human_label
+
+    assert has_human_label(labels) is expected
+
+
+# ---------------------------------------------------------------------------
+# detector_labels() / detector_has_label() — vocabulary introspection
+# ---------------------------------------------------------------------------
+
+
+def test_detector_labels_and_has_label_for_yolo_onnx(tmp_path):
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import detector_has_label, detector_labels
+
+    model_path = _yolo_bundle(tmp_path, ("person", "face"))
+    settings = get_settings()
+    saved = settings.yolo_onnx_model_path
+    settings.yolo_onnx_model_path = model_path
+    try:
+        assert detector_labels("yolo_onnx") == ["person", "face"]
+        assert detector_has_label("yolo_onnx", "face") is True
+        assert detector_has_label("yolo_onnx", "FACE") is True
+        assert detector_has_label("yolo_onnx", "bicycle") is False
+    finally:
+        settings.yolo_onnx_model_path = saved
+
+
+@pytest.mark.parametrize("backend", ["mediapipe", "u2netp", "off", "bogus"])
+def test_detector_labels_none_for_non_classes_backends(backend):
+    from vlm_photo_editor.detection import detector_has_label, detector_labels
+
+    assert detector_labels(backend) is None
+    assert detector_has_label(backend, "face") is False
 
 
 # ---------------------------------------------------------------------------
@@ -178,37 +289,113 @@ def test_detect_subject_mediapipe_clamps_bbox():
     assert result.bbox.y + result.bbox.height <= container.height
 
 
-def test_detect_subject_yolo_onnx_clamps_bbox():
+def _mock_session(preds: np.ndarray) -> MagicMock:
+    """A stand-in for onnxruntime.InferenceSession(...) that returns *preds*.
+
+    Patch ``onnxruntime.InferenceSession`` with this rather than swapping the whole
+    module via ``sys.modules`` — clearing ``sys.modules`` in a ``patch.dict`` teardown
+    wipes opencv's lazily-registered ``cv2.dnn`` symbols for later tests.
+    """
+    session = MagicMock()
+    session.get_inputs.return_value = [MagicMock(name="images")]
+    session.run.return_value = [preds]
+    return session
+
+
+def test_detect_subject_yolo_onnx_clamps_bbox(tmp_path):
     from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import detect_subject
 
     container = _container(np.full((64, 64, 3), 128, dtype=np.uint8))
 
     # YOLO-ONNX export shape: (batch, 4 + num_classes, num_anchors). One high-confidence
-    # box near the edge (anchor 0); the rest are zero/below threshold.
+    # box near the edge (anchor 0); the rest are zero/below threshold. 1 class -> the
+    # sibling classes.txt must name exactly 1 class.
     preds = np.zeros((1, 5, 100), dtype=np.float32)
     preds[0, :, 0] = [320, 320, 700, 700, 0.9]  # cx, cy, w, h, class-0 score
-    mock_session = MagicMock()
-    mock_session.get_inputs.return_value = [MagicMock(name="images")]
-    mock_session.run.return_value = [preds]
-
-    mock_ort = MagicMock()
-    mock_ort.InferenceSession.return_value = mock_session
+    model_path = _yolo_bundle(tmp_path, ("person",))
 
     settings = get_settings()
-    settings.yolo_onnx_model_path = "/fake/model.onnx"
+    settings.yolo_onnx_model_path = model_path
     try:
-        with patch.dict("sys.modules", {"onnxruntime": mock_ort}):
-            from vlm_photo_editor.detection import detect_subject
-
+        with patch("onnxruntime.InferenceSession", return_value=_mock_session(preds)):
             result = detect_subject(container, "yolo_onnx")
     finally:
         settings.yolo_onnx_model_path = None
 
     assert result.source == "yolo_onnx"
+    assert result.label == "person"  # from the sibling classes.txt
     assert 0 <= result.bbox.x < container.width
     assert 0 <= result.bbox.y < container.height
     assert result.bbox.x + result.bbox.width <= container.width
     assert result.bbox.y + result.bbox.height <= container.height
+
+
+def test_yolo_onnx_detect_sets_label_from_classes_txt(tmp_path):
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import detect_subject
+
+    container = _container(np.full((64, 64, 3), 128, dtype=np.uint8))
+    # 2 classes; anchor 0 scores highest on class 1.
+    preds = np.zeros((1, 6, 100), dtype=np.float32)
+    preds[0, :, 0] = [320, 320, 80, 80, 0.1, 0.9]
+    model_path = _yolo_bundle(tmp_path, ("person", "bicycle"))
+
+    settings = get_settings()
+    settings.yolo_onnx_model_path = model_path
+    try:
+        with patch("onnxruntime.InferenceSession", return_value=_mock_session(preds)):
+            result = detect_subject(container, "yolo_onnx")
+    finally:
+        settings.yolo_onnx_model_path = None
+
+    assert result.label == "bicycle"
+
+
+def test_yolo_onnx_detect_raises_without_classes_txt(tmp_path):
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import detect_subject
+
+    model_path = _yolo_bundle(tmp_path, classes=None)  # .onnx only, no classes.txt
+    settings = get_settings()
+    settings.yolo_onnx_model_path = model_path
+    try:
+        with pytest.raises(ValueError, match="classes.txt"):
+            detect_subject(_container(), "yolo_onnx")
+    finally:
+        settings.yolo_onnx_model_path = None
+
+
+def test_yolo_onnx_detect_raises_when_no_human_class(tmp_path):
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import detect_subject
+
+    model_path = _yolo_bundle(tmp_path, ("cat", "dog"))
+    settings = get_settings()
+    settings.yolo_onnx_model_path = model_path
+    try:
+        with pytest.raises(ValueError, match="human"):
+            detect_subject(_container(), "yolo_onnx")
+    finally:
+        settings.yolo_onnx_model_path = None
+
+
+def test_yolo_onnx_detect_raises_on_vocab_size_mismatch(tmp_path):
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import detect_subject
+
+    preds = np.zeros((1, 5, 100), dtype=np.float32)  # model emits 1 class
+    preds[0, :, 0] = [320, 320, 80, 80, 0.9]
+    model_path = _yolo_bundle(tmp_path, ("person", "bicycle"))  # classes.txt names 2
+
+    settings = get_settings()
+    settings.yolo_onnx_model_path = model_path
+    try:
+        with patch("onnxruntime.InferenceSession", return_value=_mock_session(preds)):
+            with pytest.raises(ValueError, match="classes.txt"):
+                detect_subject(_container(), "yolo_onnx")
+    finally:
+        settings.yolo_onnx_model_path = None
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +744,9 @@ def _run_main_with_image(
             at.session_state["ui_phase"] = "has_image"
             for key, value in (extra_state or {}).items():
                 at.session_state[key] = value
-            at.run(timeout=30)
+            at.run(
+                timeout=90
+            )  # AppTest cold-starts the whole app; 30s is flaky under full-file load
     finally:
         for attr, value in saved.items():
             setattr(settings, attr, value)
@@ -588,7 +777,7 @@ def test_character_focus_selectbox_hides_installed_backend_without_model_path():
     assert cf.options == ["off"]
 
 
-def test_generate_plan_surfaces_backend_misconfig_instead_of_crashing():
+def test_generate_plan_surfaces_backend_misconfig_instead_of_crashing(tmp_path):
     """A Character Focus backend that raises must set an error banner, not crash the app.
 
     Guards the fix that moved the detection call inside ``_do_generate_plan``'s
@@ -604,7 +793,9 @@ def test_generate_plan_surfaces_backend_misconfig_instead_of_crashing():
     st.cache_data.clear()
     settings = get_settings()
     saved = settings.yolo_onnx_model_path
-    settings.yolo_onnx_model_path = "/fake/model.onnx"  # keep yolo_onnx in the picker
+    # Real bundle so ready_backends() keeps yolo_onnx in the picker; the patched
+    # detect_subject below is what raises.
+    settings.yolo_onnx_model_path = _yolo_bundle(tmp_path, ("person",))
 
     try:
         with patch(
@@ -619,7 +810,7 @@ def test_generate_plan_surfaces_backend_misconfig_instead_of_crashing():
             at.session_state["edit_mode"] = "frame"  # Reframe Only -> auto-generates
             at.session_state["framing_mode"] = "rule_of_thirds"
             at.session_state["character_focus"] = "yolo_onnx"
-            at.run(timeout=30)
+            at.run(timeout=90)
     finally:
         settings.yolo_onnx_model_path = saved
 
@@ -634,6 +825,42 @@ def test_settings_character_focus_expander_shows_status_badges():
     badges = [md.value for md in expander.markdown]
     assert any("package missing" in b for b in badges)  # yolo_onnx / u2netp
     assert any("path not set" in b for b in badges)  # mediapipe: importable, no path yet
+
+
+def test_settings_expander_flags_yolo_onnx_without_classes_txt(tmp_path):
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"\x00")  # .onnx present, no sibling classes.txt
+    at = _run_main_with_image(
+        find_spec_present=("onnxruntime",),
+        model_paths={"yolo_onnx_model_path": str(model)},
+    )
+    assert not at.exception
+    expander = next(e for e in at.expander if e.label == "Character Focus")
+    badges = [md.value for md in expander.markdown]
+    assert any("classes.txt" in b for b in badges)
+
+
+# ── Composition dropdown — face_only gated on a "face" detector label ────────
+
+
+def test_composition_hides_face_only_without_face_detector():
+    at = _run_main_with_image(find_spec_present=())
+    assert not at.exception
+    comp = next(sb for sb in at.selectbox if sb.label == "Composition:")
+    assert "face_only" not in comp.options
+    assert "rule_of_thirds" in comp.options
+
+
+def test_composition_shows_face_only_with_face_labelled_detector(tmp_path):
+    model_path = _yolo_bundle(tmp_path, ("person", "face"))
+    at = _run_main_with_image(
+        find_spec_present=("onnxruntime",),
+        model_paths={"yolo_onnx_model_path": model_path},
+        extra_state={"character_focus": "yolo_onnx"},
+    )
+    assert not at.exception
+    comp = next(sb for sb in at.selectbox if sb.label == "Composition:")
+    assert "face_only" in comp.options
 
 
 # ── DET-B3 — install_backend_deps surfaces pip output on failure ────────────

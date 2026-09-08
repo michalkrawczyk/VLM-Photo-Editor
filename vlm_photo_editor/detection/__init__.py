@@ -11,8 +11,11 @@ from vlm_photo_editor.schema.ops import CharacterFocusBackend
 __all__ = [
     "available_backends",
     "detect_subject",
+    "detector_has_label",
+    "detector_labels",
     "install_backend_deps",
     "ready_backends",
+    "requires_classes_txt",
 ]
 
 
@@ -33,21 +36,81 @@ _BACKEND_PATH_ATTR: dict[str, str] = {
     CharacterFocusBackend.U2NETP.value: "u2netp_model_path",
 }
 
+# Backends that additionally require a sibling ``classes.txt`` (with a human/person
+# class) next to their model file before they count as ready. Single switch — add
+# u2netp/mediapipe here if they ever grow an enumerable sibling vocabulary.
+_CLASSES_REQUIRED: set[str] = {CharacterFocusBackend.YOLO_ONNX.value}
+
+
+def requires_classes_txt(backend: str) -> bool:
+    """True when *backend* needs a sibling ``classes.txt`` to be usable."""
+    return backend in _CLASSES_REQUIRED
+
 
 def ready_backends() -> list[str]:
     """Backends whose package is importable AND whose model-path setting resolves.
 
     These are the ones safe to offer in the main flow — selecting any other backend
-    would guarantee a misconfiguration ``ValueError`` from ``detect_subject()``.
+    would guarantee a misconfiguration ``ValueError`` from ``detect_subject()``. For
+    a backend in ``_CLASSES_REQUIRED`` the sibling ``classes.txt`` must also exist
+    and name a human/person class.
     """
     from vlm_photo_editor.config.settings import get_settings
 
+    from ._common import has_human_label, load_class_labels
+
     settings = get_settings()
-    return [
-        backend
-        for backend in available_backends()
-        if getattr(settings, _BACKEND_PATH_ATTR[backend], None)
-    ]
+    result: list[str] = []
+    for backend in available_backends():
+        path = getattr(settings, _BACKEND_PATH_ATTR[backend], None)
+        if not path:
+            continue
+        if backend in _CLASSES_REQUIRED:
+            try:
+                labels = load_class_labels(path)
+            except ValueError:
+                continue
+            if not has_human_label(labels):
+                continue
+        result.append(backend)
+    return result
+
+
+def detector_labels(backend: str) -> list[str] | None:
+    """Class names *backend* can emit, or ``None`` when its vocabulary is not enumerable.
+
+    ``None`` for ``off``/unknown, for mediapipe (labels live in the tflite metadata,
+    not introspected here), and for u2netp (class-agnostic saliency). For a
+    classes.txt-backed backend, returns the parsed list or ``None`` when the file is
+    absent/unreadable (a non-raising probe — ``ready_backends()`` is where that
+    becomes a hard exclusion).
+    """
+    if backend not in _BACKEND_PATH_ATTR or backend not in _CLASSES_REQUIRED:
+        return None
+    from vlm_photo_editor.config.settings import get_settings
+
+    from ._common import load_class_labels
+
+    path = getattr(get_settings(), _BACKEND_PATH_ATTR[backend], None)
+    if not path:
+        return None
+    try:
+        return load_class_labels(path)
+    except ValueError:
+        return None
+
+
+def detector_has_label(backend: str, label: str) -> bool:
+    """True when *backend* has an enumerable vocabulary that contains *label*.
+
+    Case-insensitive. A backend whose vocabulary is not enumerable (mediapipe,
+    u2netp, ``off``) is treated as *not* having the label — this is what gates the
+    ``face_only`` framing option.
+    """
+    labels = detector_labels(backend)
+    if labels is None:
+        return False
+    return label.strip().casefold() in {name.strip().casefold() for name in labels}
 
 
 _BACKEND_REQS: dict[str, str] = {

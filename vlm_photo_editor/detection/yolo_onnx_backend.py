@@ -5,7 +5,7 @@ import numpy as np
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.detection import DetectedSubject
 
-from ._common import clamp_bbox, to_rgb_uint8
+from ._common import clamp_bbox, has_human_label, load_class_labels, to_rgb_uint8
 
 _INPUT_SIZE = 640
 _CONF_THRESHOLD = 0.25
@@ -35,6 +35,13 @@ def detect(container: ImageContainer) -> DetectedSubject | None:
             "to be set to an exported YOLO .onnx model file."
         )
 
+    labels = load_class_labels(model_path)  # raises a clear ValueError if absent/empty
+    if not has_human_label(labels):
+        raise ValueError(
+            f"Character Focus backend 'yolo_onnx': classes.txt next to {model_path} "
+            "must contain a 'human' or 'person' class."
+        )
+
     import cv2
     import onnxruntime as ort
 
@@ -50,6 +57,13 @@ def detect(container: ImageContainer) -> DetectedSubject | None:
     preds = outputs[0]
     if preds.shape[0] < preds.shape[1]:
         preds = preds.T  # normalize to (N, 4 + num_classes[+obj])
+
+    num_classes = preds.shape[1] - 4
+    if num_classes != len(labels):
+        raise ValueError(
+            f"yolo_onnx: classes.txt has {len(labels)} names but the model emits "
+            f"{num_classes} class scores — wrong classes.txt for this model."
+        )
 
     boxes: list[list[float]] = []
     scores: list[float] = []
@@ -84,9 +98,8 @@ def detect(container: ImageContainer) -> DetectedSubject | None:
     bbox = clamp_bbox(orig_x, orig_y, orig_w, orig_h, container.width, container.height)
     return DetectedSubject(
         bbox=bbox,
-        # DET-P3: no COCO class-name map on this path — a bare class index is noise
-        # in the planner prompt, so leave the label empty rather than emit `class_17`.
-        label="",
+        # Class name from the sibling classes.txt (0-based line index == class id).
+        label=labels[class_ids[best]],
         confidence=scores[best],
         source="yolo_onnx",
     )

@@ -160,6 +160,15 @@ def yolo_onnx_usable(yolo_onnx_model_path: Path | None) -> bool:
     """
     if yolo_onnx_model_path is None or importlib.util.find_spec("onnxruntime") is None:
         return False
+    # yolo_onnx now also needs a sibling classes.txt naming a human/person class,
+    # or ready_backends() drops it and the picker never lists it.
+    try:
+        from vlm_photo_editor.detection._common import has_human_label, load_class_labels
+
+        if not has_human_label(load_class_labels(yolo_onnx_model_path)):
+            return False
+    except ValueError:
+        return False
     try:
         import onnxruntime as ort
 

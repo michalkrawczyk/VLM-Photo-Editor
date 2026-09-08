@@ -61,6 +61,23 @@ def test_recommend_best_prompt_structure():
     assert "outpaint_needed" in prompt
 
 
+def _recommend_best_menu_line(prompt: str) -> str:
+    return next(line for line in prompt.splitlines() if "Select the single best mode from" in line)
+
+
+def test_recommend_best_menu_drops_face_only_when_not_allowed():
+    fi = FramingIntent(mode=FramingMode.RECOMMEND_BEST, face_framing_allowed=False)
+    menu = _recommend_best_menu_line(build_system_prompt("frame", None, fi, None))
+    assert "rule_of_thirds" in menu
+    assert "face_only" not in menu
+
+
+def test_recommend_best_menu_keeps_face_only_when_allowed():
+    fi = FramingIntent(mode=FramingMode.RECOMMEND_BEST, face_framing_allowed=True)
+    menu = _recommend_best_menu_line(build_system_prompt("frame", None, fi, None))
+    assert "face_only" in menu
+
+
 def test_specific_mode_prompt_includes_focus_and_ratio():
     fi = FramingIntent(
         mode=FramingMode.PORTRAIT_HEADROOM,

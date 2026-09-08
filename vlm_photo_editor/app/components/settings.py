@@ -406,8 +406,19 @@ def render() -> None:
     with st.expander("Character Focus", expanded=False):
         st.caption(
             "Local subject detection (zero API cost). Each backend needs its package "
-            "installed and a model file path configured below — no auto-download."
+            "installed and a model file path configured below — no auto-download. "
+            "yolo_onnx also needs a sibling classes.txt naming a human/person class."
         )
+
+        from vlm_photo_editor.detection import requires_classes_txt
+
+        def _classes_txt_ok(model_path: str) -> bool:
+            from vlm_photo_editor.detection._common import has_human_label, load_class_labels
+
+            try:
+                return has_human_label(load_class_labels(model_path))
+            except ValueError:
+                return False
 
         @st.cache_data(ttl=60)
         def _cf_status() -> set[str]:
@@ -431,6 +442,8 @@ def render() -> None:
                     badge_text, badge_color = "package missing", "red"
                 elif not current_path:
                     badge_text, badge_color = "path not set", "orange"
+                elif requires_classes_txt(backend) and not _classes_txt_ok(current_path):
+                    badge_text, badge_color = "classes.txt missing / no human class", "orange"
                 else:
                     badge_text, badge_color = "ready", "green"
                 st.markdown(

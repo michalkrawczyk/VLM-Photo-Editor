@@ -96,3 +96,6 @@ class FramingIntent(BaseModel):
     focus_instruction: str = ""
     frame_ratio: str | None = None
     user_instruction: str | None = None
+    # False hides the face_only option from the planner's RECOMMEND_BEST menu — set
+    # from the active Character Focus backend's label set (see app/main.py).
+    face_framing_allowed: bool = True

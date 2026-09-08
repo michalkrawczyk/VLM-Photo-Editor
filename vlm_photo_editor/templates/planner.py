@@ -156,16 +156,24 @@ def _specific_framing_lines(
     return lines
 
 
+_RECOMMEND_BEST_EXCLUDED = {FramingMode.CUSTOM, FramingMode.RECOMMEND_BEST}
+
+
 def _recommend_best_lines(
     framing_intent: FramingIntent,
     prefs: Preferences | None,
 ) -> list[str]:
+    modes = [
+        m.value
+        for m in FramingMode
+        if m not in _RECOMMEND_BEST_EXCLUDED
+        and (m is not FramingMode.FACE_ONLY or framing_intent.face_framing_allowed)
+    ]
     lines = [
         "",
         "FRAMING — RECOMMEND BEST MODE:",
         "  Examine image composition, subject type, subject placement, and native aspect ratio.",
-        "  Select the single best mode from: rule_of_thirds, golden_ratio, golden_spiral,",
-        "    center_symmetry, portrait_headroom, face_only, negative_space, fill_frame, lead_room, horizon_third.",
+        f"  Select the single best mode from: {', '.join(modes)}.",
         "  Set chosen_framing_mode to the chosen mode value (exact string).",
         "  Set chosen_framing_why to a one-sentence compositional reason in photographer terms (e.g. 'Subject falls in dead centre — thirds crop adds visual tension').",
         "  Output one 'crop' step using crop coordinates for the chosen mode and ratio.",

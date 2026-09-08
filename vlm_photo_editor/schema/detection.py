@@ -11,11 +11,11 @@ class DetectedSubject(BaseModel):
     DET-P3: ``label`` and ``confidence`` are NOT comparable across backends —
     each detector fills them with whatever it has:
 
-    | source     | ``label``              | ``confidence``                |
-    |------------|------------------------|-------------------------------|
-    | mediapipe  | COCO category name      | classifier softmax score      |
-    | yolo_onnx  | ``""`` (no name map)    | class score                   |
-    | u2netp     | ``"salient_object"``    | mean saliency over the bbox   |
+    | source     | ``label``               | ``confidence``                |
+    |------------|-------------------------|-------------------------------|
+    | mediapipe  | COCO category name       | classifier softmax score      |
+    | yolo_onnx  | class name from classes.txt | class score                |
+    | u2netp     | ``"salient_object"``     | mean saliency over the bbox   |
 
     Treat ``confidence`` as a rough per-detector score in 0-1, never as a
     cross-source probability; ``label`` may be empty when the backend cannot name

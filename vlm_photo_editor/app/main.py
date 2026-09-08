@@ -54,11 +54,14 @@ def _load_uploaded(file) -> "ImageContainer":  # type: ignore[name-defined]
 
 
 def _build_framing_intent(framing_val: str) -> FramingIntent:
+    from vlm_photo_editor.detection import detector_has_label
+
     mode = FramingMode(framing_val)
     fi = FramingIntent(
         mode=mode,
         focus_instruction=focus_instruction(mode),
         frame_ratio=frame_ratio_str(mode),
+        face_framing_allowed=detector_has_label(state.get("character_focus") or "off", "face"),
     )
     if mode is FramingMode.RECOMMEND_BEST:
         fi.user_instruction = st.session_state.get("framing_hint") or None
@@ -863,9 +866,33 @@ with main_col:
 
             _edit_mode = state.get("edit_mode") or "full"
 
-            # Framing mode selector — always visible
+            # Character Focus selector — local subject detection, off by default.
+            # Only offer backends with a resolvable model path; the rest would raise
+            # a misconfiguration error the moment a plan is generated. Rendered before
+            # the Composition selector so a just-changed backend gates face_only this
+            # run, not one rerun late.
+            from vlm_photo_editor.detection import detector_has_label, ready_backends
+
+            _cf_opts = ["off"] + ready_backends()
+            _cf_current = state.get("character_focus") or "off"
+            if _cf_current not in _cf_opts:
+                _cf_current = "off"
+            _character_focus = st.selectbox(
+                "Character Focus:",
+                options=_cf_opts,
+                index=_cf_opts.index(_cf_current),
+                key="character_focus_select",
+            )
+            state.set("character_focus", _character_focus)
+
+            # Framing mode selector — always visible. face_only is offered only when
+            # the active Character Focus backend exposes a "face" class; otherwise a
+            # stored "face_only" falls back to index 0 (rule_of_thirds) below.
             _framing_mode = state.get("framing_mode") or FramingMode.RULE_OF_THIRDS.value
-            _framing_opts = [m.value for m in FramingMode]
+            _face_ok = detector_has_label(_character_focus, "face")
+            _framing_opts = [
+                m.value for m in FramingMode if m is not FramingMode.FACE_ONLY or _face_ok
+            ]
             _framing_idx = (
                 _framing_opts.index(_framing_mode) if _framing_mode in _framing_opts else 0
             )
@@ -879,23 +906,6 @@ with main_col:
 
             if _framing_mode == FramingMode.RECOMMEND_BEST.value:
                 st.text_input("Framing guidance (optional)", key="framing_hint")
-
-            # Character Focus selector — local subject detection, off by default.
-            # Only offer backends with a resolvable model path; the rest would raise
-            # a misconfiguration error the moment a plan is generated.
-            from vlm_photo_editor.detection import ready_backends
-
-            _cf_opts = ["off"] + ready_backends()
-            _cf_current = state.get("character_focus") or "off"
-            if _cf_current not in _cf_opts:
-                _cf_current = "off"
-            _character_focus = st.selectbox(
-                "Character Focus:",
-                options=_cf_opts,
-                index=_cf_opts.index(_cf_current),
-                key="character_focus_select",
-            )
-            state.set("character_focus", _character_focus)
 
             # Auto-generate when Reframe Only + non-Custom composition (U3).
             # Any change in framing_mode triggers a new plan without a button press.

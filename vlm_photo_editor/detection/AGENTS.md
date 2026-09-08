@@ -25,8 +25,23 @@ box before planning, for use as framing/crop context.
   else `None`. Still no auto-download and still no silent fallback to another backend.
 - **`ready_backends()` vs `available_backends()`:** `available_backends()` is
   package-presence only; `ready_backends()` additionally requires the model path to
-  resolve. The main-flow picker offers `ready_backends()`; the Settings expander uses
-  `available_backends()` so it can still show an "importable, path not set" badge.
+  resolve, plus — for a backend in `_CLASSES_REQUIRED` (`yolo_onnx`) — a readable
+  sibling `classes.txt` naming a human/person class. The main-flow picker offers
+  `ready_backends()`; the Settings expander uses `available_backends()` so it can
+  still show an "importable, path not set" / "classes.txt missing" badge.
+- **`classes.txt` sibling (yolo_onnx):** an ONNX detection model must ship a
+  `classes.txt` in the same directory as the `.onnx` — one class name per line,
+  0-based line index == class id, at least one `human`/`person` entry (case-insensitive).
+  Absent / unreadable / no human class ⇒ excluded from `ready_backends()` and
+  `detect()` raises `ValueError` (no silent fallback). `detect()` also raises if the
+  file's class count ≠ the model's class-score count. `classes.txt` populates
+  `DetectedSubject.label` via the argmax class id.
+- **Label-set API:** `detector_labels(backend) -> list[str] | None` and
+  `detector_has_label(backend, label) -> bool` — `None`/`False` for `off`, unknown,
+  mediapipe (labels live in the tflite metadata, not introspected), and u2netp
+  (class-agnostic). `detector_has_label(cf, "face")` is what gates the `face_only`
+  framing option in the Composition dropdown and the planner's RECOMMEND_BEST menu.
+  `requires_classes_txt(backend)` reports `_CLASSES_REQUIRED` membership.
 - **Deterministic pre-pass:** detection runs once per plan/revise call, before the
   planner is invoked. It is not exposed to the planner as a callable tool.
 - **Bbox always clamped:** every backend clamps its result into `[0, width) x [0, height)`
@@ -42,15 +57,16 @@ new backend:
 2. Add a `<name>_backend.py` file with
    `detect(container: ImageContainer) -> DetectedSubject | None`.
 3. Add its presence check to `available_backends()`, a `_BACKEND_PATH_ATTR` entry,
-   and its dispatch branch in `detect_subject()` — all in `__init__.py`.
+   and its dispatch branch in `detect_subject()` — all in `__init__.py`. If it has an
+   enumerable sibling vocabulary, add it to `_CLASSES_REQUIRED` and ship a `classes.txt`.
 4. Add its model-path field to `AppSettings` (`config/settings.py`).
 
 ## Files
 
 | File | Responsibility |
 |------|---------------|
-| `__init__.py` | `available_backends()`, `ready_backends()`, `detect_subject(container, backend)` |
-| `_common.py` | `clamp_bbox()`, `to_rgb_uint8()` — shared by all backends |
+| `__init__.py` | `available_backends()`, `ready_backends()`, `detect_subject()`, `detector_labels()`, `detector_has_label()`, `requires_classes_txt()` |
+| `_common.py` | `clamp_bbox()`, `to_rgb_uint8()`, `load_class_labels()`, `has_human_label()` — shared by all backends |
 | `mediapipe_backend.py` | MediaPipe `ObjectDetector` (TFLite) |
 | `yolo_onnx_backend.py` | YOLO via `onnxruntime` — manual letterbox/NMS |
 | `u2netp_backend.py` | U2-Netp salient-object mask via `onnxruntime` → largest component bbox |
@@ -58,9 +74,11 @@ new backend:
 ## Tests
 - Location: `tests/unit/test_p13_character_focus.py`
 - Key scenarios: `available_backends()` reflects installed packages only;
-  `ready_backends()` additionally drops backends with no resolvable model path (and
-  the main-flow picker hides them); each backend's bbox is clamped inside image
-  bounds; missing model path raises with the setting name in the message.
+  `ready_backends()` additionally drops backends with no resolvable model path — and,
+  for `yolo_onnx`, no sibling `classes.txt` with a human/person class — (the main-flow
+  picker hides them); each backend's bbox is clamped inside image bounds; missing
+  model path raises with the setting name in the message; `face_only` is absent from
+  the Composition dropdown unless the active backend `detector_has_label(cf, "face")`.
 
 ## Common mistakes
 

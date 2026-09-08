@@ -131,7 +131,10 @@ def test_full_auto_mode_executes_without_an_accept_click(
         cleanup_saved_output(saved)
 
 
-@pytest.mark.parametrize("framing_mode", ["rule_of_thirds", "face_only", "portrait_headroom"])
+# face_only is intentionally excluded: it is offered in the Composition dropdown only
+# when the active Character Focus backend exposes a "face" class (none do here), so
+# select_dropdown_option would not find it. portrait_headroom shares its 3:4 geometry.
+@pytest.mark.parametrize("framing_mode", ["rule_of_thirds", "negative_space", "portrait_headroom"])
 def test_reframe_only_flow(
     page: Page,
     streamlit_server: str,
