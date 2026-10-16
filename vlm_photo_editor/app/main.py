@@ -13,6 +13,8 @@ from vlm_photo_editor.app import state  # noqa: E402
 from vlm_photo_editor.app.components import batch_review  # noqa: E402
 from vlm_photo_editor.app.components import candidate_picker  # noqa: E402
 from vlm_photo_editor.app.components import canvas  # noqa: E402
+from vlm_photo_editor.app.components import character_focus  # noqa: E402
+from vlm_photo_editor.app.components import framing  # noqa: E402
 from vlm_photo_editor.app.components import plan_view  # noqa: E402
 from vlm_photo_editor.app.components import prefs_panel  # noqa: E402
 from vlm_photo_editor.app.components import preview  # noqa: E402
@@ -26,10 +28,8 @@ from vlm_photo_editor.preferences.store import (  # noqa: E402
 from vlm_photo_editor.schema.ops import (  # noqa: E402
     AcceptMode,
     BoundingBox,
-    FramingIntent,
     FramingMode,
 )
-from vlm_photo_editor.templates.framing import focus_instruction, frame_ratio_str  # noqa: E402
 
 st.set_page_config(
     page_title="VLM Photo Editor",
@@ -53,38 +53,33 @@ def _load_uploaded(file) -> "ImageContainer":  # type: ignore[name-defined]
     return load(src_path)
 
 
-def _build_framing_intent(framing_val: str) -> FramingIntent:
-    from vlm_photo_editor.detection import detector_has_label
-
-    mode = FramingMode(framing_val)
-    fi = FramingIntent(
-        mode=mode,
-        focus_instruction=focus_instruction(mode),
-        frame_ratio=frame_ratio_str(mode),
-        face_framing_allowed=detector_has_label(state.get("character_focus") or "off", "face"),
-    )
-    if mode is FramingMode.RECOMMEND_BEST:
-        fi.user_instruction = st.session_state.get("framing_hint") or None
-    return fi
-
-
 def _detect_subject_if_enabled(container: "ImageContainer"):  # type: ignore[name-defined]
     cf_val = state.get("character_focus") or "off"
     if cf_val == "off":
         return None
     from vlm_photo_editor.detection import detect_subject
 
-    return detect_subject(container, cf_val)
+    return detect_subject(container, cf_val, state.get("character_focus_targets") or None)
+
+
+def _compute_image_report(container):
+    from vlm_photo_editor.config.settings import get_settings
+
+    if not get_settings().image_report_enabled:
+        return None
+    from vlm_photo_editor.analysis import compute_report
+
+    return compute_report(container)
 
 
 def _do_generate_plan() -> None:
     from vlm_photo_editor.agents.planner import Planner
     from vlm_photo_editor.background.providers import default_provider_available
     from vlm_photo_editor.config.settings import get_settings
-    from vlm_photo_editor.ops.validator import validate_crop_bounds
     from vlm_photo_editor.pipeline.job_queue import run_job
     from vlm_photo_editor.pipeline.plan_cache import get_plan_cache
-    from vlm_photo_editor.planner.compiler import Compiler, CompilerError
+    from vlm_photo_editor.planner.compiler import CompilerError
+    from vlm_photo_editor.planner.repair import compile_checked, compile_with_repair
 
     container = state.get("container")
     intent = state.get("intent") or ""
@@ -92,7 +87,7 @@ def _do_generate_plan() -> None:
     prefs = state.get("prefs")
 
     framing_val = state.get("framing_mode")
-    fi = _build_framing_intent(framing_val) if framing_val else None
+    fi = framing.current_framing_intent()
     genai_available = default_provider_available()
 
     cache = get_plan_cache()
@@ -103,6 +98,7 @@ def _do_generate_plan() -> None:
         # Inside the try so a misconfigured Character Focus backend surfaces as an
         # error banner instead of crashing the Streamlit script.
         detected_subject = _detect_subject_if_enabled(container)
+        image_report = _compute_image_report(container)
         planner = None
         _progress = None
         if cached_plan is not None:
@@ -112,32 +108,46 @@ def _do_generate_plan() -> None:
             _progress = st.progress(0.0, text="Generating plan…")
             planner = Planner()
             plan = run_job(
-                planner.plan, container, intent, prefs, mode, fi, detected_subject, genai_available
+                planner.plan,
+                container,
+                intent,
+                prefs,
+                mode,
+                fi,
+                detected_subject,
+                genai_available,
+                image_report,
             )
             _progress.progress(0.5, text="Compiling…")
 
-        max_retries = get_settings().max_crop_retries
-        for _attempt in range(max_retries + 1):
-            result = Compiler().compile(plan, mode, detected_subject=detected_subject)
-            try:
-                validate_crop_bounds(result.op_graph, container.width, container.height)
-                break
-            except ValueError as crop_err:
-                if _attempt >= max_retries:
-                    raise
-                if planner is None:
-                    planner = Planner()
-                plan = run_job(
-                    planner.revise,
-                    container,
-                    plan,
-                    str(crop_err),
-                    prefs,
-                    mode,
-                    fi,
-                    detected_subject,
-                    genai_available,
-                )
+        def _revise(prev_plan, error):
+            nonlocal planner
+            if planner is None:
+                planner = Planner()
+            return run_job(
+                planner.revise,
+                container,
+                prev_plan,
+                error,
+                prefs,
+                mode,
+                fi,
+                detected_subject,
+                genai_available,
+                image_report,
+                intent,
+            )
+
+        result, repairs = compile_with_repair(
+            plan,
+            lambda p: compile_checked(p, mode, detected_subject, container.width, container.height),
+            _revise,
+            get_settings().max_crop_retries,
+        )
+        state.set("plan_repairs", [r.error for r in repairs])
+        state.set("plan_notice", None)
+        if repairs:
+            state.log_intent("plan_auto_repaired", {"errors": [r.error for r in repairs]})
 
         if cached_plan is None:
             cache.set(cache_key, result.plan)
@@ -161,6 +171,8 @@ def _do_generate_plan() -> None:
         if result.plan.outpaint_needed:
             st.warning("This framing requires outpainting — switching to background mode.")
     except CompilerError as exc:
+        plan = getattr(exc, "plan", plan)
+        state.set("plan_repairs", [n.error for n in getattr(exc, "notes", [])])
         state.set("current_plan", plan)
         state.set("current_opgraph", None)
         state.set("change_requests_log", [])
@@ -172,52 +184,77 @@ def _do_generate_plan() -> None:
         state.set("ui_phase", "has_image")
 
 
-def _do_revise_plan(change: str) -> None:
+def _do_revise_plan(change: str, *, from_critic: bool = False) -> None:
     from vlm_photo_editor.agents.planner import Planner
     from vlm_photo_editor.background.providers import default_provider_available
     from vlm_photo_editor.config.settings import get_settings
-    from vlm_photo_editor.ops.validator import validate_crop_bounds
-    from vlm_photo_editor.planner.compiler import Compiler, CompilerError
+    from vlm_photo_editor.planner.compiler import CompilerError
+    from vlm_photo_editor.planner.repair import (
+        compile_checked,
+        compile_with_repair,
+        plans_equivalent,
+    )
 
     container = state.get("container")
     previous_plan = state.get("current_plan")
     mode = state.get("edit_mode") or "full"
     prefs = state.get("prefs")
 
-    framing_val = state.get("framing_mode")
-    fi = _build_framing_intent(framing_val) if framing_val else None
+    fi = framing.current_framing_intent()
     genai_available = default_provider_available()
     try:
         # Inside the try so a misconfigured Character Focus backend surfaces as an
         # error banner instead of crashing the Streamlit script.
         detected_subject = _detect_subject_if_enabled(container)
-        log_ = state.get("change_requests_log") or []
-        log_.append(change)
-        state.set("change_requests_log", log_)
+        image_report = _compute_image_report(container)
+        if not from_critic:  # critic feedback is not a user preference signal
+            log_ = state.get("change_requests_log") or []
+            log_.append(change)
+            state.set("change_requests_log", log_)
         planner = Planner()
+        original_intent = state.get("intent")
         plan = planner.revise(
-            container, previous_plan, change, prefs, mode, fi, detected_subject, genai_available
+            container,
+            previous_plan,
+            change,
+            prefs,
+            mode,
+            fi,
+            detected_subject,
+            genai_available,
+            image_report,
+            original_intent,
+        )
+        state.set(
+            "plan_notice",
+            (
+                "The revised plan is identical to the previous one; the feedback may not have been "
+                "applied. Rephrase the request or be more specific."
+                if plans_equivalent(previous_plan, plan)
+                else None
+            ),
         )
 
-        max_retries = get_settings().max_crop_retries
-        for _attempt in range(max_retries + 1):
-            result = Compiler().compile(plan, mode, detected_subject=detected_subject)
-            try:
-                validate_crop_bounds(result.op_graph, container.width, container.height)
-                break
-            except ValueError as crop_err:
-                if _attempt >= max_retries:
-                    raise
-                plan = planner.revise(
-                    container,
-                    plan,
-                    str(crop_err),
-                    prefs,
-                    mode,
-                    fi,
-                    detected_subject,
-                    genai_available,
-                )
+        result, repairs = compile_with_repair(
+            plan,
+            lambda p: compile_checked(p, mode, detected_subject, container.width, container.height),
+            lambda prev_plan, error: planner.revise(
+                container,
+                prev_plan,
+                f"{change}\n\nAlso fix this compiler error: {error}",
+                prefs,
+                mode,
+                fi,
+                detected_subject,
+                genai_available,
+                image_report,
+                original_intent,
+            ),
+            get_settings().max_crop_retries,
+        )
+        state.set("plan_repairs", [r.error for r in repairs])
+        if repairs:
+            state.log_intent("plan_auto_repaired", {"errors": [r.error for r in repairs]})
 
         state.set("current_plan", result.plan)
         state.set("current_opgraph", result.op_graph)
@@ -232,6 +269,8 @@ def _do_revise_plan(change: str) -> None:
         _mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)
         state.set("plan_approved", _can_auto_approve(result.op_graph, _mode))
     except CompilerError as exc:
+        plan = getattr(exc, "plan", plan)
+        state.set("plan_repairs", [n.error for n in getattr(exc, "notes", [])])
         state.set("current_plan", plan)
         state.set("current_opgraph", None)
         state.set("ui_phase", "plan_ready")
@@ -356,18 +395,67 @@ def _do_execute() -> None:
         state.set("error", str(exc))
 
 
-def _do_critic_check() -> bool:
+def _critic_verdict():
+    """Stage 1 (deterministic checks from the executed ops) then stage 2 (VLM)."""
     from vlm_photo_editor.agents.critic import Critic
 
     container = state.get("container")
     edited = state.get("edited_container")
-    intent = state.get("intent") or ""
-    verdict = Critic().verify(container.pixels, edited.pixels, intent)
+    op_graph = state.get("current_opgraph")
+    checks = None
+    if op_graph is not None:
+        try:
+            from vlm_photo_editor.analysis import compute_report
+            from vlm_photo_editor.analysis.critic_checks import check_edit
+
+            checks = check_edit(op_graph, compute_report(container), compute_report(edited))
+        except Exception as exc:  # measurement trouble must not block the VLM stage
+            state.log_intent("critic_checks_unavailable", {"error": str(exc)[:200]})
+    return Critic().verify(
+        container.pixels,
+        edited.pixels,
+        state.get("intent") or "",
+        state.get("current_plan"),
+        checks,
+    )
+
+
+def _can_auto_revise_after_critic() -> bool:
+    """One free retry only where nobody is gating the run and a rerun costs no genAI spend."""
+    from vlm_photo_editor.schema.ops import Backend
+
+    op_graph = state.get("current_opgraph")
+    return bool(
+        state.get("critic_auto_revise")
+        and state.get("accept_mode") != AcceptMode.MANUAL.value
+        and op_graph is not None
+        and all(op.backend != Backend.GENAI for op in op_graph.ops)
+    )
+
+
+def _do_critic_check() -> bool:
+    verdict = _critic_verdict()
+    revised_after: str | None = None
+    if not verdict.passed and _can_auto_revise_after_critic():
+        revised_after = verdict.reason
+        state.log_intent("critic_auto_revise", {"reason": verdict.reason})
+        _do_revise_plan(
+            f"Automatic quality check failed: {verdict.reason}. "
+            "Revise the plan to fix this problem.",
+            from_critic=True,
+        )
+        if state.get("error") is None and state.get("current_opgraph") is not None:
+            _do_execute()
+        if state.get("ui_phase") != "done":
+            return False  # revise/execute surfaced its own error; leave it for the user
+        state.set("plan_repairs", [f"quality check: {revised_after}"])
+        verdict = _critic_verdict()
     if verdict.passed:
         if verdict.uncertain:
             state.set("error", f"Critic check inconclusive: {verdict.reason}")
         return True
-    state.set("error", f"Critic: {verdict.reason}")
+    suffix = " (after one automatic revision)" if revised_after else ""
+    state.set("error", f"Critic{suffix}: {verdict.reason}")
     state.set("ui_phase", "plan_ready")
     state.set("edited_container", None)
     state.set("genai_candidates", None)
@@ -441,7 +529,7 @@ def _handle_batch_retry(records: list | None) -> None:
             record.intent or state.get("intent") or "",
             state.get("prefs"),
             state.get("edit_mode") or "full",
-            None,
+            framing.current_framing_intent(),
             AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value),
             3,
             None,
@@ -475,6 +563,8 @@ def _render_batch_panel(files: list) -> None:
     if state.get("error"):
         st.error(state.get("error"))
 
+    batch_review.render_preview(files, state.get("batch_records"))
+
     apply_all = st.checkbox(
         "Apply the same edit to every image",
         value=bool(state.get("batch_apply_all")),
@@ -483,6 +573,8 @@ def _render_batch_panel(files: list) -> None:
     state.set("batch_apply_all", apply_all)
 
     _render_batch_edit_mode_buttons()
+    character_focus.render_character_focus_controls("batch_character_focus_select")
+    framing.render_composition_controls("batch_framing_mode_select")
 
     _handle_batch_retry(state.get("batch_records"))
 
@@ -507,17 +599,17 @@ def _render_batch_mode_a(files: list) -> None:
     )
     state.set("intent", intent)
     st.caption(
-        "The plan is re-derived per image, but framing/composition choices come "
-        "from the first image; images whose crop can't fit are skipped and listed "
-        "under Needs Attention."
+        "Plan one image, approve it, and the planner adapts that plan to every other image. "
+        "Composition above applies to all; images that fail are listed under Needs Attention."
     )
 
     if st.button(
-        "Preview plan on first image",
+        "Preview plan on selected image",
         key="batch_preview_plan_btn",
         disabled=not intent,
         type="primary",
     ):
+        state.set("batch_applied_key", None)  # a freshly generated plan is not applied yet
         with st.spinner("Generating plan…"):
             _do_generate_plan()
         st.rerun()
@@ -526,42 +618,75 @@ def _render_batch_mode_a(files: list) -> None:
     if current_plan is None:
         return
 
-    plan_view.render(current_plan, state.get("current_opgraph"), executed=bool(records))
+    # "Executed" belongs to the plan that was applied, not to any plan once results exist:
+    # a new or revised plan must be approvable and appliable again.
+    plan_key = batch_review.plan_preview_key(current_plan, state.get("_loaded_file_id") or "")
+    applied = bool(records) and state.get("batch_applied_key") == plan_key
+    plan_view.render(current_plan, state.get("current_opgraph"), executed=applied)
 
     change = state.get("change_request") or ""
     if change:
+        state.set("batch_applied_key", None)
         with st.spinner("Revising plan…"):
             _do_revise_plan(change)
         st.rerun()
 
-    if state.get("plan_approved") and not records:
-        st.caption(f"Applies to all {len(files)} images.")
+    if state.get("plan_approved") and not applied:
+        blocked = batch_review.plan_preview_blocked_reason(state.get("current_opgraph"))
+        if blocked:
+            st.caption(f"Single-image result preview unavailable: {blocked}")
+        elif st.button("Preview result on this image", key="batch_preview_result_btn"):
+            _do_batch_plan_preview(files)
+            st.rerun()
+        st.caption(
+            f"Your plan is the methodology for all {len(files)} images: each other image gets "
+            "its own plan from the planner (one planner call per image), run immediately. "
+            "Check each in Batch Results and Revert any you don't like; a plan riskier than "
+            "the approved one waits for your review."
+        )
+        if records:
+            st.warning(
+                "Applying again replaces the current batch results; edits you have not "
+                "saved are discarded."
+            )
         if st.button(
-            f"Apply to all {len(files)} images",
+            f"Adapt & apply to all {len(files)} images",
             key="batch_apply_all_btn",
             type="primary",
         ):
-            from vlm_photo_editor.pipeline.batch import apply_plan_to_batch
+            import anyio
+
+            from vlm_photo_editor.pipeline.batch import adapt_plan_to_batch
 
             with st.spinner("Loading images…"):
                 new_records = _batch_load_records(files)
             state.set("batch_records", new_records)
+            state.set("batch_applied_key", plan_key)
+            state.set("batch_view_index", 0)
 
             completed = [0]
-            bar = st.progress(0.0, text="Applying to images…")
+            bar = st.progress(0.0, text="Adapting plan to images…")
 
             def _on_done(image_id: str) -> None:
                 completed[0] += 1
                 bar.progress(
                     completed[0] / len(new_records),
-                    text=f"Processed {completed[0]}/{len(new_records)} images…",
+                    text=f"Adapted {completed[0]}/{len(new_records)} images…",
                 )
 
-            apply_plan_to_batch(
+            plan_file_id = state.get("_loaded_file_id") or ""
+            anyio.run(
+                adapt_plan_to_batch,
                 new_records,
                 state.get("current_plan"),
+                state.get("current_opgraph"),
+                state.get("intent") or "",
+                state.get("prefs"),
                 state.get("edit_mode") or "full",
+                framing.current_framing_intent(),
+                3,
                 _on_done,
+                plan_file_id.rsplit(":", 1)[0],
             )
             bar.progress(1.0, text="Done.")
             state.set("batch_records", new_records)
@@ -621,8 +746,7 @@ def _render_batch_mode_b(files: list) -> None:
             )
 
         accept_mode = AcceptMode(state.get("accept_mode") or AcceptMode.MANUAL.value)
-        framing_val = state.get("framing_mode")
-        fi = _build_framing_intent(framing_val) if framing_val else None
+        fi = framing.current_framing_intent()
 
         anyio.run(
             run_batch,
@@ -638,6 +762,32 @@ def _render_batch_mode_b(files: list) -> None:
         bar.progress(1.0, text="Done.")
         state.set("batch_records", new_records)
         st.rerun()
+
+
+def _do_batch_plan_preview(files: list) -> None:
+    """Run the approved plan on the active image only, in memory, for the top preview's After."""
+    from vlm_photo_editor.ops.executor import Executor
+    from vlm_photo_editor.pipeline.job_queue import run_job
+
+    container = state.get("container")
+    file_key = state.get("_loaded_file_id")
+    try:
+        with st.spinner("Applying plan to this image…"):
+            result = run_job(Executor().apply, container, state.get("current_opgraph"))
+    except Exception as exc:
+        state.set("error", str(exc))
+        return
+    state.set("error", None)
+    state.set(
+        "batch_plan_preview",
+        {
+            "key": batch_review.plan_preview_key(state.get("current_plan"), file_key),
+            "container": result.container,
+        },
+    )
+    shown = [i for i, f in enumerate(files) if f"{f.name}:{f.size}" == file_key]
+    if shown:
+        state.set("batch_view_index", shown[0])
 
 
 def _do_save() -> None:
@@ -775,6 +925,16 @@ with sidebar_col:
         key="critic_enabled_checkbox",
     )
     state.set("critic_enabled", critic_enabled)
+    state.set(
+        "critic_auto_revise",
+        st.checkbox(
+            "Auto-revise once if the Critic fails",
+            value=bool(state.get("critic_auto_revise")),
+            key="critic_auto_revise_checkbox",
+            disabled=not critic_enabled,
+            help="Auto modes only; skipped when the plan uses genAI ops (a rerun costs money).",
+        ),
+    )
 
     st.divider()
 
@@ -866,46 +1026,12 @@ with main_col:
 
             _edit_mode = state.get("edit_mode") or "full"
 
-            # Character Focus selector — local subject detection, off by default.
-            # Only offer backends with a resolvable model path; the rest would raise
-            # a misconfiguration error the moment a plan is generated. Rendered before
-            # the Composition selector so a just-changed backend gates face_only this
-            # run, not one rerun late.
-            from vlm_photo_editor.detection import detector_has_label, ready_backends
+            # Character Focus selector — local subject detection, off by default. Rendered
+            # before the Composition selector so a just-changed model gates face_only this run.
+            character_focus.render_character_focus_controls("character_focus_select")
 
-            _cf_opts = ["off"] + ready_backends()
-            _cf_current = state.get("character_focus") or "off"
-            if _cf_current not in _cf_opts:
-                _cf_current = "off"
-            _character_focus = st.selectbox(
-                "Character Focus:",
-                options=_cf_opts,
-                index=_cf_opts.index(_cf_current),
-                key="character_focus_select",
-            )
-            state.set("character_focus", _character_focus)
-
-            # Framing mode selector — always visible. face_only is offered only when
-            # the active Character Focus backend exposes a "face" class; otherwise a
-            # stored "face_only" falls back to index 0 (rule_of_thirds) below.
-            _framing_mode = state.get("framing_mode") or FramingMode.RULE_OF_THIRDS.value
-            _face_ok = detector_has_label(_character_focus, "face")
-            _framing_opts = [
-                m.value for m in FramingMode if m is not FramingMode.FACE_ONLY or _face_ok
-            ]
-            _framing_idx = (
-                _framing_opts.index(_framing_mode) if _framing_mode in _framing_opts else 0
-            )
-            _framing_mode = st.selectbox(
-                "Composition:",
-                options=_framing_opts,
-                index=_framing_idx,
-                key="framing_mode_select",
-            )
-            state.set("framing_mode", _framing_mode)
-
-            if _framing_mode == FramingMode.RECOMMEND_BEST.value:
-                st.text_input("Framing guidance (optional)", key="framing_hint")
+            # Composition selector — always visible; shared with the batch panel.
+            _framing_mode = framing.render_composition_controls("framing_mode_select")
 
             # Auto-generate when Reframe Only + non-Custom composition (U3).
             # Any change in framing_mode triggers a new plan without a button press.
@@ -944,6 +1070,10 @@ with main_col:
         current_opgraph = state.get("current_opgraph")
 
         if ui_phase in ("plan_ready", "done") and current_plan is not None:
+            for repair_error in state.get("plan_repairs") or []:
+                st.info(f"Plan auto-revised after: {repair_error}")
+            if state.get("plan_notice"):
+                st.warning(state.get("plan_notice"))
             plan_view.render(current_plan, current_opgraph, executed=(ui_phase == "done"))
 
             # Handle Accept Plan

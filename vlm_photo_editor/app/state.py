@@ -24,6 +24,9 @@ _DEFAULTS: dict[str, Any] = {
     "genai_override": None,  # step_id -> candidate index chosen by the user
     "current_plan": None,
     "current_opgraph": None,
+    "plan_notice": None,  # warning shown under the plan (e.g. revision changed nothing)
+    "plan_repairs": [],  # error texts that triggered an automatic plan revision (shown in UI)
+    "critic_auto_revise": False,  # one bounded revise when the Critic fails (auto modes only)
     "accept_mode": "manual",
     "edit_mode": "full",
     "framing_mode": "rule_of_thirds",

@@ -18,6 +18,8 @@ from vlm_photo_editor.schema.plan import HumanPlan
 
 def render(plan: HumanPlan, op_graph: OpGraph | None = None, *, executed: bool = False) -> None:
     st.subheader("Proposed Plan")
+    if plan.diagnosis:
+        st.markdown(f"**Diagnosis:** {plan.diagnosis}")
 
     ops_by_step: dict[str, list] = {}
     if op_graph:
