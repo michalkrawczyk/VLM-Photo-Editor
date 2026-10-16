@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 
 from .ops import OpGraph
 
+# v1 (no field on disk): white_balance used "higher K = cooler", gamma-space exposure/WB.
+# v2: Lightroom WB direction (higher K = warmer), linear-light exposure/WB.
+# RecipeStore.load migrates v1 sidecars; bump this when op semantics change again.
+RECIPE_SCHEMA_VERSION = 2
+
 
 class GenAIOp(BaseModel):
     step_id: str
@@ -19,6 +24,7 @@ class GenAIOp(BaseModel):
 
 
 class Recipe(BaseModel):
+    schema_version: int = RECIPE_SCHEMA_VERSION
     recipe_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     source_path: str
     op_graph: OpGraph
