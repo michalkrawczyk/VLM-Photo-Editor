@@ -1,5 +1,5 @@
 from .batch import BatchImageRecord, ImageStatus
-from .detection import DetectedSubject
+from .detection import DetectedSubject, DetectorModel
 from .ops import (
     AcceptMode,
     Backend,
@@ -15,6 +15,7 @@ from .ops import (
 from .plan import CompilerResult, HumanPlan, HumanStep
 from .prefs import EditDelta, ExplicitRule, LearnedRule, Preferences
 from .recipe import GenAIOp, Recipe
+from .report import ExifSummary, ImageReport, StepCheck
 
 __all__ = [
     "Op",
@@ -28,6 +29,10 @@ __all__ = [
     "BoundingBox",
     "CharacterFocusBackend",
     "DetectedSubject",
+    "DetectorModel",
+    "ExifSummary",
+    "ImageReport",
+    "StepCheck",
     "HumanPlan",
     "HumanStep",
     "CompilerResult",
