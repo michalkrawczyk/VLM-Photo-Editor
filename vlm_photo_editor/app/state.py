@@ -48,6 +48,14 @@ def init_state() -> None:
         if key not in st.session_state:
             st.session_state[key] = value
 
+    # Once per session: reap scratch dirs orphaned by past sessions (B5). Local
+    # import — tmp_layout imports this module.
+    if not st.session_state.get("_stale_swept"):
+        from vlm_photo_editor.app.tmp_layout import sweep_stale
+
+        sweep_stale()
+        st.session_state["_stale_swept"] = True
+
 
 def get(key: str) -> Any:
     return st.session_state.get(key)
