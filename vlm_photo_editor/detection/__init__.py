@@ -3,18 +3,44 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+from collections.abc import Sequence
 
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.detection import DetectedSubject
 from vlm_photo_editor.schema.ops import CharacterFocusBackend
 
+from .registry import (
+    _CLASSES_TXT_BACKENDS,
+    _LEGACY_PATH_ATTR,
+    add_user_model,
+    get_model,
+    list_models,
+    model_has_label,
+    model_has_person,
+    model_labels,
+    model_person_labels,
+    ready_models,
+    remove_user_model,
+)
+
+_LEGACY_IDS = frozenset(_LEGACY_PATH_ATTR)
+
 __all__ = [
+    "add_user_model",
     "available_backends",
     "detect_subject",
     "detector_has_label",
     "detector_labels",
+    "get_model",
     "install_backend_deps",
+    "list_models",
+    "model_has_label",
+    "model_has_person",
+    "model_labels",
+    "model_person_labels",
     "ready_backends",
+    "ready_models",
+    "remove_user_model",
     "requires_classes_txt",
 ]
 
@@ -30,87 +56,34 @@ def available_backends() -> list[str]:
     return result
 
 
-_BACKEND_PATH_ATTR: dict[str, str] = {
-    CharacterFocusBackend.MEDIAPIPE.value: "mediapipe_model_path",
-    CharacterFocusBackend.YOLO_ONNX.value: "yolo_onnx_model_path",
-    CharacterFocusBackend.U2NETP.value: "u2netp_model_path",
-}
-
-# Backends that additionally require a sibling ``classes.txt`` (with a human/person
-# class) next to their model file before they count as ready. Single switch — add
-# u2netp/mediapipe here if they ever grow an enumerable sibling vocabulary.
-_CLASSES_REQUIRED: set[str] = {CharacterFocusBackend.YOLO_ONNX.value}
-
-
 def requires_classes_txt(backend: str) -> bool:
     """True when *backend* needs a sibling ``classes.txt`` to be usable."""
-    return backend in _CLASSES_REQUIRED
+    return backend in _CLASSES_TXT_BACKENDS
 
 
+# Legacy single-slot API: a backend name is also the id of its settings-path model.
 def ready_backends() -> list[str]:
-    """Backends whose package is importable AND whose model-path setting resolves.
+    """Legacy-slot backends whose package is importable AND whose model is usable.
 
-    These are the ones safe to offer in the main flow — selecting any other backend
-    would guarantee a misconfiguration ``ValueError`` from ``detect_subject()``. For
-    a backend in ``_CLASSES_REQUIRED`` the sibling ``classes.txt`` must also exist
-    and name a human/person class.
+    Superseded by ``ready_models()`` (which also lists scanned/user-added models);
+    kept so callers and tests keyed on backend names keep working.
     """
-    from vlm_photo_editor.config.settings import get_settings
-
-    from ._common import has_human_label, load_class_labels
-
-    settings = get_settings()
-    result: list[str] = []
-    for backend in available_backends():
-        path = getattr(settings, _BACKEND_PATH_ATTR[backend], None)
-        if not path:
-            continue
-        if backend in _CLASSES_REQUIRED:
-            try:
-                labels = load_class_labels(path)
-            except ValueError:
-                continue
-            if not has_human_label(labels):
-                continue
-        result.append(backend)
-    return result
+    return [m.id for m in ready_models() if m.origin == "legacy"]
 
 
 def detector_labels(backend: str) -> list[str] | None:
-    """Class names *backend* can emit, or ``None`` when its vocabulary is not enumerable.
+    """Class names of the legacy-slot model *backend*, or ``None`` when not enumerable.
 
-    ``None`` for ``off``/unknown, for mediapipe (labels live in the tflite metadata,
-    not introspected here), and for u2netp (class-agnostic saliency). For a
-    classes.txt-backed backend, returns the parsed list or ``None`` when the file is
-    absent/unreadable (a non-raising probe — ``ready_backends()`` is where that
-    becomes a hard exclusion).
+    ``None`` for ``off``/unknown ids, class-agnostic models (u2netp), and a
+    classes.txt-backed model whose file is absent/unreadable (a non-raising probe —
+    ``ready_models()`` is where that becomes a hard exclusion).
     """
-    if backend not in _BACKEND_PATH_ATTR or backend not in _CLASSES_REQUIRED:
-        return None
-    from vlm_photo_editor.config.settings import get_settings
-
-    from ._common import load_class_labels
-
-    path = getattr(get_settings(), _BACKEND_PATH_ATTR[backend], None)
-    if not path:
-        return None
-    try:
-        return load_class_labels(path)
-    except ValueError:
-        return None
+    return model_labels(backend) if backend in _LEGACY_IDS else None
 
 
 def detector_has_label(backend: str, label: str) -> bool:
-    """True when *backend* has an enumerable vocabulary that contains *label*.
-
-    Case-insensitive. A backend whose vocabulary is not enumerable (mediapipe,
-    u2netp, ``off``) is treated as *not* having the label — this is what gates the
-    ``face_only`` framing option.
-    """
-    labels = detector_labels(backend)
-    if labels is None:
-        return False
-    return label.strip().casefold() in {name.strip().casefold() for name in labels}
+    """True when legacy-slot *backend* has an enumerable vocabulary containing *label*."""
+    return model_has_label(backend, label) if backend in _LEGACY_IDS else False
 
 
 _BACKEND_REQS: dict[str, str] = {
@@ -145,29 +118,47 @@ def install_backend_deps(backend: str) -> tuple[bool, str]:
 _MIN_CONFIDENCE = 0.25
 
 
-def detect_subject(container: ImageContainer, backend: str) -> DetectedSubject | None:
-    """Run the given Character Focus backend's detector once on *container*.
+def detect_subject(
+    container: ImageContainer, model_id: str, target_labels: Sequence[str] | None = None
+) -> DetectedSubject | None:
+    """Run the detector model *model_id* once on *container*.
+
+    *model_id* is a ``list_models()`` id; the legacy backend names (``mediapipe`` /
+    ``yolo_onnx`` / ``u2netp``) are the ids of the settings-path models. *target_labels*
+    restricts detection to those classes (``None``/empty = every class) and requires an
+    enumerable-vocabulary model.
 
     Returns ``None`` when the detector ran cleanly but found no subject (DET-P2) or
     when the best detection scores below ``_MIN_CONFIDENCE`` (DET-P1); raises
-    ``ValueError`` only for misconfiguration (unknown/off backend, missing model
-    path).
+    ``ValueError`` only for misconfiguration (unknown/off model, invalid model, unknown
+    target class).
     """
-    resolved = CharacterFocusBackend(backend)
-    if resolved is CharacterFocusBackend.OFF:
+    if model_id == CharacterFocusBackend.OFF.value:
         raise ValueError("detect_subject() called with backend='off'; caller should skip detection")
-    if resolved is CharacterFocusBackend.MEDIAPIPE:
+    model = get_model(model_id)
+    if model is None:
+        known = [m.id for m in list_models()]
+        raise ValueError(f"Unknown Character Focus model {model_id!r}. Known: {known}")
+    if model.invalid_reason:
+        raise ValueError(model.invalid_reason)
+    if target_labels and model.labels is None:
+        raise ValueError(
+            f"Model {model_id!r} has no enumerable classes; "
+            f"cannot restrict to {list(target_labels)}"
+        )
+
+    if model.backend is CharacterFocusBackend.MEDIAPIPE:
         from . import mediapipe_backend
 
-        result = mediapipe_backend.detect(container)
-    elif resolved is CharacterFocusBackend.YOLO_ONNX:
+        result = mediapipe_backend.detect(container, model, target_labels)
+    elif model.backend is CharacterFocusBackend.YOLO_ONNX:
         from . import yolo_onnx_backend
 
-        result = yolo_onnx_backend.detect(container)
+        result = yolo_onnx_backend.detect(container, model, target_labels)
     else:
         from . import u2netp_backend
 
-        result = u2netp_backend.detect(container)
+        result = u2netp_backend.detect(container, model)
 
     if result is not None and result.confidence < _MIN_CONFIDENCE:
         return None

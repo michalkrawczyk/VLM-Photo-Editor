@@ -7,8 +7,8 @@ import numpy as np
 
 from vlm_photo_editor.schema.ops import BoundingBox
 
-# Class names that satisfy the "must be able to detect people" requirement for an
-# ONNX detection model's sibling classes.txt. COCO ships "person", not "human".
+# Class names that count as "detects people" (drives the no-person warning and the
+# Person preset). COCO ships "person", not "human".
 _HUMAN_ALIASES = frozenset({"human", "person"})
 
 
@@ -39,9 +39,32 @@ def load_class_labels(model_path: str | Path) -> list[str]:
     return labels
 
 
+def human_labels(labels: Iterable[str]) -> list[str]:
+    """The human/person class names in ``labels`` (case-insensitive match, original spelling)."""
+    return [name for name in labels if name.strip().casefold() in _HUMAN_ALIASES]
+
+
 def has_human_label(labels: Iterable[str]) -> bool:
     """True when ``labels`` contains a human/person class (case-insensitive)."""
-    return any(name.strip().casefold() in _HUMAN_ALIASES for name in labels)
+    return bool(human_labels(labels))
+
+
+def resolve_target_ids(labels: list[str], target_labels: Iterable[str] | None) -> list[int] | None:
+    """Map target class names to class ids (case-insensitive); ``None`` = all classes.
+
+    An empty selection means "no restriction". A name the model does not have raises
+    ``ValueError`` — silently ignoring it would detect something the user did not ask for.
+    """
+    wanted = [t.strip().casefold() for t in target_labels or () if t.strip()]
+    if not wanted:
+        return None
+    by_name: dict[str, list[int]] = {}
+    for idx, name in enumerate(labels):
+        by_name.setdefault(name.strip().casefold(), []).append(idx)
+    unknown = [t for t in wanted if t not in by_name]
+    if unknown:
+        raise ValueError(f"Target class(es) not in this model's classes: {unknown}")
+    return sorted({i for t in wanted for i in by_name[t]})
 
 
 def clamp_bbox(x: float, y: float, w: float, h: float, img_w: int, img_h: int) -> BoundingBox:
@@ -58,8 +81,7 @@ def clamp_bbox(x: float, y: float, w: float, h: float, img_w: int, img_h: int) -
     y1 = min(int(round(y + h)), img_h)
     if x1 <= x0 or y1 <= y0:
         raise ValueError(
-            f"detection box (x={x}, y={y}, w={w}, h={h}) has no overlap with "
-            f"{img_w}x{img_h} image"
+            f"detection box (x={x}, y={y}, w={w}, h={h}) has no overlap with {img_w}x{img_h} image"
         )
     return BoundingBox(x=x0, y=y0, width=x1 - x0, height=y1 - y0)
 

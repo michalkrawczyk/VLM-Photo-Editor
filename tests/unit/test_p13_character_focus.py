@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -113,7 +114,7 @@ def _yolo_bundle(tmp_path: Path, classes: tuple[str, ...] | None = ("person",)) 
     [
         (("person", "bicycle"), True),
         (("Human",), True),
-        (("dog", "cat"), False),  # no human/person class
+        (("dog", "cat"), True),  # no person class is allowed (UI warns instead)
         (None, False),  # no classes.txt at all
     ],
 )
@@ -205,7 +206,7 @@ def test_detector_labels_and_has_label_for_yolo_onnx(tmp_path):
         settings.yolo_onnx_model_path = saved
 
 
-@pytest.mark.parametrize("backend", ["mediapipe", "u2netp", "off", "bogus"])
+@pytest.mark.parametrize("backend", ["u2netp", "off", "bogus"])
 def test_detector_labels_none_for_non_classes_backends(backend):
     from vlm_photo_editor.detection import detector_has_label, detector_labels
 
@@ -366,16 +367,18 @@ def test_yolo_onnx_detect_raises_without_classes_txt(tmp_path):
         settings.yolo_onnx_model_path = None
 
 
-def test_yolo_onnx_detect_raises_when_no_human_class(tmp_path):
+def test_yolo_onnx_detect_works_without_person_class(tmp_path):
     from vlm_photo_editor.config.settings import get_settings
     from vlm_photo_editor.detection import detect_subject
 
+    preds = np.zeros((1, 6, 100), dtype=np.float32)
+    preds[0, :, 0] = [320, 320, 80, 80, 0.1, 0.9]
     model_path = _yolo_bundle(tmp_path, ("cat", "dog"))
     settings = get_settings()
     settings.yolo_onnx_model_path = model_path
     try:
-        with pytest.raises(ValueError, match="human"):
-            detect_subject(_container(), "yolo_onnx")
+        with patch("onnxruntime.InferenceSession", return_value=_mock_session(preds)):
+            assert detect_subject(_container(), "yolo_onnx").label == "dog"
     finally:
         settings.yolo_onnx_model_path = None
 
@@ -715,6 +718,7 @@ def _run_main_with_image(
     find_spec_present: tuple[str, ...] = (),
     model_paths: dict[str, str | None] | None = None,
     extra_state: dict[str, object] | None = None,
+    scan_dir: Path | None = None,
 ):
     import streamlit as st
     from streamlit.testing.v1 import AppTest
@@ -728,11 +732,15 @@ def _run_main_with_image(
 
     settings = get_settings()
     path_attrs = ("mediapipe_model_path", "yolo_onnx_model_path", "u2netp_model_path")
-    saved = {attr: getattr(settings, attr) for attr in path_attrs}
-    # Neutralise the bundled yolo_onnx default so the picker is deterministic; callers
-    # opt specific backends back in via model_paths.
+    scan_attrs = ("detector_models_dir", "detectors_file")
+    saved = {attr: getattr(settings, attr) for attr in (*path_attrs, *scan_attrs)}
+    # Neutralise the bundled yolo_onnx default and the scanned/user registries so the
+    # picker is deterministic; callers opt specific backends back in via model_paths.
     for attr in path_attrs:
         setattr(settings, attr, (model_paths or {}).get(attr))
+    empty_dir = Path(tempfile.mkdtemp(prefix="cf_empty_"))
+    settings.detector_models_dir = scan_dir or empty_dir
+    settings.detectors_file = empty_dir / "detectors.json"
 
     try:
         with patch("importlib.util.find_spec", side_effect=fake_find_spec):
@@ -886,3 +894,270 @@ def test_install_backend_deps_ok_on_success():
     with patch("subprocess.run", return_value=fake):
         ok, _ = install_backend_deps("u2netp")
     assert ok is True
+
+
+# ── Pluggable models: registry (scan / manual add), targets, layouts, UI ────
+
+
+@pytest.fixture
+def registry_env(tmp_path, monkeypatch):
+    """Isolated model registry: empty scan dir + detectors.json under tmp_path, no legacy
+    paths, onnxruntime + mediapipe importable. Returns the scan dir."""
+    from vlm_photo_editor.config.settings import get_settings
+
+    settings = get_settings()
+    scan = tmp_path / "infer_models"
+    scan.mkdir()
+    monkeypatch.setattr(settings, "detector_models_dir", scan)
+    monkeypatch.setattr(settings, "detectors_file", tmp_path / "cfg" / "detectors.json")
+    for attr in ("mediapipe_model_path", "yolo_onnx_model_path", "u2netp_model_path"):
+        monkeypatch.setattr(settings, attr, None)
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: MagicMock())
+    return scan
+
+
+def _model_dir(
+    scan: Path,
+    name: str,
+    *,
+    model: str = "m.onnx",
+    classes: tuple[str, ...] | None = ("person", "car"),
+    manifest: dict | None = None,
+) -> Path:
+    import json
+
+    d = scan / name
+    d.mkdir()
+    (d / model).write_bytes(b"\x00")
+    if classes is not None:
+        (d / "classes.txt").write_text("\n".join(classes) + "\n", encoding="utf-8")
+    if manifest is not None:
+        (d / "model.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return d / model
+
+
+@pytest.mark.parametrize(
+    "kwargs, backend, invalid_contains",
+    [
+        ({}, "yolo_onnx", None),
+        ({"classes": None}, "off", "classes.txt"),  # onnx, no classes.txt, no manifest
+        ({"classes": None, "manifest": {"backend": "u2netp"}}, "u2netp", None),
+        ({"model": "m.tflite", "classes": None}, "mediapipe", None),
+        ({"manifest": {"layout": "bogus"}}, "yolo_onnx", "layout"),
+        ({"manifest": {"name": "Pets", "layout": "nms"}}, "yolo_onnx", None),
+    ],
+)
+def test_scan_builds_models_from_dropped_in_dirs(registry_env, kwargs, backend, invalid_contains):
+    from vlm_photo_editor.detection import get_model, list_models, ready_models
+
+    _model_dir(registry_env, "custom", **kwargs)
+    (model,) = [m for m in list_models() if m.origin != "legacy"]
+    assert (model.id, model.origin, model.backend.value) == ("custom", "discovered", backend)
+    assert get_model("custom") == model
+    if invalid_contains is None:
+        assert model.invalid_reason is None
+        assert [m.id for m in ready_models()] == ["custom"]
+    else:
+        assert invalid_contains in (model.invalid_reason or "")
+        assert ready_models() == []  # listed with a reason, never offered
+
+
+def test_scan_dedupes_legacy_path_and_lists_classes(registry_env, monkeypatch):
+    from vlm_photo_editor.config.settings import get_settings
+    from vlm_photo_editor.detection import list_models, model_has_label, model_has_person
+
+    path = _model_dir(registry_env, "yolo", classes=("dog", "Face"))
+    monkeypatch.setattr(get_settings(), "yolo_onnx_model_path", str(path))
+    ids = [m.id for m in list_models()]
+    assert ids.count("yolo_onnx") == 1 and "yolo" not in ids  # same file: legacy slot wins
+    assert model_has_label("yolo_onnx", "face") is True
+    assert model_has_person("yolo_onnx") is False  # COCO-less custom model: warn, don't block
+
+
+def test_mediapipe_labels_from_tflite_metadata_zip(registry_env):
+    import zipfile
+
+    from vlm_photo_editor.detection import model_labels
+
+    path = _model_dir(registry_env, "mp", model="d.tflite", classes=None)
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("labels.txt", "cat\ndog\n")
+    assert model_labels("mp") == ["cat", "dog"]
+
+
+def test_user_added_model_persists_and_removes(registry_env, tmp_path):
+    from vlm_photo_editor.detection import add_user_model, list_models, remove_user_model
+
+    path = _model_dir(tmp_path, "elsewhere", classes=("bird",))
+    added = add_user_model(str(path), "Birds")
+    assert (added.id, added.origin, added.labels) == ("birds", "user", ["bird"])
+    assert [m.id for m in list_models() if m.origin == "user"] == ["birds"]  # re-read from disk
+
+    with pytest.raises(ValueError, match="already registered"):
+        add_user_model(str(path))
+    with pytest.raises(ValueError, match="Unsupported"):
+        add_user_model(str(tmp_path / "notes.txt"))
+    with pytest.raises(ValueError, match="No user-added"):
+        remove_user_model("nope")
+
+    remove_user_model("birds")
+    assert [m for m in list_models() if m.origin == "user"] == []
+
+
+def _yolo_model(path: Path, labels, layout="yolov8", **extra):
+    from vlm_photo_editor.schema.detection import DetectorModel
+
+    return DetectorModel(
+        id="t",
+        display_name="t",
+        backend="yolo_onnx",
+        path=str(path),
+        labels=list(labels),
+        origin="user",
+        layout=layout,
+        **extra,
+    )
+
+
+def _run_yolo(model, preds, targets=None, container=None):
+    from vlm_photo_editor.detection import yolo_onnx_backend
+
+    with patch("onnxruntime.InferenceSession", return_value=_mock_session(preds)):
+        return yolo_onnx_backend.detect(container or _container(), model, targets)
+
+
+def test_yolo_targets_pick_lower_scoring_target_over_higher_scoring_other(tmp_path):
+    # 3 classes; anchor 0 = dog @0.9, anchor 1 = person @0.4. Targets restrict the argmax.
+    preds = np.zeros((1, 7, 100), dtype=np.float32)
+    preds[0, :, 0] = [100, 100, 40, 40, 0.0, 0.9, 0.0]
+    preds[0, :, 1] = [500, 500, 40, 40, 0.4, 0.0, 0.0]
+    model = _yolo_model(tmp_path / "m.onnx", ("person", "dog", "cat"))
+    assert _run_yolo(model, preds).label == "dog"  # default: any class
+    assert _run_yolo(model, preds, ["Person"]).label == "person"  # case-insensitive
+    assert _run_yolo(model, preds, ["cat"]) is None  # no target above threshold (DET-P2)
+    with pytest.raises(ValueError, match="not in this model's classes"):
+        _run_yolo(model, preds, ["boat"])
+
+
+def test_yolo_layout_yolov5_multiplies_objectness(tmp_path):
+    # (N, 5+C): anchor 0 has a high class score but ~0 objectness -> filtered out.
+    preds = np.zeros((1, 100, 7), dtype=np.float32)
+    preds[0, 0] = [320, 320, 80, 80, 0.1, 0.9, 0.0]  # obj 0.1 x 0.9 = 0.09 < threshold
+    preds[0, 1] = [320, 320, 80, 80, 0.9, 0.0, 0.8]  # obj 0.9 x 0.8 = 0.72 -> class 1
+    model = _yolo_model(tmp_path / "m.onnx", ("a", "b"), layout="yolov5")
+    result = _run_yolo(model, preds)
+    assert (result.label, round(result.confidence, 2)) == ("b", 0.72)
+
+
+def test_yolo_layout_nms_rows_and_bad_shape(tmp_path):
+    model = _yolo_model(tmp_path / "m.onnx", ("person", "dog"), layout="nms")
+    # rows: x1, y1, x2, y2, score, class_id in letterboxed 640px space (64px image -> scale 10)
+    preds = np.array([[100, 100, 300, 300, 0.4, 0], [320, 320, 420, 420, 0.9, 1]], np.float32)
+    preds = preds[None]  # batch dim, as exported
+    assert _run_yolo(model, preds).label == "dog"
+    assert _run_yolo(model, preds, ["person"]).label == "person"
+    with pytest.raises(ValueError, match="layout"):
+        _run_yolo(model, np.zeros((1, 5, 4), np.float32))
+    bad_id = np.array([[[0, 0, 10, 10, 0.9, 7]]], np.float32)
+    with pytest.raises(ValueError, match="classes.txt"):
+        _run_yolo(model, bad_id)
+
+
+def test_yolo_mismatch_error_names_layout_key(tmp_path):
+    preds = np.zeros((1, 5, 100), dtype=np.float32)
+    model = _yolo_model(tmp_path / "m.onnx", ("a", "b"))
+    with pytest.raises(ValueError, match="layout"):
+        _run_yolo(model, preds)
+
+
+@pytest.mark.parametrize(
+    "shape, override, expected",
+    [([1, 3, 320, 320], None, 320), ([1, 3, "h", "w"], None, 640), ([1, 3, 320, 320], 1280, 1280)],
+)
+def test_yolo_input_size_from_onnx_shape_or_override(tmp_path, shape, override, expected):
+    from vlm_photo_editor.detection.yolo_onnx_backend import _input_size
+
+    extra = {"input_size": override} if override else {}
+    assert _input_size(_yolo_model(tmp_path / "m.onnx", ("a",), **extra), shape) == expected
+
+
+def test_detect_subject_resolves_scanned_model_and_rejects_bad_targets(registry_env):
+    from vlm_photo_editor.detection import detect_subject
+
+    _model_dir(registry_env, "custom", classes=("cat", "dog"))
+    preds = np.zeros((1, 6, 100), dtype=np.float32)
+    preds[0, :, 0] = [320, 320, 80, 80, 0.1, 0.9]
+    with patch("onnxruntime.InferenceSession", return_value=_mock_session(preds)):
+        assert detect_subject(_container(), "custom").label == "dog"
+        assert detect_subject(_container(), "custom", ["cat"]) is None
+    with pytest.raises(ValueError, match="Unknown Character Focus model"):
+        detect_subject(_container(), "nope")
+
+    _model_dir(registry_env, "sal", classes=None, manifest={"backend": "u2netp"})
+    with pytest.raises(ValueError, match="no enumerable classes"):
+        detect_subject(_container(), "sal", ["person"])
+
+
+def test_detect_subject_invalid_model_raises_its_reason(registry_env):
+    from vlm_photo_editor.detection import detect_subject
+
+    _model_dir(registry_env, "bad", classes=None)
+    with pytest.raises(ValueError, match="classes.txt"):
+        detect_subject(_container(), "bad")
+
+
+def test_ui_lists_scanned_model_with_classes_and_no_person_warning(tmp_path):
+    scan = tmp_path / "infer_models"
+    scan.mkdir()
+    _model_dir(scan, "pets", classes=("cat", "dog"), manifest={"name": "Pets"})
+    at = _run_main_with_image(
+        find_spec_present=("onnxruntime",),
+        scan_dir=scan,
+        extra_state={"character_focus": "pets"},
+    )
+    assert not at.exception
+    cf = next(sb for sb in at.selectbox if sb.label == "Character Focus:")
+    assert cf.options == ["off", "Pets (yolo_onnx)"]
+    targets = next(m for m in at.multiselect if m.label.startswith("Target classes"))
+    assert targets.options == ["cat", "dog"]
+    assert any("no person/face class" in w.value for w in at.warning)
+    assert not [b for b in at.button if b.label == "Person preset"]
+
+
+def test_ui_person_model_shows_preset_and_no_warning(tmp_path):
+    scan = tmp_path / "infer_models"
+    scan.mkdir()
+    _model_dir(scan, "coco", classes=("person", "dog"))
+    at = _run_main_with_image(
+        find_spec_present=("onnxruntime",),
+        scan_dir=scan,
+        extra_state={"character_focus": "coco"},
+    )
+    assert not at.exception
+    assert not any("no person/face class" in w.value for w in at.warning)
+    assert [b for b in at.button if b.label == "Person preset"]
+
+
+def test_generate_plan_passes_selected_targets_to_detector(registry_env):
+    """Auto-generating in Reframe Only mode must hand the picked classes to detect_subject."""
+    from streamlit.testing.v1 import AppTest
+
+    _model_dir(registry_env, "coco", classes=("person", "dog"))
+    container = _container()
+    # Raise so the flow stops at detection instead of reaching the (real) planner call.
+    with patch(
+        "vlm_photo_editor.detection.detect_subject", side_effect=ValueError("stop here")
+    ) as detect:
+        at = AppTest.from_file("vlm_photo_editor/app/main.py")
+        at.session_state["uploaded_file"] = SimpleNamespace(name="fake.jpg", size=123)
+        at.session_state["_loaded_file_id"] = "fake.jpg:123"
+        at.session_state["container"] = container
+        at.session_state["ui_phase"] = "has_image"
+        at.session_state["edit_mode"] = "frame"
+        at.session_state["framing_mode"] = "rule_of_thirds"
+        at.session_state["character_focus"] = "coco"
+        at.session_state["character_focus_targets"] = ["dog"]
+        at.run(timeout=90)
+    assert not at.exception
+    detect.assert_called()
+    assert detect.call_args.args[1:] == ("coco", ["dog"])
