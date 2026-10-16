@@ -47,7 +47,15 @@ _SIZE_CHANGING_OPS = frozenset(
 
 
 class CompilerError(ValueError):
-    """HumanPlan could not be compiled to a valid OpGraph."""
+    """HumanPlan could not be compiled to a valid OpGraph.
+
+    ``repairable`` is False when the failure is environmental (PS missing, GenAI key
+    absent, unknown mode): asking the planner for a revised plan cannot fix it.
+    """
+
+    def __init__(self, *args: object, repairable: bool = True) -> None:
+        super().__init__(*args)
+        self.repairable = repairable
 
 
 def _is_valid_mask_target(op: Op) -> bool:
@@ -116,13 +124,14 @@ class Compiler:
         try:
             allowed = allowed_ops_for_mode(mode)
         except KeyError as exc:
-            raise CompilerError(str(exc)) from exc
+            raise CompilerError(str(exc), repairable=False) from exc
         no_genai = settings.no_genai
 
         if settings.ps_mode == "strict" and not _ps_available():
             raise CompilerError(
                 "PS-strict mode requires Photoshop. "
-                "Connect the PS plugin or switch to 'auto' mode."
+                "Connect the PS plugin or switch to 'auto' mode.",
+                repairable=False,
             )
         # ps_mode == "none" will block Backend.PHOTOSHOP when that backend is added.
 
@@ -166,7 +175,8 @@ class Compiler:
                     else:
                         raise CompilerError(
                             f"Step {step.step_id!r}: op {op_name.value!r} requires Backend.GENAI "
-                            "but GenAI is disabled (no_genai=True)."
+                            "but GenAI is disabled (no_genai=True).",
+                            repairable=False,
                         )
 
                 # Key/deps gate: fail early with a clear message rather than at execution time.
@@ -177,7 +187,8 @@ class Compiler:
                         hint = provider_env_hint(prov)
                         raise CompilerError(
                             f"Step {step.step_id!r}: op {op_name.value!r} needs provider "
-                            f"'{prov}' but no key/deps found. {hint}"
+                            f"'{prov}' but no key/deps found. {hint}",
+                            repairable=False,
                         )
 
                 ops.append(
