@@ -11,23 +11,82 @@ pinned: false
 
 # VLM Photo Editor
 
-AI-powered photo editor that proposes a human-readable plan, waits for your approval, then executes it deterministically. Originals are never altered.
+A photo editor where a vision-language model **writes the plan and never touches the pixels**. You read the plan, steer it in plain language, approve it, and deterministic code executes it. Originals are never altered.
 
-**Flow:** Describe your edit → VLM generates a step-by-step plan → you approve or revise → ops execute → save a new file.
+**Flow:** describe an edit → VLM proposes a step-by-step plan → you approve or revise → ops execute → a new file is saved, plus a replayable recipe.
 
 ---
 
-## Quick Start (local)
+## The experiment
 
-### Prerequisites
+This project is a test of one question:
 
-- Python 3.11+
-- pip
+> Can a language model **steer** an image edit precisely — what to change, where, and by how much — without regenerating the whole image?
 
-### Install
+Most AI editors hand the pixels to a generative model and accept what comes back. Here the VLM only emits a plan. A **chain of specialised models and backends** does the rest, and the chain exists to cover each model's known weak spots:
+
+| Weakness | Covered by |
+|---|---|
+| VLMs localise poorly; bbox quality varies a lot between VLMs | A local detector (MediaPipe / YOLO-ONNX / U²-Netp) finds the subject *before* planning; the planner receives the bbox as context instead of guessing coordinates |
+| VLMs judge exposure, white balance and noise by eye, inconsistently | A deterministic measurement block (histograms, WB, noise, sharpness) is passed into the planner prompt |
+| VLM plans can contain invalid or out-of-range parameters | The compiler validates against the active policy; a bounded compile-and-repair loop hands errors back to the planner; nothing unvalidated executes |
+| VLM output is non-deterministic | The plan is frozen as human-readable steps with stable IDs; execution is plain code; the recipe replays it |
+| Generative models drift — they alter the subject or regenerate the frame | Generation is limited to a masked region (background only); colour/grain are matched and a seam metric gates the result; subject pixels are asserted byte-identical |
+| Some image APIs accept no seed (OpenAI, Google) | Recorded as `seed=None` and treated as not replayable, never a fabricated seed |
+| VLM self-grading is unreliable | The Critic runs deterministic checks first (a failed check fails without a VLM call); the VLM verdict comes second; parse/API errors become "uncertain", never a silent pass |
+| Any one provider may be weak at one stage | Planner, Critic and preference aggregator are swappable per role (cloud or local); the detector is independent of the planner |
+
+Because every handoff is a typed contract (plan → OpGraph → recipe), a bad result can be traced to a stage — the VLM's judgement, the detector's bbox, a compiled parameter, or the generator's fill. It also keeps the experiment comparable: swap one model, hold the rest fixed.
+
+**What "precise" means here:** edits land in the requested region; pixels outside the mask are untouched; the same recipe replays to the same result; a change request alters only the affected plan step.
+
+**Status:** the architecture is implemented. No benchmark results are published, so the hypothesis is **not** claimed proven.
+
+---
+
+## How it works
+
+```
+Detect subject → Measure image → Plan (VLM) → Approve → Compile → Execute → Critic → Recipe
+   (local)        (NumPy/CV)     (HumanPlan)   (you)    (OpGraph)   (Pillow/CV    (checks +   (JSON,
+                                                                     + masked      VLM)        replayable)
+                                                                     genAI bg)
+```
+
+- **Planner** — VLM turns image + intent (+ detected subject, measurements, your preferences) into a `HumanPlan`: a diagnosis plus steps with stable IDs.
+- **Compiler** — deterministic; validates the plan against the active op policy and produces a typed `OpGraph`.
+- **Executor** — Pillow / OpenCV / NumPy for crop, rotate, white balance, exposure, tone, saturation, denoise, sharpen, framing. The only generative step is background replacement, restricted to a mask.
+- **Critic** — optional before/after verification that can name the failing step.
+- **Recipe** — JSON sidecar of every op and parameter; generative steps also record model + prompt + seed (where the provider supports one).
+
+Photoshop is an optional backend for specific ops, never a requirement.
+
+### Accept modes
+
+| Mode | Behaviour |
+|------|-----------|
+| `manual` | Nothing executes until you approve. Change requests regenerate the plan and re-prompt |
+| `auto_low` | Skips approval when every op is LOW risk |
+| `auto_medium` | Skips approval when every op is LOW or MEDIUM risk |
+| `full_auto` | Executes straight after compile, including genAI ops. Subject pixels are frozen and saves are non-destructive, so a bad result costs a rerun. In batch, results go to a mandatory post-run review before "Save All" |
+
+### Features
+
+- **Edit modes** — Full Edit, Background Only, Frame Only (limits what the planner may propose).
+- **Composition-aware framing** — rule of thirds, golden ratio/spiral, portrait headroom, lead room, negative space, face-only and more, or let the planner recommend one.
+- **Character Focus** — optional local subject detection to anchor crops. Without it, crop anchoring falls back to image centre.
+- **Batch** — *Apply the same edit to every image* (one plan approved once, then adapted per image by the planner) or a per-image instruction for each file. A failure on one image never halts or drops the others.
+- **Preferences** — explicit rules plus learned rules that stay pending until you approve them; all visible and removable in the panel.
+- **RAW input** — via `rawpy` into a 16-bit array; JPEG and PNG supported.
+
+---
+
+## Quick start (local)
+
+Requires Python 3.11+.
 
 ```bash
-git clone https://github.com/your-username/VLM-Photo-Editor.git
+git clone https://github.com/michalkrawczyk/VLM-Photo-Editor.git
 cd VLM-Photo-Editor
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -35,26 +94,28 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Install additional VLM provider adapters as needed:
+`requirements.txt` includes the Anthropic adapter. Add others as needed:
 
-```bash
-pip install -r requirements-openai.txt       # GPT-4o
-pip install -r requirements-huggingface.txt  # open-source models
-```
+| File | Adds |
+|---|---|
+| `requirements-openai.txt` | OpenAI planner/critic (the **default preset** is an OpenAI model — install this or pick a Claude preset in Settings) |
+| `requirements-huggingface.txt` | local transformers models |
+| `requirements-ollama.txt` / `requirements-llamacpp.txt` | local models via Ollama / llama.cpp |
+| `requirements-mediapipe.txt` / `requirements-onnxruntime.txt` | subject-detection backends |
 
-Anthropic (Claude) is included in `requirements.txt` by default.
-
-### Configure API Keys
+### API keys
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in at least one key:
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   OPENAI_API_KEY=sk-...
-#   REPLICATE_API_TOKEN=r8_...    (for AI background replacement)
+# fill in at least one VLM key, e.g. OPENAI_API_KEY or ANTHROPIC_API_KEY
+# REPLICATE_API_TOKEN is only needed for AI background replacement
 ```
 
-Key resolution order: **environment variable → OS keyring → `.env` file**. Keys can also be entered directly in the app's Settings panel (stored to OS keyring on desktop; session-only on headless/cloud environments).
+Resolution order: **environment → OS keyring → `.env`**. Keys can also be entered in the Settings panel (shown masked; stored in the OS keyring on desktop, session-only on headless/cloud). Keys never go into recipes, logs, prompts or session state.
+
+### Subject detection models (optional)
+
+Drop a model folder into `infer_models/` or use Settings → Detector models. `.tflite` runs on MediaPipe; `.onnx` with a sibling `classes.txt` runs as YOLO; a saliency model needs `model.json {"backend": "u2netp"}`. A misconfigured detector raises an error — it never silently falls back to another one. Details: [vlm_photo_editor/detection/AGENTS.md](vlm_photo_editor/detection/AGENTS.md).
 
 ### Run
 
@@ -62,112 +123,34 @@ Key resolution order: **environment variable → OS keyring → `.env` file**. K
 streamlit run vlm_photo_editor/app/main.py
 ```
 
-App opens at `http://localhost:8501`.
+Opens at `http://localhost:8501`. Upload an image, describe the edit (e.g. `"replace the background with a studio bokeh"`), review the plan, accept or request changes, then save. Saves write a new `{name}_edited{ext}` file; the source is never overwritten.
+
+Docker, Hugging Face Spaces, the Linux keyring note and troubleshooting: see [RUNBOOK.md](RUNBOOK.md).
 
 ---
 
-## Usage
+## Safety invariants
 
-1. **Upload** a JPEG, PNG, or RAW file using the sidebar uploader.
-2. **Describe** your edit in plain language, e.g. `"replace background with a studio bokeh"`.
-3. **Review** the generated plan — each step shows what will happen and why.
-4. **Accept** to execute, or type a change request to revise the plan.
-5. **Save** the result. A new file is written alongside the original; the original is untouched.
+- **Originals are sacred** — saves always write a new file.
+- **Keys are secret** — a `RedactionFilter` scrubs log output; recipes store the model name only.
+- **Plan before action** — the human-readable plan is the source of truth; compiled ops link back by step-ID and are never silently rewritten.
+- **Subject pixels frozen** during background generation; only the masked region changes.
+- **Fail loudly** — invalid plans or params are rejected with a clear error; failed steps are surfaced, not dropped or retried indefinitely.
 
-### Edit Modes
+## Limitations
 
-| Mode | What it does |
-|------|-------------|
-| Full Edit | All ops: exposure, crop, colour, background, etc. |
-| Background Only | Limits planner to background-replacement ops |
-| Frame Only | Limits planner to framing/crop ops |
-
-### Accept Modes
-
-| Mode | Behaviour |
-|------|-----------|
-| Manual | Nothing executes until you click **Accept Plan** |
-| Auto-low | Auto-executes plans that contain only low-risk ops |
-| Auto-all | Auto-executes all plans immediately |
-
----
-
-## Docker
-
-```bash
-docker build -t vlm-photo-editor .
-
-docker run -p 8501:8501 \
-  -e ANTHROPIC_API_KEY=sk-ant-... \
-  -e REPLICATE_API_TOKEN=r8_... \
-  vlm-photo-editor
-```
-
-App available at `http://localhost:8501`.
-
-Pass API keys via `-e` flags or `--env-file`. **Never bake keys into the image.**
-
-### HuggingFace Docker Space
-
-HF Docker Spaces route traffic to port **7860**. Override at runtime:
-
-```bash
-docker run -p 7860:7860 \
-  -e STREAMLIT_SERVER_PORT=7860 \
-  -e ANTHROPIC_API_KEY=sk-ant-... \
-  vlm-photo-editor
-```
-
-For a Docker-mode HF Space, change the README frontmatter `sdk: streamlit` → `sdk: docker` and set `app_port: 7860`.
-
----
-
-## HuggingFace Spaces
-
-The app runs on HuggingFace Spaces without changes. Set secrets via **Space Settings → Repository secrets**:
-
-| Secret | Required for |
-|--------|-------------|
-| `ANTHROPIC_API_KEY` | Claude planner (default) |
-| `OPENAI_API_KEY` | GPT-4o planner |
-| `REPLICATE_API_TOKEN` | AI background replacement |
-
-At least one VLM provider key is required. Background replacement is optional.
-
-**In-app key entry** also works — open the Settings panel, enter a key in the API Keys section. On Spaces (no OS keyring), the key is stored in the session environment and active for the remainder of the session.
-
----
-
-## Architecture
-
-```
-Planner (VLM) → HumanPlan → user approval → Compiler → OpGraph → Executor → Recipe
-```
-
-- **Planner** — LangGraph state machine; calls the configured VLM to generate a `HumanPlan` (list of human-readable steps with stable IDs).
-- **Compiler** — validates the plan against the active op policy; produces a typed `OpGraph`.
-- **Executor** — runs each `Op` deterministically using Pillow/OpenCV/NumPy; genAI ops call Replicate.
-- **Recipe** — JSON sidecar recording every op, params, and (for genAI) model + seed. Replayable.
-
-### Safety invariants
-
-- Originals are never overwritten — saves write `{name}_edited{ext}`.
-- API keys never appear in logs — `RedactionFilter` scrubs all log output.
-- Plans are human-readable and revisable before any op runs.
-- GenAI steps record model + prompt + seed for reproducibility.
-
----
+- Google Imagen provider is currently non-functional (tracked as BG-B10).
+- OpenAI image edits and Google record `seed=None`, so those generative steps are regenerated fresh on replay.
+- OpenCV inpaint/denoise are 8-bit only; 16-bit input is downconverted for those ops.
+- Stills only. No video, multi-user/cloud sync, mobile deployment or colour-managed print workflows.
 
 ## Development
 
 ```bash
 pip install -r requirements_dev.txt
-pytest                      # all tests
-pytest -m "not slow"        # skip long-running tests
-ruff check .
-black --check .
+bash agent_notes/utility_scripts/run_checks.sh   # lint + format + docstyle + tests
+pytest -m "not slow"                             # fast tests
+pytest -m e2e tests/e2e/ -v                      # live-browser tests; real API calls, costs money
 ```
 
-Project structure: `vlm_photo_editor/{agents,app,config,imageio,ops,planner,recipe,schema,secrets}`. Each module has an `AGENTS.md` with per-module invariants and import rules.
-
-Build plan and definition-of-done checklist: `plans/photo_editor_build_plan.md`.
+Project notes, per-module invariants and conventions live in [agent_notes/](agent_notes/index.md) and each module's `AGENTS.md`. Build plan and definition-of-done: [plans/photo_editor_build_plan.md](plans/photo_editor_build_plan.md).
