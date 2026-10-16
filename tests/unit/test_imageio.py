@@ -104,6 +104,27 @@ def test_16bit_jpeg_raises_valueerror(tmp_path: Path) -> None:
         save(c16, tmp_path / "out.jpg")
 
 
+@pytest.mark.parametrize("with_icc", [True, False], ids=["icc", "no_icc"])
+def test_16bit_rgb_tiff_keeps_icc_profile(tmp_path: Path, with_icc: bool) -> None:
+    """The tifffile branch must embed the container's ICC profile, like the Pillow branch."""
+    import tifffile
+    from PIL import ImageCms
+
+    icc = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes() if with_icc else None
+    c16 = ImageContainer(
+        pixels=np.full((8, 8, 3), 30000, dtype=np.uint16),
+        bit_depth=16,
+        source_path=tmp_path / "src.nef",
+        icc_profile=icc,
+    )
+    dest = save(c16, tmp_path / "out.tif")
+
+    with tifffile.TiffFile(str(dest)) as tf:
+        tag = tf.pages[0].tags.get(34675)
+        written = bytes(tag.value) if tag else None
+    assert written == icc
+
+
 def test_16bit_rgb_tiff_round_trip(tmp_path: Path) -> None:
     """IO-B4: 16-bit RGB save must not raise and must round-trip exactly (tifffile)."""
     import tifffile
@@ -161,3 +182,69 @@ def test_rgba_jpeg_saves_as_rgb(tmp_path: Path) -> None:
     save(container, dest)
     loaded = load(dest)
     assert loaded.pixels.shape[2] == 3
+
+
+def _exif_with_thumbnail(thumb: bytes) -> bytes:
+    """Raw APP1 EXIF: IFD0 {Make="Cam", Orientation=6} -> IFD1 pointing at a JPEG thumbnail."""
+    import struct
+
+    ifd0 = (
+        struct.pack("<H", 2)
+        + struct.pack("<HHI4s", 0x010F, 2, 4, b"Cam\0")
+        + struct.pack("<HHIHH", 0x0112, 3, 1, 6, 0)
+        + struct.pack("<I", 38)
+    )
+    ifd1 = (
+        struct.pack("<H", 2)
+        + struct.pack("<HHII", 0x0201, 4, 1, 68)
+        + struct.pack("<HHII", 0x0202, 4, 1, len(thumb))
+        + struct.pack("<I", 0)
+    )
+    return b"Exif\x00\x00" + b"II*\x00" + struct.pack("<I", 8) + ifd0 + ifd1 + thumb
+
+
+@pytest.mark.parametrize("suffix", [".jpg", ".png", ".webp", ".tif"])
+def test_exif_carried_to_output_without_thumbnail_or_orientation(
+    tmp_path: Path, suffix: str
+) -> None:
+    """IO-D3: capture metadata survives a save; the stale thumbnail and orientation do not."""
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 10, 10)).save(buf, format="JPEG")
+    thumb = buf.getvalue()
+    container = ImageContainer(
+        pixels=np.zeros((16, 24, 3), dtype=np.uint8),
+        bit_depth=8,
+        source_path=tmp_path / "src.jpg",
+        metadata={"exif": _exif_with_thumbnail(thumb)},
+    )
+    dest = save(container, tmp_path / f"out{suffix}")
+
+    written = Image.open(dest).getexif()
+    assert written.get(0x010F) == "Cam"
+    assert written.get(0x0112) is None
+    assert thumb[:32] not in dest.read_bytes()
+
+
+def test_unreadable_exif_does_not_block_save(tmp_path: Path) -> None:
+    container = ImageContainer(
+        pixels=np.zeros((8, 8, 3), dtype=np.uint8),
+        bit_depth=8,
+        source_path=tmp_path / "src.jpg",
+        metadata={"exif": b"garbage-not-exif"},
+    )
+    dest = save(container, tmp_path / "out.jpg")
+    assert not Image.open(dest).getexif()
+
+
+@pytest.mark.parametrize("suffix,fmt", [(".jpg", None), (".jpeg", None), (".out", "JPEG")])
+def test_jpeg_saved_high_quality_full_chroma(tmp_path: Path, suffix: str, fmt) -> None:
+    from PIL import JpegImagePlugin
+
+    rng = np.random.default_rng(0)
+    pixels = rng.integers(0, 256, (32, 32, 3), dtype=np.uint8)
+    container = ImageContainer(pixels=pixels, bit_depth=8, source_path=tmp_path / "src.png")
+    dest = save(container, tmp_path / f"out{suffix}", fmt=fmt)
+
+    written = Image.open(dest)
+    assert JpegImagePlugin.get_sampling(written) == 0  # 4:4:4, no chroma subsampling
+    assert written.quantization[0][0] <= 3  # quality 95 (Pillow's default 75 gives 8)
