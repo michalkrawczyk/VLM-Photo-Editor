@@ -42,6 +42,8 @@ Because every handoff is a typed contract (plan → OpGraph → recipe), a bad r
 
 **Status:** the architecture is implemented. No benchmark results are published, so the hypothesis is **not** claimed proven.
 
+**Note:** This code is written with assist of LLM models. Some of commands/skills/.md and other mechanisms for support agents are hidden or not published in evolved form.
+
 ---
 
 ## How it works
