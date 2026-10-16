@@ -11,7 +11,10 @@ class OpName(str, Enum):
     ROTATE = "rotate"
     WHITE_BALANCE = "white_balance"
     EXPOSURE = "exposure"
+    TONE = "tone"
+    SATURATION = "saturation"
     DENOISE = "denoise"
+    SHARPEN = "sharpen"
     MASK = "mask"
     FILL_MASK = "fill_mask"
     REGION_EDIT = "region_edit"
@@ -96,3 +99,6 @@ class FramingIntent(BaseModel):
     focus_instruction: str = ""
     frame_ratio: str | None = None
     user_instruction: str | None = None
+    # False hides the face_only option from the planner's RECOMMEND_BEST menu — set
+    # from the active Character Focus backend's label set (see app/main.py).
+    face_framing_allowed: bool = True

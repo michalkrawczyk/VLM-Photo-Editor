@@ -1,8 +1,8 @@
 # Project File Structure
 
-Modules: `config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `detection` · `background` · `agents` · `planner` · `recipe` · `preferences` · `pipeline` · `templates` · `app`
+Modules: `config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `detection` · `analysis` · `background` · `agents` · `planner` · `recipe` · `preferences` · `pipeline` · `templates` · `app`
 
-For per-module invariants, import rules, and common mistakes see `AGENTS.md`, where present: `agents`, `secrets`, `ops`, `background`, `detection`, `imageio`, `schema`, `planner`, `app`. Not yet written for `config`, `pipeline`, `recipe`, `preferences`, `models`, `templates`.
+For per-module invariants, import rules, and common mistakes see `AGENTS.md`, where present: `agents`, `secrets`, `ops`, `background`, `detection`, `analysis`, `imageio`, `schema`, `planner`, `app`. Not yet written for `config`, `pipeline`, `recipe`, `preferences`, `models`, `templates`.
 
 ---
 
@@ -25,6 +25,7 @@ vlm_photo_editor/
 │   ├── ops.py
 │   ├── plan.py
 │   ├── recipe.py
+│   ├── report.py
 │   └── prefs.py
 │
 ├── imageio/
@@ -50,6 +51,11 @@ vlm_photo_editor/
 │   ├── mediapipe_backend.py
 │   ├── u2netp_backend.py
 │   └── yolo_onnx_backend.py
+│
+├── analysis/
+│   ├── __init__.py
+│   ├── exif.py
+│   └── image_report.py
 │
 ├── background/
 │   ├── __init__.py
@@ -118,6 +124,7 @@ tests/
 │       └── sample_recipe.json
 ├── unit/
 │   ├── test_background.py
+│   ├── test_batch_processing.py
 │   ├── test_edit_flow.py
 │   ├── test_framing.py
 │   ├── test_imageio.py
@@ -125,7 +132,6 @@ tests/
 │   ├── test_ops.py
 │   ├── test_p9_critic.py
 │   ├── test_p10_hardening.py
-│   ├── test_p11_batch.py
 │   ├── test_p13_character_focus.py
 │   ├── test_planner.py
 │   ├── test_prefs.py
@@ -133,6 +139,8 @@ tests/
 │   ├── test_schema.py
 │   └── test_secrets.py
 ├── integration/
+│   ├── test_batch_modes.py         # batch two-mode: apply_plan_to_batch + per-image intent
+│   └── test_p8_5_mvp_gate.py
 └── e2e/                          # live-browser Playwright tests (real API + real MediaPipe), see agent_notes/commands.md
     ├── conftest.py
     ├── _helpers.py

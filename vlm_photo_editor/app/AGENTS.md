@@ -24,7 +24,18 @@
 | components/plan_view.py | Plan display with expandable compiled ops per step |
 | components/canvas.py | `streamlit-drawable-canvas` bbox selection |
 | components/prefs_panel.py | Explicit + learned rules panel; per-rule toggles |
+| components/batch_review.py | Post-run batch review: summary, top-of-panel Before/After preview with ◀ ▶ (uploads pre-run, records post-run; Mode A "Preview result on this image"), details + Accept/Reject/Re-plan/Revert for the shown image, Save All, Needs Attention |
+| components/character_focus.py | Shared Character Focus selector + target classes (single + batch panels); targets mirrored to a shadow key |
+| components/framing.py | `build_framing_intent`, shared Composition selector (single + batch panels) |
 | components/settings.py | Masked API-key entry; role→model switchers; mode buttons |
+
+`main.py:_render_batch_panel` has a "Apply the same edit to every image" checkbox:
+Mode A (`_render_batch_mode_a`) = one shared instruction, plan approved once on the
+active image (run verbatim there), then `pipeline.batch.adapt_plan_to_batch` has the
+planner (`Planner.adapt`) re-plan every other image using the approved plan as the
+methodology; adapted plans run immediately unless they exceed the approved risk/backend
+envelope (`within_approved_envelope`) and wait in review; Mode B (`_render_batch_mode_b`) = per-image instruction boxes, `run_batch`
+per image, then the review queue.
 
 ## Tests
 - UI components are tested via the integration test: `tests/integration/test_pipeline.py`

@@ -39,6 +39,9 @@ class HumanStep(BaseModel):
 
 class HumanPlan(BaseModel):
     plan_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    # What is right/wrong with the image, in photographer terms. Written before the steps so
+    # the model commits to a read of the picture first; shown to the user, never executed.
+    diagnosis: str = ""
     steps: list[HumanStep] = Field(default_factory=list)
     mode: str = "full"
     chosen_framing_mode: FramingMode | None = None

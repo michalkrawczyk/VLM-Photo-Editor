@@ -5,6 +5,11 @@ from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName
 
 from .constants import INPAINT_OPS as _INPAINT_OPS
 
+# Keys the compiler injects onto Op.params after the plan is authored, so they are
+# never declared in the catalog: `invert` from _collapse_mask_ops (compiler.py:98),
+# `focus_*` from the detected-subject pass (compiler.py:203-206).
+_COMPILER_INJECTED = frozenset({"invert", "focus_x", "focus_y", "focus_w", "focus_h"})
+
 
 def _as_number(op_name: OpName, key: str, value: object) -> float:
     """Coerce a param to float, raising ValueError (never TypeError) for bad types.
@@ -43,12 +48,25 @@ def validate_op(
             "or drawn region selection) before execution."
         )
 
-    required = list(get_spec(op.op_name).required_params)
+    spec = get_spec(op.op_name)
+    required = list(spec.required_params)
     if op.op_name in _INPAINT_OPS and op.backend != Backend.GENAI:
         required = [r for r in required if r != "prompt"]
     for key in required:
         if key not in op.params:
             raise ValueError(f"Op {op.op_name!r} missing required param {key!r}")
+
+    # S-C1 / SC-S1: the param contract is closed — reject any key the catalog does
+    # not declare (required or optional) and the compiler does not inject. Catches a
+    # typo'd key ("angl") here rather than at backend dispatch. Runs before the enum
+    # check so an unknown key is reported as unknown, not as a near-miss value.
+    allowed = set(spec.required_params) | set(spec.optional_params) | _COMPILER_INJECTED
+    unknown = set(op.params) - allowed
+    if unknown:
+        raise ValueError(
+            f"Op {op.op_name!r} has unknown param(s) {sorted(unknown)}; "
+            f"allowed: {sorted(allowed)}"
+        )
 
     # SC-B1: reject out-of-vocabulary string params (e.g. frame.mode, region_edit.method).
     # Without this an unknown value passes validation, the backend silently no-ops, and

@@ -22,6 +22,9 @@ def render() -> None:
         if prev_ids != curr_ids:
             state.set("uploaded_files", files)
             state.set("current_file_index", 0)
+            # Results of a previous batch belong to the old file set.
+            state.set("batch_records", None)
+            state.set("batch_view_index", 0)
 
         idx = int(state.get("current_file_index") or 0)
         idx = max(0, min(idx, len(files) - 1))

@@ -12,8 +12,10 @@ _DEFAULTS: dict[str, Any] = {
     "current_file_index": 0,
     "batch_mode": False,
     "batch_records": None,
-    "batch_review_index": 0,
+    "batch_view_index": 0,  # image shown in the batch results viewer
     "batch_retry_id": None,
+    "batch_apply_all": True,  # the mode checkbox; default ON = Mode A
+    "batch_per_intents": {},  # Mode B: {filename: instruction}
     "output_format": "same",
     "source_name": None,  # original upload filename, for output/recipe naming
     "container": None,  # ImageContainer after loading the uploaded file
@@ -22,6 +24,9 @@ _DEFAULTS: dict[str, Any] = {
     "genai_override": None,  # step_id -> candidate index chosen by the user
     "current_plan": None,
     "current_opgraph": None,
+    "plan_notice": None,  # warning shown under the plan (e.g. revision changed nothing)
+    "plan_repairs": [],  # error texts that triggered an automatic plan revision (shown in UI)
+    "critic_auto_revise": False,  # one bounded revise when the Critic fails (auto modes only)
     "accept_mode": "manual",
     "edit_mode": "full",
     "framing_mode": "rule_of_thirds",
@@ -45,6 +50,14 @@ def init_state() -> None:
     for key, value in _DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+    # Once per session: reap scratch dirs orphaned by past sessions (B5). Local
+    # import — tmp_layout imports this module.
+    if not st.session_state.get("_stale_swept"):
+        from vlm_photo_editor.app.tmp_layout import sweep_stale
+
+        sweep_stale()
+        st.session_state["_stale_swept"] = True
 
 
 def get(key: str) -> Any:

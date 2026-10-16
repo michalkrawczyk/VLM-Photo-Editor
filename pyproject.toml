@@ -21,6 +21,7 @@ addopts = ["-m", "not e2e"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring full pipeline",
+    "eval: planner/ops quality evals scored with ImageReport metric deltas; the deterministic tier is cheap and runs in the gate, the VLM tier is also marked slow (select with '-m eval')",
     "e2e: end-to-end browser tests against a live Streamlit server; real API calls, not run by default (select with '-m e2e')",
 ]
 

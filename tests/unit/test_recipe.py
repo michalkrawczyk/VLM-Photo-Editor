@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -78,6 +79,49 @@ def test_store_save_and_load_round_trip(tmp_path: Path) -> None:
 
     loaded_via_for = RecipeStore.load_for(src)
     assert loaded_via_for.recipe_id == recipe.recipe_id
+
+
+def _wb_recipe_json(temperature: float, *, with_version: bool) -> str:
+    recipe = Recipe(
+        source_path="photo.jpg",
+        op_graph=OpGraph(
+            ops=[
+                Op(
+                    op_name=OpName.WHITE_BALANCE,
+                    params={"temperature": temperature},
+                    backend=Backend.PIL,
+                    step_id="s1",
+                )
+            ]
+        ),
+    )
+    data = json.loads(recipe.model_dump_json())
+    if not with_version:
+        del data["schema_version"]  # what every pre-v2 sidecar on disk looks like
+    return json.dumps(data)
+
+
+@pytest.mark.parametrize(
+    "stored,with_version,expected",
+    [
+        (4000.0, False, 9000.0),  # v1 "cooler" 4000 K  -> same look as v2 9000 K
+        (6500.0, False, 6500.0),  # neutral is its own mirror
+        (15000.0, False, 1000.0),  # old extreme-blue values clamp to the lower bound
+        (4000.0, True, 4000.0),  # v2 sidecar is untouched
+    ],
+)
+def test_store_load_migrates_v1_white_balance(
+    tmp_path: Path, stored: float, with_version: bool, expected: float
+) -> None:
+    sidecar = tmp_path / "photo.edit.json"
+    sidecar.write_text(_wb_recipe_json(stored, with_version=with_version), encoding="utf-8")
+
+    loaded = RecipeStore.load(sidecar)
+
+    assert loaded.schema_version == 2
+    assert loaded.op_graph.ops[0].params["temperature"] == expected
+    # Migration is in-memory only: the file on disk is not rewritten by load().
+    assert ("schema_version" in json.loads(sidecar.read_text())) is with_version
 
 
 def test_store_load_missing_file_raises(tmp_path: Path) -> None:
@@ -175,8 +219,8 @@ def test_render_applies_ops(tmp_path: Path) -> None:
 
     result = Renderer().render_from_path(recipe)
 
-    # ev=1.0 doubles pixel values (64 * 2^1.0 = 128)
-    np.testing.assert_allclose(result.container.pixels, 128, atol=1)
+    # ev=1.0 doubles LINEAR light: sRGB code 64 -> ~90 (not 128, which was the gamma-space math)
+    np.testing.assert_allclose(result.container.pixels, 90, atol=1)
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +239,11 @@ def test_preset_reapply(tmp_path: Path) -> None:
 
     result_b = renderer.apply_as_preset(recipe, load(src_b))
 
-    # src_b starts at 32; ev=1.0 doubles → ~64
-    np.testing.assert_allclose(result_b.container.pixels, 64, atol=1)
-    # different from src_a result (~128) and from raw src_b pixels (32)
+    # src_b starts at 32; ev=1.0 doubles linear light -> ~47
+    np.testing.assert_allclose(result_b.container.pixels, 47, atol=1)
+    # different from src_a result (~90) and from raw src_b pixels (32)
     assert result_b.container.pixels[0, 0, 0] != 32
-    assert result_b.container.pixels[0, 0, 0] != 128
+    assert result_b.container.pixels[0, 0, 0] != 90
 
 
 # ---------------------------------------------------------------------------

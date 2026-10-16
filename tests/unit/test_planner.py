@@ -12,9 +12,10 @@ from pydantic import ValidationError
 
 from vlm_photo_editor.config.policy import allowed_ops_for_mode
 from vlm_photo_editor.planner.compiler import Compiler, CompilerError
+from vlm_photo_editor.planner.repair import plans_equivalent
 from vlm_photo_editor.schema.ops import FramingIntent, FramingMode, OpName
 from vlm_photo_editor.schema.plan import CompilerResult, HumanPlan, HumanStep
-from vlm_photo_editor.templates.planner import build_system_prompt
+from vlm_photo_editor.templates.planner import EXAMPLE_PLANS, build_system_prompt
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -205,59 +206,157 @@ def test_validate_crop_bounds_passes_when_within_image():
     validate_crop_bounds(result.op_graph, 200, 200)  # no exception
 
 
-@pytest.mark.parametrize("fail_count", [1, 2, 3])
-def test_validate_crop_bounds_retry_calls_revise(fail_count):
-    """Retry loop calls revise exactly fail_count times before succeeding."""
-    from unittest.mock import MagicMock
+_BAD_CROP = {"left": 0, "top": 0, "right": 200, "bottom": 50}
+_GOOD_CROP = {"left": 0, "top": 0, "right": 80, "bottom": 50}
 
-    from vlm_photo_editor.ops.validator import validate_crop_bounds
-    from vlm_photo_editor.schema.ops import Backend, Op, OpGraph, OpName, RiskTier
 
-    def _make_graph(right: int, w: int) -> OpGraph:
-        return OpGraph(
-            ops=[
-                Op(
-                    op_name=OpName.CROP,
-                    params={"left": 0, "top": 0, "right": right, "bottom": 50},
-                    backend=Backend.PIL,
-                    risk_tier=RiskTier.LOW,
-                    step_id="s1",
-                )
-            ]
-        )
+def _crop_plan(params: dict) -> HumanPlan:
+    return _plan(_step(["crop"], [params]))
 
-    w, h = 100, 80
-    bad_graph = _make_graph(right=200, w=w)  # right > w → fails
-    good_graph = _make_graph(right=80, w=w)  # right < w → passes
 
-    graphs = [bad_graph] * fail_count + [good_graph]
-    graph_iter = iter(graphs)
+@pytest.mark.parametrize(
+    "bad_attempts,expect_error",
+    [
+        pytest.param(0, False, id="clean_plan_never_revises"),
+        pytest.param(1, False, id="one_bad_crop_repaired"),
+        pytest.param(2, False, id="two_bad_crops_repaired_at_cap"),
+        pytest.param(3, True, id="budget_exhausted_surfaces_error"),
+    ],
+)
+def test_compile_with_repair_crop_budget(bad_attempts, expect_error):
+    """`bad_attempts` = how many plans (initial + revisions) carry the out-of-bounds crop."""
+    from vlm_photo_editor.planner.repair import (
+        PlanRepairError,
+        compile_checked,
+        compile_with_repair,
+    )
 
-    revise_feedbacks: list[str] = []
+    max_repairs = 2
+    served = [bad_attempts]  # plans handed out so far, counting the initial one
 
-    planner = MagicMock()
-    planner.revise.side_effect = lambda c, p, fb, *a, **kw: (revise_feedbacks.append(fb), p)[1]
+    def next_plan() -> HumanPlan:
+        n = served[0]
+        served[0] += 1
+        return _crop_plan(_BAD_CROP if n < bad_attempts else _GOOD_CROP)
 
-    container = MagicMock()
-    container.width = w
-    container.height = h
-    plan = MagicMock()
-    max_retries = 3
+    feedback: list[str] = []
 
-    for _attempt in range(max_retries + 1):
-        op_graph = next(graph_iter)
-        try:
-            validate_crop_bounds(op_graph, container.width, container.height)
-            break
-        except ValueError as crop_err:
-            if _attempt >= max_retries:
-                raise
-            plan = planner.revise(container, plan, str(crop_err), None, "full", None)
+    def revise(prev, error):
+        feedback.append(error)
+        return next_plan()
 
-    assert planner.revise.call_count == fail_count
-    for fb in revise_feedbacks:
-        assert "right=200 > image width 100" in fb
-        assert "Revise crop to fit within" in fb
+    served[0] = 0
+    first = next_plan()
+
+    def compile_fn(p):
+        return compile_checked(p, "full", None, 100, 80)
+
+    if expect_error:
+        with pytest.raises(PlanRepairError, match="right=200 > image width 100") as ei:
+            compile_with_repair(first, compile_fn, revise, max_repairs)
+        assert len(ei.value.notes) == max_repairs
+        assert ei.value.plan.steps[0].op_params[0] == _BAD_CROP
+        assert len(feedback) == max_repairs
+    else:
+        result, notes = compile_with_repair(first, compile_fn, revise, max_repairs)
+        assert len(notes) == bad_attempts == len(feedback)
+        assert result.op_graph.ops[0].params["right"] == 80
+    assert all("Revise crop to fit within" in fb for fb in feedback)
+
+
+@pytest.mark.parametrize(
+    "bad_step,match",
+    [
+        pytest.param(_step(["exposure"], [{"ev": 99}]), "out of bounds", id="param_out_of_bounds"),
+        pytest.param(_step(["exposure"], [{"ev": 1, "evv": 2}]), "unknown param", id="typo_key"),
+        pytest.param(_step(["mask"], [{}]), "immediately followed", id="mask_without_follower"),
+    ],
+)
+def test_compile_with_repair_fixes_compiler_errors(bad_step, match):
+    """Non-crop CompilerErrors get the same bounded repair, with the error as feedback."""
+    from vlm_photo_editor.planner.repair import compile_with_repair
+
+    feedback: list[str] = []
+    fixed = _plan(_step(["exposure"], [{"ev": 1.0}]))
+
+    def revise(prev, error):
+        feedback.append(error)
+        return fixed
+
+    result, notes = compile_with_repair(
+        _plan(bad_step), lambda p: Compiler().compile(p, "full"), revise, 2
+    )
+    assert [n.attempt for n in notes] == [1]
+    assert match in feedback[0]
+    assert result.plan is fixed
+
+
+def test_compile_with_repair_does_not_retry_environment_errors():
+    """PS-strict without Photoshop is not something a revised plan can fix."""
+    from vlm_photo_editor.planner.repair import PlanRepairError, compile_with_repair
+
+    revise = MagicMock()
+    with (
+        patch("vlm_photo_editor.config.settings.get_settings") as gs,
+        patch("vlm_photo_editor.planner.compiler._ps_available", return_value=False),
+    ):
+        gs.return_value.ps_mode = "strict"
+        gs.return_value.no_genai = False
+        with pytest.raises(PlanRepairError, match="PS-strict") as ei:
+            compile_with_repair(
+                _plan(_step(["denoise"], [{}])), lambda p: Compiler().compile(p, "full"), revise, 2
+            )
+    revise.assert_not_called()
+    assert ei.value.notes == []
+
+
+@pytest.mark.parametrize(
+    "steps,match",
+    [
+        pytest.param([(["exposure"], [{"ev": 3.0}])], None, id="ev_3_ok"),
+        pytest.param([(["exposure"], [{"ev": 5.0}])], "sanity limit", id="ev_5"),
+        pytest.param(
+            [(["exposure"], [{"ev": 2.5}]), (["exposure"], [{"ev": 2.5}])],
+            "add up to",
+            id="ev_steps_add_up",
+        ),
+        pytest.param([(["rotate"], [{"angle": -4.0}])], None, id="straighten_ok"),
+        pytest.param([(["rotate"], [{"angle": 90.0}])], None, id="quarter_turn_ok"),
+        pytest.param([(["rotate"], [{"angle": -178.0}])], None, id="near_half_turn_ok"),
+        pytest.param([(["rotate"], [{"angle": 35.0}])], "off a right angle", id="rotate_35"),
+    ],
+)
+def test_compile_checked_sanity_guard(steps, match):
+    """Valid-but-absurd numbers fail as a repairable CompilerError; sane ones compile."""
+    from vlm_photo_editor.planner.compiler import CompilerError
+    from vlm_photo_editor.planner.repair import compile_checked
+
+    plan = _plan(*[_step(ops, params, index=i) for i, (ops, params) in enumerate(steps, 1)])
+    if match is None:
+        compile_checked(plan, "full", None, 100, 80)
+        return
+    with pytest.raises(CompilerError, match=match) as ei:
+        compile_checked(plan, "full", None, 100, 80)
+    assert ei.value.repairable
+
+
+@pytest.mark.parametrize("ex", EXAMPLE_PLANS, ids=lambda e: e["situation"].split(".")[0])
+def test_prompt_example_compiles(ex):
+    """Every few-shot plan in the prompt must pass the real compiler: a stale example
+    would teach the model an op/param the executor rejects."""
+    steps = [
+        _step([op], [params], index=i)
+        for i, (_title, _why, op, params) in enumerate(ex["steps"], 1)
+    ]
+    plan = HumanPlan(diagnosis=ex["diagnosis"], steps=steps)
+    assert plan.diagnosis
+    Compiler().compile(plan, "full")  # raises CompilerError if the example is stale
+
+
+def test_plan_diagnosis_is_optional():
+    """Plans from before the field existed (cache, fixtures) still validate."""
+    assert HumanPlan.model_validate({"steps": []}).diagnosis == ""
+    assert HumanPlan.model_validate({"steps": [], "diagnosis": "d"}).diagnosis == "d"
 
 
 # ---------------------------------------------------------------------------
@@ -470,30 +569,120 @@ def _mock_plan() -> HumanPlan:
     return _plan(_step(["exposure"], [{"ev": 1.0}]), mode="full")
 
 
-@pytest.mark.parametrize("method", ["plan", "revise"])
-def test_planner_calls_llm_returns_human_plan(method):
-    mock_plan = _mock_plan()
+def _planner_with_llm(*results):
+    """Planner whose mocked structured LLM returns ``results`` in order."""
+    from vlm_photo_editor.agents.planner import Planner
 
     with patch("vlm_photo_editor.agents.planner.build_client") as mock_build:
         mock_llm = MagicMock()
-        mock_llm.with_structured_output.return_value.invoke.return_value = mock_plan
+        invoke = mock_llm.with_structured_output.return_value.invoke
+        invoke.side_effect = list(results)
         mock_build.return_value = mock_llm
+        return Planner(), invoke
 
-        from vlm_photo_editor.agents.planner import Planner
 
-        container = MagicMock()
-        container.pixels = np.zeros((64, 64, 3), dtype=np.uint8)
+def _container():
+    container = MagicMock()
+    container.pixels = np.zeros((64, 64, 3), dtype=np.uint8)
+    container.width = container.height = 64
+    return container
 
-        planner = Planner()
 
-        if method == "plan":
-            result = planner.plan(container, intent="make it pop")
-        else:
-            result = planner.revise(container, previous_plan=mock_plan, feedback="brighter")
+@pytest.mark.parametrize("method", ["plan", "revise"])
+def test_planner_calls_llm_returns_human_plan(method):
+    previous = _mock_plan()
+    new_plan = _plan(_step(["exposure"], [{"ev": 2.0}]), mode="full")
+    planner, invoke = _planner_with_llm(new_plan)
 
-        assert isinstance(result, HumanPlan)
-        assert result.mode == "full"
-        mock_llm.with_structured_output.return_value.invoke.assert_called_once()
+    if method == "plan":
+        result = planner.plan(_container(), intent="make it pop")
+    else:
+        result = planner.revise(_container(), previous_plan=previous, feedback="brighter")
+
+    assert isinstance(result, HumanPlan)
+    assert result.mode == "full"
+    invoke.assert_called_once()
+
+
+def test_revise_prompt_carries_intent_plan_feedback_and_override_rule():
+    previous = _mock_plan()
+    planner, invoke = _planner_with_llm(_plan(_step(["crop"], [{"left": 0}]), mode="full"))
+
+    planner.revise(
+        _container(),
+        previous_plan=previous,
+        feedback="crop face only",
+        original_intent="portrait headroom",
+        framing_intent=FramingIntent(
+            mode=FramingMode.PORTRAIT_HEADROOM, focus_instruction="f", frame_ratio="4:5"
+        ),
+    )
+
+    system, human = invoke.call_args.args[0]
+    user_text = human.content[1]["text"]
+    assert "REVISION RULE" in system.content and "overrides" in system.content
+    assert "Target crop" in system.content  # framing constraints still present, but overridable
+    assert "ORIGINAL USER INSTRUCTION:\nportrait headroom" in user_text
+    assert previous.steps[0].step_id in user_text
+    assert "USER FEEDBACK:\ncrop face only" in user_text
+    assert "TASK: Adjust the previous plan" in user_text
+
+
+@pytest.mark.parametrize("mode", ["full", "frame"])
+def test_adapt_prompt_follows_reference_but_rederives_for_this_image(mode):
+    reference = _plan(_step(["crop"], [{"left": 100, "top": 100, "right": 3000, "bottom": 2000}]))
+    adapted = _plan(_step(["crop"], [{"left": 5, "top": 5, "right": 50, "bottom": 40}]))
+    planner, invoke = _planner_with_llm(adapted)
+
+    result = planner.adapt(
+        _container(),
+        reference_plan=reference,
+        intent="tighter portrait crop",
+        mode=mode,
+        framing_intent=FramingIntent(
+            mode=FramingMode.PORTRAIT_HEADROOM, focus_instruction="f", frame_ratio="4:5"
+        ),
+    )
+
+    system, human = invoke.call_args.args[0]
+    user_text = human.content[1]["text"]
+    assert result is adapted and result.mode == mode
+    invoke.assert_called_once()
+    assert "ADAPTATION RULE" in system.content and "Target crop" in system.content
+    assert "REVISION RULE" not in system.content
+    assert "Image dimensions: 64x64" in user_text
+    assert "ORIGINAL USER INSTRUCTION:\ntighter portrait crop" in user_text
+    assert '"right": 3000' in user_text  # reference plan is shown...
+    assert "instead of copying the reference numbers" in user_text  # ...but not to be copied
+
+
+@pytest.mark.parametrize("second_result_changes", [True, False])
+def test_revise_reprompts_once_when_plan_unchanged(second_result_changes):
+    previous = _mock_plan()
+    echo = _plan(_step(["exposure"], [{"ev": 1.0}]), mode="full")  # same ops/params, new ids
+    changed = _plan(_step(["exposure"], [{"ev": 2.0}]), mode="full")
+    planner, invoke = _planner_with_llm(echo, changed if second_result_changes else echo)
+
+    result = planner.revise(_container(), previous_plan=previous, feedback="brighter")
+
+    assert invoke.call_count == 2  # one retry, never a third call
+    assert plans_equivalent(previous, result) is (not second_result_changes)
+    retry_text = invoke.call_args_list[1].args[0][1].content[1]["text"]
+    assert "identical to the PREVIOUS PLAN" in retry_text
+
+
+@pytest.mark.parametrize(
+    "other, expected",
+    [
+        (_plan(_step(["exposure"], [{"ev": 1.0}])), True),
+        (_plan(_step(["exposure"], [{"ev": 1.5}])), False),
+        (_plan(_step(["tone"], [{"shadows": 10}])), False),
+        (_plan(_step(["exposure"], [{"ev": 1.0}]), _step(["denoise"], [{}])), False),
+        (_plan(), False),
+    ],
+)
+def test_plans_equivalent(other, expected):
+    assert plans_equivalent(_plan(_step(["exposure"], [{"ev": 1.0}])), other) is expected
 
 
 @pytest.mark.parametrize(
@@ -562,6 +751,125 @@ def test_user_content_includes_dimensions():
     text_block = next(b for b in content if b.get("type") == "text")["text"]
     assert "80x48" in text_block  # width x height
     assert "Edit intent: crop tightly" in text_block
+
+
+# ---------------------------------------------------------------------------
+# Image report — MEASUREMENTS block, rules, VLM input hygiene
+# ---------------------------------------------------------------------------
+
+
+def _report(**overrides):
+    from vlm_photo_editor.schema.report import ExifSummary, ImageReport
+
+    base = dict(
+        width=80,
+        height=48,
+        luma_mean=0.41,
+        luma_p1=0.02,
+        luma_p5=0.05,
+        luma_p50=0.38,
+        luma_p95=0.81,
+        luma_p99=0.9,
+        clipped_shadow_pct=0.0,
+        clipped_highlight_pct=4.2,
+        channel_means=(0.4, 0.4, 0.4),
+        cast_rb_ratio=1.31,
+        cast_label="warm",
+        suggested_wb_temperature=5200.0,
+        saturation_mean=0.31,
+        sharpness=120.0,
+        noise_sigma=1.2,
+        tilt_deg=1.8,
+        tilt_confidence=0.82,
+        exif=ExifSummary(iso=800, exposure_time_s=1 / 125, f_number=2.8, wb_mode="manual"),
+    )
+    return ImageReport(**{**base, **overrides})
+
+
+def _planner_and_container(shape=(48, 80, 3), dtype=np.uint8, fill=0, icc=None):
+    from pathlib import Path
+
+    from vlm_photo_editor.agents.planner import Planner
+    from vlm_photo_editor.imageio.container import ImageContainer
+
+    container = ImageContainer(
+        pixels=np.full(shape, fill, dtype=dtype),
+        bit_depth=16 if dtype == np.uint16 else 8,
+        source_path=Path("/fake/img.jpg"),
+        icc_profile=icc,
+    )
+    with patch("vlm_photo_editor.agents.planner.build_client"):
+        return Planner(), container
+
+
+def _text_of(content) -> str:
+    return next(b for b in content if b.get("type") == "text")["text"]
+
+
+def test_measurements_only_when_report_given():
+    planner, container = _planner_and_container()
+
+    plain = _text_of(planner._user_content(container, "fix it"))
+    assert "MEASUREMENTS" not in plain
+    assert "MEASUREMENT RULES" not in build_system_prompt("full", None, None, None)
+
+    text = _text_of(planner._user_content(container, "fix it", image_report=_report()))
+    assert "MEASUREMENTS (computed from the pixels" in text
+    assert "highlights 4.2%" in text
+    assert "cast warm (R/B 1.31)" in text and "suggested white_balance temperature 5200" in text
+    assert "tilt +1.8 deg" in text and "rotate by -1.8" in text
+    assert "ISO 800, 1/125 s, f/2.8, manual WB" in text
+    assert text.index("MEASUREMENTS") < text.index("Edit intent:")  # intent stays last
+
+    rules = build_system_prompt("full", None, None, None, image_report=_report())
+    assert "MEASUREMENT RULES" in rules
+
+
+def test_measurements_handle_missing_tilt_and_exif():
+    from vlm_photo_editor.schema.report import ExifSummary
+
+    planner, container = _planner_and_container()
+    report = _report(tilt_deg=None, tilt_confidence=None, exif=ExifSummary())
+    text = _text_of(planner._user_content(container, "x", image_report=report))
+    assert "no dominant horizontal/vertical lines" in text
+    assert "Camera:" not in text
+
+
+def test_large_image_is_downscaled_and_coordinate_space_stated():
+    import base64
+    import io
+
+    from PIL import Image
+
+    planner, container = _planner_and_container(shape=(2000, 3000, 3), fill=90)
+    content = planner._user_content(container, "x")
+    text = _text_of(content)
+    assert "Image dimensions: 3000x2000" in text
+    assert "Image sent to you: 1568x1045" in text and "ORIGINAL pixel space" in text
+
+    url = content[0]["image_url"]["url"]
+    sent = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+    assert sent.size == (1568, 1045)
+
+    small_planner, small = _planner_and_container()
+    assert "Image sent to you" not in _text_of(small_planner._user_content(small, "x"))
+
+
+def test_uint16_image_is_not_contrast_stretched():
+    import base64
+    import io
+
+    from PIL import Image
+
+    # A dark 16-bit frame (value 4000/65535 ~ 6 %) used to be stretched to full range.
+    planner, container = _planner_and_container(dtype=np.uint16, fill=4000)
+    img = Image.open(io.BytesIO(base64.b64decode(planner._encode_image(container))))
+    assert np.asarray(img).mean() < 30
+
+
+def test_bad_icc_profile_does_not_block_encoding():
+    planner, container = _planner_and_container(icc=b"definitely not an icc profile")
+    assert planner._encode_image(container)
 
 
 # ---------------------------------------------------------------------------

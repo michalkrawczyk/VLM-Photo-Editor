@@ -32,6 +32,7 @@ class BatchImageRecord(BaseModel):
     detected_subject: Any = None  # DetectedSubject | None; from a Character Focus pre-pass
     error: str | None = None
     retry_count: int = 0
+    intent: str = ""  # per-image instruction (Mode B); "" => use the batch-wide intent
 
     @field_validator("filename")
     @classmethod

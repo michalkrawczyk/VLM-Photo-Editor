@@ -265,7 +265,7 @@ PS-strict enforcement (constrain the planner to Photoshop-expressible ops), No-P
 
 **User-facing result.** Upload a folder of images, review AI plans in bulk, save accepted edits — without waiting for one image to finish before the next starts.
 
-Follow-ups deferred past this phase — see `plans/future_improvements.md`: per-image preview strip before the run, per-op (not just per-image) progress with the op named, and a shared Composition / Character Focus selector block so batch mode stops silently inheriting the single-image flow's framing state (tracked as `plans/issues.md` D7).
+"Approve once, apply to all" and per-image instructions land in **P11.5**. Follow-ups still deferred — see `plans/future_improvements.md`: per-image plan preview strip before the run, per-op (not just per-image) progress with the op named, and a shared Composition / Character Focus selector block so batch mode stops silently inheriting the single-image flow's framing state (tracked as `plans/issues.md` D7 — partially addressed by P11.5).
 
 **Definition of Done.**
 - [x] N images are planned concurrently; total wall time < N × single-image time.
@@ -276,6 +276,64 @@ Follow-ups deferred past this phase — see `plans/future_improvements.md`: per-
 - [x] Rejected images do not produce output files.
 - [ ] `full_auto` batch stops at the review queue with every image listed; no output file is written until the user accepts or clicks "Save All Accepted".
 - [ ] A per-run genAI-generation ceiling halts further generation and surfaces a notice when hit.
+
+---
+
+## Step P11.5 — Batch: Two Modes (shared-instruction recompile / per-image instructions)
+
+**What.** A checkbox on the batch panel — "Apply the same edit to every image"
+(default on) — that splits P11's one-instruction-per-batch flow into two explicit
+modes. Originally a deferred follow-up in `plans/future_improvements.md`; moved here
+now that it is built.
+
+**Why.** P11 takes one shared instruction but still runs a separate VLM plan per
+image and sends every image to the review queue — there was no "approve once, apply
+to all" path and no per-image instruction path. Event/catalog shoots want the
+former; mixed sets want the latter.
+
+**Key functionality.**
+- **Mode A — "Apply the same edit to every image" (checkbox on).** One shared
+  instruction. Plan once on the representative (first-selected) image, the user
+  approves that single `HumanPlan` once (or it auto-approves per accept mode), then
+  the deterministic compiler is re-run **per image**
+  (`Compiler().compile(plan, mode, detected_subject=record.detected_subject)`) so
+  crop geometry, framing and subject-focus are re-derived for that image,
+  `validate_crop_bounds` runs against that image, then `Executor().apply`. No
+  per-image VLM call — `pipeline/batch.apply_plan_to_batch(...)` is plain-sync (no
+  task group, no `anyio.run`). An image whose aspect ratio makes the derived crop
+  invalid fails **in isolation** (`FAILED`, surfaced under "Needs Attention", batch
+  continues); Mode A has no per-image VLM to `revise` it.
+- **Mode B — per-image instructions (checkbox off).** A shared fallback instruction
+  box plus one text box (and thumbnail) per image. Each image is planned with its
+  own instruction (`BatchImageRecord.intent`; blank falls back to the shared box)
+  via the existing `run_batch`, then reviewed in the existing review queue.
+- "Start Batch" (Mode B) is enabled once every image has an effective instruction
+  (its own, else the shared box). Mode A's "Apply to all" requires an explicit click
+  even under `full_auto` — a stray rerun must not fire a batch.
+- Recipe sidecars stay per-image correct in both modes: each record carries its own
+  recompiled `op_graph`, so `<stem>.edit.json` reflects that image's geometry, not
+  image 1's. Originals never touched.
+- Schema: `BatchImageRecord` gains `intent: str = ""` (additive; `""` ⇒ use the
+  batch-wide intent).
+
+**User-facing result.** Approve one plan and apply it across a whole upload set with
+per-image framing re-derived, or give each image its own instruction — chosen by one
+checkbox.
+
+**Definition of Done.**
+- [x] Checkbox toggles the two modes; default is Mode A.
+- [x] Mode A: one approved `HumanPlan` is recompiled once per image (against that
+      image's `detected_subject`) and executed; all land `AUTO_EXECUTED`.
+- [x] Mode A: an image whose recompiled crop fails `validate_crop_bounds` is marked
+      `FAILED` and surfaced under "Needs Attention"; the rest of the batch still
+      completes and saves.
+- [x] Mode A: each saved recipe sidecar carries that image's own recompiled
+      `op_graph` (round-trips via `RecipeStore`).
+- [x] Mode B: each image is planned with its own `intent`; a blank box falls back to
+      the shared instruction (asserted at the `planner.plan` call).
+- [x] Mode B: the run flows into the existing review queue unchanged.
+- [x] `apply_plan_to_batch` is synchronous — callable without an `anyio.run` wrapper.
+- [x] Progress fires once per image in both modes.
 
 ---
 

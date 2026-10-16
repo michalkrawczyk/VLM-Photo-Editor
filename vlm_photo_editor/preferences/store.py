@@ -29,6 +29,10 @@ def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _normalize(description: str) -> str:
+    return " ".join(description.casefold().split())
+
+
 class PreferenceStore:
     def __init__(self, path: Path = _DEFAULT_PREFS_PATH) -> None:
         self._path = path
@@ -74,9 +78,27 @@ class PreferenceStore:
     def add_learned(self, candidates: list[LearnedRule]) -> None:
         prefs = self.load()
         existing_ids = {r.rule_id for r in prefs.learned}
+        blocked = set(prefs.dismissed) | {_normalize(r.description) for r in prefs.learned}
         for candidate in candidates:
-            if candidate.rule_id not in existing_ids:
-                prefs.learned.append(candidate)
+            norm = _normalize(candidate.description)
+            if candidate.rule_id in existing_ids or norm in blocked:
+                continue
+            prefs.learned.append(candidate)
+            blocked.add(norm)
+        prefs.version = str(uuid.uuid4())
+        self.save(prefs)
+
+    def remove_learned(self, rule_id: str) -> None:
+        """Delete a learned rule and remember its text so the aggregator can't re-propose it."""
+        prefs = self.load()
+        removed = [r for r in prefs.learned if r.rule_id == rule_id]
+        if not removed:
+            return
+        prefs.learned = [r for r in prefs.learned if r.rule_id != rule_id]
+        for rule in removed:
+            norm = _normalize(rule.description)
+            if norm not in prefs.dismissed:
+                prefs.dismissed.append(norm)
         prefs.version = str(uuid.uuid4())
         self.save(prefs)
 

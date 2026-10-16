@@ -121,8 +121,8 @@ def test_secret_store_mask(key: str, expected: str) -> None:
 
 def test_model_registry_default_roles():
     reg = get_registry()
-    assert reg.get("planner") == "claude-sonnet-4-6"
-    assert reg.get("critic") == "claude-sonnet-4-6"
+    assert reg.get("planner") == "gpt-6.1-sol"
+    assert reg.get("critic") == "gpt-6.1-sol"
     assert reg.get("preference_aggregator") == "LiquidAI/LFM2.5-1.2B-Instruct"
 
 
@@ -130,7 +130,7 @@ def test_model_registry_set_takes_effect():
     reg = ModelRegistry()
     reg.set("planner", "gpt-4o")
     assert reg.get("planner") == "gpt-4o"
-    assert reg.get("critic") == "claude-sonnet-4-6"
+    assert reg.get("critic") == "gpt-6.1-sol"
 
 
 def test_model_registry_unknown_role_raises():
@@ -152,18 +152,20 @@ def test_planner_presets_cover_local_and_cloud() -> None:
     assert any(not e.is_local for e in PLANNER_PRESETS.values()), "need a cloud planner preset"
     assert any("gpt" in n.lower() for n in PLANNER_PRESETS), "need a gpt planner preset"
     # Default entry must be selectable from the preset switcher.
-    assert PLANNER_PRESETS["claude-sonnet-4.6"].model_id == get_registry().get("planner")
+    assert PLANNER_PRESETS["gpt-6.1-sol"].model_id == get_registry().get("planner")
 
 
 @pytest.mark.parametrize(
     "preset_name,provider,reasoning_effort,use_responses_api",
     [
-        ("claude-sonnet-4.6", "anthropic", None, False),
-        ("gpt-4o", "openai", None, False),
-        ("gpt-5.6-luna", "openai", None, True),
-        ("gpt-5.6-luna (no reasoning)", "openai", "none", False),
-        ("gpt-5.6-terra", "openai", None, True),
-        ("gpt-5.6-terra (no reasoning)", "openai", "none", False),
+        ("claude-sonnet-5.5", "anthropic", None, False),
+        ("claude-opus-5.5", "anthropic", None, False),
+        ("gpt-6-luna", "openai", None, True),
+        ("gpt-6-luna (no reasoning)", "openai", "none", False),
+        ("gpt-6.1-sol", "openai", None, True),
+        ("gpt-6.1-sol (no reasoning)", "openai", "none", False),
+        ("gpt-6-astra", "openai", None, True),
+        ("gpt-6-astra (no reasoning)", "openai", "none", False),
     ],
 )
 def test_planner_preset_entries(
@@ -206,3 +208,17 @@ def test_model_registry_set_preserves_extra_fields():
     assert updated.vllm_base_url == "http://my-server:9000/v1"
     assert updated.max_images_per_call == 4
     assert updated.loader == "vllm"
+
+
+def test_model_registry_set_entry_swaps_provider_cross_provider():
+    """CFG-B1: a cross-provider swap must go through set_entry so the provider follows
+    the model id — set() alone would leave the stale provider and build the wrong client."""
+    from vlm_photo_editor.config.registry import ModelEntry
+
+    reg = ModelRegistry()
+    assert reg.get_entry("cost_router").provider == "local"
+
+    reg.set_entry("cost_router", ModelEntry("gpt-4o", provider="openai"))
+    updated = reg.get_entry("cost_router")
+    assert updated.model_id == "gpt-4o"
+    assert updated.provider == "openai"

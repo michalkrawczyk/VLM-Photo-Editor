@@ -67,7 +67,7 @@ graph's `_execute` node does NOT do (so a bare `background_replace` op fails the
 
 ---
 
-## OpenAI reasoning models (gpt-5.6-luna / -terra) need a special planner path
+## OpenAI reasoning models (gpt-6-luna / gpt-6.1-sol / gpt-6-astra) need a special planner path
 
 Discovered 2026-09-07. Two independent walls between `ChatOpenAI` and the Planner's
 `with_structured_output(HumanPlan)`:
@@ -115,3 +115,90 @@ bundled, gitignored `infer_models/yolo/yolo26s.onnx` (renamed from `.test_models
 **Apply:** never add a blanket `load_dotenv()` at startup; extend `_path_setting` instead.
 The main-flow Character Focus picker offers `detection.ready_backends()` (package + path),
 not `available_backends()` (package only).
+
+---
+
+## `yolo_onnx` needs a sibling `classes.txt`; `face_only` is gated on a "face" label
+
+Discovered 2026-09-08. `yolo_onnx` reads `classes.txt` from the model file's *directory*
+(`_common.load_class_labels`, 0-based line index == class id). It must name a `human`/`person`
+class (case-insensitive) or `ready_backends()` drops the backend and `detect()` raises — same
+"no silent fallback" contract as a missing model path. `detect()` also raises on a class-count
+mismatch vs the model's output. The bundled COCO-80 `infer_models/yolo/classes.txt` is now
+committed via a `.gitignore` negation (`!infer_models/**/classes.txt`); the `.onnx` stays ignored.
+
+`FramingMode.FACE_ONLY` is offered in the Composition dropdown and the planner RECOMMEND_BEST
+menu **only** when `detection.detector_has_label(active_cf_backend, "face")` — carried to the
+template on `FramingIntent.face_framing_allowed` (default `True`). The static schema
+(`op_catalog` `enum_params`, `ops/validator.py`) stays permissive: a cached/hand-edited
+`frame.mode == "face_only"` still validates and replays (degrades to `portrait_headroom`
+geometry — both are a 3:4 centred/centroid crop). mediapipe returns `None` from
+`detector_labels()` (labels embedded in the tflite, not introspected), so `face_only` is
+hidden under mediapipe too.
+
+**Apply:** don't move the `face_only` gate into schema validation — it must not depend on
+`detection`/Streamlit state. Gate at the presentation layer only.
+
+---
+
+## `plans/issues.md` drifts from code — verify each ID before planning a fix
+
+Discovered 2026-09-09. Planning fixes for B5, CFG-B1, S-C1, OPS-B2: the Summary
+table line numbers were all stale, and two items were already partly fixed with no
+status marker. B5's single-image temp leak was closed by `app/tmp_layout.py` (commit
+b22c6d8, which also deleted the D15/B7/CFG-B2 detail sections but left their Summary
+rows). CFG-B1's planner dropdown already moved to `set_entry`; only the generic-role
+branch still had the bug. Round-2 batch reviews also supersede round-1 fixes (SC-S1's
+`optional_params` explicitly replaces S-C1's per-op Pydantic-model suggestion).
+
+**Apply:** treat the Summary table as an index, not truth. For each ID, open the cited
+file at current `HEAD`, grep for the described construct, and check later batch
+sections for a superseding fix, before writing any plan.
+
+## Op semantics are versioned through `Recipe.schema_version` (2026-10-02)
+
+**Gotcha:** sidecars (`*.edit.json`) persist op params but not op meaning. Any change to what
+an op *does* (WB direction, exposure math) silently changes every saved recipe's output.
+**Apply:** bump `RECIPE_SCHEMA_VERSION` (`schema/recipe.py`), add a pure migration in
+`recipe/store.py::_migrate_recipe_dict` where the change is invertible, and bump
+`plan_cache._KEY_VERSION` if the planner-facing wording changed. Pixel-precision-only
+changes (e.g. rotate resampler) need no bump. Also: `test_op_catalog.py` pins the system
+prompt byte-for-byte, so any `doc_lines` edit means regenerating
+`tests/fixtures/prompts/base_prompt_full_mode.txt` (review the diff).
+
+## Env: `.venv/bin/{pytest,black,isort,ruff}` shebangs are dead (2026-10-02)
+
+They point at a moved path (`/media/tk/Programming/...`), so `run_checks.sh` reports FAIL for
+black/isort/pytest on this box. Use `.venv/bin/python -m pytest|ruff|black|isort` instead.
+
+## Planner input bug fixed: 16-bit images were contrast-stretched (2026-10-02)
+
+`Planner._encode_image` used to min/max-stretch any non-uint8 frame to 0-255, so a dark or
+flat 16-bit/RAW image reached the VLM looking correctly exposed. Now a plain `>> 8`. If a
+planner ever "sees nothing to fix" on a RAW, check what bytes the model was actually sent.
+
+## Critic expectations come from ops, not prose (2026-10-03)
+
+`analysis/critic_checks.py` derives "what should have changed" from the compiled ops (net EV sign,
+WB direction, denoise, levelling rotate). A model-written `expected_effects` field was rejected on
+purpose: a model can emit "luma up" for any step, which would make the check vacuous. Also:
+`tests/unit/test_batch_processing.py::test_concurrent_planning_wall_time` fails when run alone
+(cold lazy imports inside the timed region, reproduced at HEAD); it passes after other test files
+warm the imports.
+
+## Copying source EXIF verbatim leaks the unedited thumbnail (2026-10-05)
+
+Camera EXIF carries an IFD1 JPEG thumbnail. Passing `info["exif"]` bytes straight to `img.save`
+keeps it, so file browsers show the *pre-edit* picture for an edited export. Rebuild through
+`Image.Exif().load(raw).tobytes()` (drops IFD1, keeps the Exif/GPS sub-IFDs) — see
+`imageio/savers._exif_bytes`. Orientation is already stripped by `ImageOps.exif_transpose` on load.
+
+## 16-bit TIFF input loads as 8-bit (2026-10-13)
+
+`loaders._load_pil` goes through Pillow, which cannot decode 16-bit-per-channel RGB TIFF: a uint16
+RGB `.tif` comes back as uint8 / `bit_depth 8` (verified). Only RAW produces 16-bit containers, so
+a 16-bit TIFF source is silently downgraded before any edit. Not fixed (out of scope of the
+planner-quality work); a `tifffile` read path in `_load_pil` would fix it. Also: the 16-bit save
+branch used to drop `icc_profile`; it now passes `iccprofile=` (tifffile cannot write EXIF IFDs).
+
+2026-10-16 — `streamlit.testing.AppTest.from_file("vlm_photo_editor/app/main.py")` resolves relative to the *test file* on streamlit 1.65, so the 11 AppTest cases in `test_p13_character_focus.py` fail from a clean checkout (pre-existing). Run them with a temporary symlink `tests/unit/vlm_photo_editor -> ../../vlm_photo_editor` (remove after). Also `test_concurrent_planning_wall_time` fails alone on this machine (0.57s vs 0.45s budget) but passes inside the full run — timing-sensitive.

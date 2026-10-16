@@ -24,6 +24,8 @@ class Preferences(BaseModel):
     version: str = Field(default_factory=lambda: str(uuid.uuid4()))
     explicit: list[ExplicitRule] = Field(default_factory=list)
     learned: list[LearnedRule] = Field(default_factory=list)
+    # Normalized descriptions of dismissed learned rules; the aggregator must not resurrect them.
+    dismissed: list[str] = Field(default_factory=list)
 
 
 class EditDelta(BaseModel):

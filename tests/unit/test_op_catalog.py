@@ -55,6 +55,13 @@ def test_get_spec_missing_raises_keyerror():
         get_spec("not_a_real_op")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("op_name", list(OpName))
+def test_optional_params_is_tuple_disjoint_from_required(op_name):
+    spec = get_spec(op_name)
+    assert isinstance(spec.optional_params, tuple)
+    assert not (set(spec.required_params) & set(spec.optional_params))
+
+
 @pytest.mark.parametrize(
     "op_name,ps_expressible,bbox_class",
     [
@@ -64,6 +71,9 @@ def test_get_spec_missing_raises_keyerror():
         (OpName.REGION_EDIT, True, BBoxClass.SELF_MANAGED_INPAINT),
         (OpName.BACKGROUND_REPLACE, False, BBoxClass.SELF_MANAGED_INPAINT),
         (OpName.WHITE_BALANCE, True, BBoxClass.GENERIC_CONFINABLE),
+        (OpName.TONE, True, BBoxClass.GENERIC_CONFINABLE),
+        (OpName.SATURATION, True, BBoxClass.GENERIC_CONFINABLE),
+        (OpName.SHARPEN, True, BBoxClass.GENERIC_CONFINABLE),
     ],
 )
 def test_spec_field_spot_checks(op_name, ps_expressible, bbox_class):

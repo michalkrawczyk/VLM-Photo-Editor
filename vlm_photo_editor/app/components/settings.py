@@ -3,8 +3,9 @@
 Contract:
   - API key inputs: password type; key stored in OS keyring via SecretStore.set_in_keyring(),
     never written to session state.
-  - Model selectors: call get_registry().set(role, model) immediately so the next
-    Planner/build_client call picks up the change.
+  - Model selectors: call get_registry().set_entry(role, ModelEntry(...)) immediately
+    so the next Planner/build_client call picks up the change. Pass a full ModelEntry
+    (not .set(role, model_id)) so the provider stays consistent with the model id.
 """
 
 from __future__ import annotations
@@ -260,7 +261,17 @@ def render() -> None:
                         key=f"model_{role}",
                     )
                     if selected != current:
-                        registry.set(role, selected)
+                        # set_entry (not set) so the provider derived from the picked
+                        # id is kept — AVAILABLE_MODELS mixes providers and .set()
+                        # would leave the previous entry's provider in place (CFG-B1).
+                        registry.set_entry(
+                            role,
+                            ModelEntry(
+                                selected,
+                                provider=provider_for_model(selected),  # type: ignore[arg-type]
+                                loader="transformers" if selected in LOCAL_MODEL_IDS else None,
+                            ),
+                        )
                         model_roles[role] = selected
                         state.log_intent("model_selected", {"role": role, "model": selected})
                 else:
@@ -406,8 +417,20 @@ def render() -> None:
     with st.expander("Character Focus", expanded=False):
         st.caption(
             "Local subject detection (zero API cost). Each backend needs its package "
-            "installed and a model file path configured below — no auto-download."
+            "installed and a model file path configured below — no auto-download. "
+            "yolo_onnx also needs a sibling classes.txt (one class name per line)."
         )
+
+        from vlm_photo_editor.detection import requires_classes_txt
+
+        def _classes_txt_ok(model_path: str) -> bool:
+            from vlm_photo_editor.detection._common import load_class_labels
+
+            try:
+                load_class_labels(model_path)
+            except ValueError:
+                return False
+            return True
 
         @st.cache_data(ttl=60)
         def _cf_status() -> set[str]:
@@ -431,6 +454,8 @@ def render() -> None:
                     badge_text, badge_color = "package missing", "red"
                 elif not current_path:
                     badge_text, badge_color = "path not set", "orange"
+                elif requires_classes_txt(backend) and not _classes_txt_ok(current_path):
+                    badge_text, badge_color = "classes.txt missing", "orange"
                 else:
                     badge_text, badge_color = "ready", "green"
                 st.markdown(
@@ -463,3 +488,74 @@ def render() -> None:
                 )
                 if new_path != current_path:
                     setattr(cf_settings, path_attr, new_path or None)
+
+        _render_detector_models(cf_installed)
+
+
+def _render_detector_models(cf_installed: set[str]) -> None:
+    """Scanned + user-added detector models, and the form to add one."""
+    from vlm_photo_editor.detection import (
+        add_user_model,
+        list_models,
+        model_has_label,
+        remove_user_model,
+    )
+
+    st.markdown("**Detector models**")
+    st.caption(
+        "Drop a folder with one .onnx/.tflite model (+ classes.txt for YOLO, optional "
+        "model.json) into infer_models/, or register a model file from anywhere below. "
+        "Pick it and its target classes in the Character Focus selector."
+    )
+    extra = [m for m in list_models() if m.origin != "legacy"]
+    if not extra:
+        st.caption("No extra models found.")
+    for model in extra:
+        col1, col2, col3, col4 = st.columns([3, 3, 2, 1])
+        with col1:
+            st.write(f"**{model.display_name}** ({model.backend.value})")
+            st.caption(str(model.path))
+        with col2:
+            if model.labels is None:
+                st.caption("class-agnostic / no class list")
+            else:
+                has_human = bool(model.labels) and (
+                    model_has_label(model.id, "person")
+                    or model_has_label(model.id, "human")
+                    or model_has_label(model.id, "face")
+                )
+                suffix = "" if has_human else " — no person/face class"
+                with st.popover(f"{len(model.labels)} classes{suffix}"):
+                    st.write(", ".join(n for n in model.labels if n.strip()))
+        with col3:
+            if model.invalid_reason:
+                st.markdown(
+                    "<span style='color:orange;font-weight:bold'>invalid</span>",
+                    unsafe_allow_html=True,
+                )
+                st.caption(model.invalid_reason)
+            elif model.backend.value not in cf_installed:
+                st.markdown(
+                    "<span style='color:red;font-weight:bold'>package missing</span>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    "<span style='color:green;font-weight:bold'>ready</span>",
+                    unsafe_allow_html=True,
+                )
+        with col4:
+            if model.origin == "user" and st.button("Remove", key=f"cf_rm_{model.id}"):
+                remove_user_model(model.id)
+                st.rerun()
+
+    with st.form("cf_add_model", clear_on_submit=True):
+        new_file = st.text_input("Model file path (.onnx / .tflite)")
+        new_name = st.text_input("Display name (optional)")
+        if st.form_submit_button("Add model") and new_file.strip():
+            try:
+                add_user_model(new_file.strip(), new_name.strip())
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.rerun()

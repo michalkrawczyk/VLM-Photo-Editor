@@ -64,9 +64,17 @@ class AppSettings:
     genai_model: str = "black-forest-labs/flux-fill-dev"
     # Retries after first crop-bounds failure (not counting initial attempt).
     max_crop_retries: int = 3
+    # Send the planner a MEASUREMENTS block (analysis.compute_report). Off = the pre-report
+    # prompt, kept as the A/B baseline for tests/eval.
+    image_report_enabled: bool = True
     # Character Focus (P13) detector model files — no auto-download. Each resolves
     # <NAME>_MODEL_PATH from env, then .env; yolo_onnx also falls back to the bundled
     # infer_models/yolo/yolo26s.onnx when present. See _path_setting().
+    # yolo_onnx additionally requires a sibling classes.txt (same directory as the
+    # .onnx; one class name per line, 0-based line index == class id) — see
+    # detection/_common.py::load_class_labels. These three are the legacy single-slot
+    # models; more are scanned from detector_models_dir or user-registered
+    # (detection/registry.py).
     mediapipe_model_path: str | None = field(
         default_factory=lambda: _path_setting("MEDIAPIPE_MODEL_PATH")
     )
@@ -77,6 +85,15 @@ class AppSettings:
     )
     u2netp_model_path: str | None = field(
         default_factory=lambda: _path_setting("U2NETP_MODEL_PATH")
+    )
+    # Pluggable detector models: directory scanned for ``<dir>/<model>.onnx|.tflite``
+    # bundles, and the JSON file holding user-registered model paths (paths only).
+    detector_models_dir: Path = field(default_factory=lambda: _INFER_MODELS_DIR)
+    detectors_file: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("VLM_DETECTORS_FILE")
+            or Path.home() / ".config" / "vlm_photo_editor" / "detectors.json"
+        )
     )
 
 

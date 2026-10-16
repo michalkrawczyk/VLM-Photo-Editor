@@ -24,6 +24,7 @@ Defined in `pyproject.toml` `[tool.pytest.ini_options]`:
 |---|---|---|
 | `slow` | Long-running, incl. live-API integration (needs `ANTHROPIC_API_KEY`) | `-m slow` / `-m "not slow"` |
 | `integration` | Requires the full pipeline | `-m integration` |
+| `eval` | Planner/ops quality scored by `ImageReport` metric deltas on synthetic cases (`tests/eval/`). Oracle tier is cheap and runs in the gate; the VLM tier is also `slow` and needs `EVAL_VLM=1` (paid) | `-m eval` |
 | `e2e` | Live-browser Playwright against a real Streamlit server; real API calls + real MediaPipe. Also tagged `slow` | `-m e2e` |
 
 **Default-run gotcha.** `addopts = ["-m", "not e2e"]` — plain `pytest` runs everything **except
@@ -35,11 +36,14 @@ default. CLAUDE.md previously stated this backwards.
 
 ```
 tests/
-├── unit/          15 files, one per subsystem (test_schema.py, test_ops.py, test_planner.py, …)
-│                  plus phase-scoped files: test_p9_critic.py, test_p10_hardening.py,
-│                  test_p11_batch.py, test_p13_character_focus.py
+├── unit/          15 files, one per subsystem (test_schema.py, test_ops.py, test_planner.py,
+│                  test_batch_processing.py, …) plus phase-scoped files: test_p9_critic.py,
+│                  test_p10_hardening.py, test_p13_character_focus.py
 ├── integration/   package exists, currently empty (only __init__.py) — integration-marked tests
 │                  live in unit/ today
+├── eval/          cases.py (synthetic tagged cases + oracle ops), metrics.py, harness.py,
+│                  test_oracle_eval.py, test_vlm_eval.py (opt-in), compare.py
+│                  (`python -m tests.eval.compare a.json b.json` -> pass-rate/steps/repairs/latency deltas + flips)
 ├── e2e/           conftest.py, _helpers.py, test_full_edit_and_framing.py
 └── fixtures/      static data, not pytest fixtures
     ├── face_portrait.jpg

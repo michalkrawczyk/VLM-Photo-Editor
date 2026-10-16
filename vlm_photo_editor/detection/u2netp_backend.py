@@ -3,22 +3,17 @@ from __future__ import annotations
 import numpy as np
 
 from vlm_photo_editor.imageio.container import ImageContainer
-from vlm_photo_editor.schema.detection import DetectedSubject
+from vlm_photo_editor.schema.detection import DetectedSubject, DetectorModel
 
 from ._common import clamp_bbox, to_rgb_uint8
 
 _INPUT_SIZE = 320
 
 
-def detect(container: ImageContainer) -> DetectedSubject | None:
-    from vlm_photo_editor.config.settings import get_settings
-
-    model_path = get_settings().u2netp_model_path
-    if not model_path:
-        raise ValueError(
-            "Character Focus backend 'u2netp' requires AppSettings.u2netp_model_path "
-            "to be set to a u2netp .onnx model file."
-        )
+def detect(container: ImageContainer, model: DetectorModel) -> DetectedSubject | None:
+    """Class-agnostic saliency — no target classes to honor."""
+    if not model.path:
+        raise ValueError(f"Detector model {model.id!r} has no .onnx model path.")
 
     import cv2
     import onnxruntime as ort
@@ -28,7 +23,7 @@ def detect(container: ImageContainer) -> DetectedSubject | None:
     resized = cv2.resize(rgb, (_INPUT_SIZE, _INPUT_SIZE)).astype(np.float32) / 255.0
     blob = resized.transpose(2, 0, 1)[None, ...]  # NCHW
 
-    session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+    session = ort.InferenceSession(model.path, providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
     output = session.run(None, {input_name: blob})[0]  # (1, 1, H, W) saliency mask
 

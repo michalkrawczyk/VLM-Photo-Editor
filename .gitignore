@@ -225,4 +225,13 @@ tests/e2e/artifacts/
 tests/e2e/models/
 
 # local inference model files (large, not redistributable — e.g. Ultralytics AGPL)
-infer_models/
+infer_models/**
+# ...but keep the small class-name manifests: yolo_onnx needs a sibling classes.txt
+# (one class name per line, 0-based line index == class id) to be usable.
+!infer_models/**/
+!infer_models/**/classes.txt
+# ...and the optional per-model manifest (name, backend, output layout).
+!infer_models/**/model.json
+
+# Claude Code local config (commands, skills, hooks) — kept on disk, not versioned
+.claude/

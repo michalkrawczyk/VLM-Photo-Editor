@@ -151,6 +151,40 @@ def test_add_learned_no_duplicates(tmp_path: Path) -> None:
     assert len(ps.load().learned) == 1
 
 
+def test_remove_learned_deletes_and_remembers(tmp_path: Path) -> None:
+    ps = PreferenceStore(tmp_path / "prefs.json")
+    keep = LearnedRule(description="keep rule", confidence=0.6)
+    drop = LearnedRule(description="Warmer  Tones", confidence=0.7)
+    ps.add_learned([keep, drop])
+    version = ps.load().version
+
+    ps.remove_learned(drop.rule_id)
+
+    prefs = ps.load()
+    assert [r.rule_id for r in prefs.learned] == [keep.rule_id]
+    assert prefs.dismissed == ["warmer tones"]
+    assert prefs.version != version
+
+
+@pytest.mark.parametrize("variant", ["warmer tones", "WARMER TONES", "  warmer   tones "])
+def test_add_learned_skips_dismissed_and_existing(tmp_path: Path, variant: str) -> None:
+    ps = PreferenceStore(tmp_path / "prefs.json")
+    first = LearnedRule(description="Warmer tones", confidence=0.7)
+    ps.add_learned([first])
+    ps.add_learned([LearnedRule(description=variant)])  # live duplicate
+    assert len(ps.load().learned) == 1
+
+    ps.remove_learned(first.rule_id)
+    ps.add_learned([LearnedRule(description=variant)])  # dismissed
+    assert ps.load().learned == []
+
+
+def test_preferences_load_without_dismissed_field(tmp_path: Path) -> None:
+    path = tmp_path / "prefs.json"
+    path.write_text('{"version": "v", "explicit": [], "learned": []}')
+    assert PreferenceStore(path).load().dismissed == []
+
+
 # ── Explicit beats learned in planner prompt ──────────────────────────────────
 
 
@@ -298,10 +332,12 @@ def test_aggregator_presets_cover_all_three_options() -> None:
         ("LFM2.5-1.2B (local)", "local"),
         ("claude-haiku-4.5", "anthropic"),
         ("gpt-4.1-mini", "openai"),
-        ("gpt-5.6-luna", "openai"),
-        ("gpt-5.6-luna (no reasoning)", "openai"),
-        ("gpt-5.6-terra", "openai"),
-        ("gpt-5.6-terra (no reasoning)", "openai"),
+        ("gpt-6-luna", "openai"),
+        ("gpt-6-luna (no reasoning)", "openai"),
+        ("gpt-6.1-sol", "openai"),
+        ("gpt-6.1-sol (no reasoning)", "openai"),
+        ("gpt-6-astra", "openai"),
+        ("gpt-6-astra (no reasoning)", "openai"),
     ],
 )
 def test_aggregator_preset_providers(preset_name: str, expected_provider: str) -> None:
@@ -312,10 +348,12 @@ def test_aggregator_preset_providers(preset_name: str, expected_provider: str) -
 @pytest.mark.parametrize(
     "preset_name,reasoning_effort,use_responses_api",
     [
-        ("gpt-5.6-luna", None, True),
-        ("gpt-5.6-luna (no reasoning)", "none", False),
-        ("gpt-5.6-terra", None, True),
-        ("gpt-5.6-terra (no reasoning)", "none", False),
+        ("gpt-6-luna", None, True),
+        ("gpt-6-luna (no reasoning)", "none", False),
+        ("gpt-6.1-sol", None, True),
+        ("gpt-6.1-sol (no reasoning)", "none", False),
+        ("gpt-6-astra", None, True),
+        ("gpt-6-astra (no reasoning)", "none", False),
     ],
 )
 def test_aggregator_openai_reasoning_variants(
