@@ -38,6 +38,9 @@ def _mock_critic_response(json_str: str) -> MagicMock:
             False,
         ),
         ("Sorry I cannot help", True, "parse error", True),  # fail-open on bad JSON
+        ('{"verdict": "pass", "reason": "natural"}', True, "natural", False),
+        ('{"verdict": "fail", "reason": "halo", "step_id": "s1"}', False, "halo", False),
+        ('{"verdict": "uncertain", "reason": "too dark"}', True, "too dark", True),
     ],
 )
 def test_critic_verdict(
@@ -69,6 +72,61 @@ def test_critic_fail_open_on_exception() -> None:
     assert verdict.passed is True
     assert "critic error" in verdict.reason
     assert verdict.uncertain is True
+
+
+def _check(ok: bool, step_id: str = "s1"):
+    from vlm_photo_editor.schema.report import StepCheck
+
+    return StepCheck(
+        step_id=step_id,
+        op_name="exposure",
+        metric="luma_p50",
+        expected="increase",
+        before=0.30,
+        after=0.25 if not ok else 0.45,
+        ok=ok,
+    )
+
+
+def test_critic_stage1_failure_skips_the_vlm_and_cites_numbers_and_step():
+    with patch("vlm_photo_editor.agents.critic.build_client") as mock_build:
+        verdict = Critic().verify(
+            _blank(), _blank(), "brighten", None, [_check(True), _check(False)]
+        )
+
+    mock_build.assert_not_called()
+    assert verdict.passed is False and verdict.uncertain is False
+    assert "luma_p50" in verdict.reason and "0.3 -> 0.25" in verdict.reason
+    assert verdict.failed_step_ids == ["s1"]
+
+
+def test_critic_stage2_prompt_carries_plan_and_measurements_and_reports_fault_step():
+    from vlm_photo_editor.schema.plan import HumanPlan, HumanStep
+
+    plan = HumanPlan(
+        diagnosis="Underexposed.",
+        steps=[
+            HumanStep(
+                step_id="00000000-0000-0000-0000-000000000001",
+                index=1,
+                title="Brighten",
+                why="Opens the frame",
+                op_names=["exposure"],
+                op_params=[{"ev": 1.0}],
+            )
+        ],
+    )
+    with patch("vlm_photo_editor.agents.critic.build_client") as mock_build:
+        client = MagicMock()
+        client.invoke.return_value = _mock_critic_response(
+            '{"verdict": "fail", "reason": "halo on the sky", "step_id": "abc"}'
+        )
+        mock_build.return_value = client
+        verdict = Critic().verify(_blank(), _blank(), "brighten", plan, [_check(True)])
+
+    text = client.invoke.call_args.args[0][1].content[0]["text"]
+    assert "Underexposed." in text and "Brighten" in text and "Measured (all passed)" in text
+    assert (verdict.passed, verdict.failed_step_ids) == (False, ["abc"])
 
 
 # ── CriticVerdict dataclass ────────────────────────────────────────────────────
@@ -158,12 +216,13 @@ def test_critic_presets_cover_local_and_cloud() -> None:
     "preset_name,expected_provider",
     [
         ("LFM2.5-VL-1.6B (local)", "local"),
-        ("claude-sonnet-4.6", "anthropic"),
-        ("gpt-4o", "openai"),
-        ("gpt-5.6-luna", "openai"),
-        ("gpt-5.6-luna (no reasoning)", "openai"),
-        ("gpt-5.6-terra", "openai"),
-        ("gpt-5.6-terra (no reasoning)", "openai"),
+        ("claude-sonnet-5.5", "anthropic"),
+        ("gpt-6-luna", "openai"),
+        ("gpt-6-luna (no reasoning)", "openai"),
+        ("gpt-6.1-sol", "openai"),
+        ("gpt-6.1-sol (no reasoning)", "openai"),
+        ("gpt-6-astra", "openai"),
+        ("gpt-6-astra (no reasoning)", "openai"),
     ],
 )
 def test_critic_preset_providers(preset_name: str, expected_provider: str) -> None:
@@ -174,10 +233,12 @@ def test_critic_preset_providers(preset_name: str, expected_provider: str) -> No
 @pytest.mark.parametrize(
     "preset_name,reasoning_effort,use_responses_api",
     [
-        ("gpt-5.6-luna", None, True),
-        ("gpt-5.6-luna (no reasoning)", "none", False),
-        ("gpt-5.6-terra", None, True),
-        ("gpt-5.6-terra (no reasoning)", "none", False),
+        ("gpt-6-luna", None, True),
+        ("gpt-6-luna (no reasoning)", "none", False),
+        ("gpt-6.1-sol", None, True),
+        ("gpt-6.1-sol (no reasoning)", "none", False),
+        ("gpt-6-astra", None, True),
+        ("gpt-6-astra (no reasoning)", "none", False),
     ],
 )
 def test_critic_openai_reasoning_variants(
