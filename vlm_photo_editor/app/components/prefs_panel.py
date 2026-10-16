@@ -67,7 +67,8 @@ def render(prefs: Preferences) -> None:
                         st.rerun()
                 with col_rm:
                     if st.button("Dismiss", key=f"dismiss_{rule.rule_id}"):
-                        _ps().remove_explicit(rule.rule_id)  # reuse remove logic
+                        _ps().remove_learned(rule.rule_id)
+                        state.set("prefs", _ps().load())
                         state.log_intent("dismiss_learned_rule", {"rule_id": rule.rule_id})
                         st.rerun()
 
