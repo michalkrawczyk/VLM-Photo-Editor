@@ -232,3 +232,6 @@ infer_models/**
 !infer_models/**/classes.txt
 # ...and the optional per-model manifest (name, backend, output layout).
 !infer_models/**/model.json
+
+# Claude Code local config (commands, skills, hooks) — kept on disk, not versioned
+.claude/
