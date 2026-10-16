@@ -172,11 +172,17 @@ def test_manual_mode_revise_then_approve():
         mock_compiler_cls.return_value.compile.return_value = _compile_result(op_graph)
 
         # First invoke → interrupt at await_human
-        graph.invoke(_initial_state(AcceptMode.MANUAL), thread)
+        from vlm_photo_editor.analysis import compute_report
+
+        report = compute_report(_make_container())
+        graph.invoke({**_initial_state(AcceptMode.MANUAL), "image_report": report}, thread)
 
         # Resume with feedback: routes to revise_plan → compile → await_human again
         graph.invoke(Command(resume={"approved": False, "feedback": "make it brighter"}), thread)
         mock_planner_cls.return_value.revise.assert_called_once()
+        # The measurements reach both the first plan and the revision.
+        assert mock_planner_cls.return_value.plan.call_args.kwargs["image_report"] == report
+        assert mock_planner_cls.return_value.revise.call_args.kwargs["image_report"] == report
 
     # Final approval
     with (

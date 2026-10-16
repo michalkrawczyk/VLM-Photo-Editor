@@ -29,6 +29,7 @@ class EditState(TypedDict):
     crop_retry_count: int  # incremented each time crop bounds validation fails
     crop_error: str | None  # set on crop-bounds failure, cleared on success
     detected_subject: Any | None  # DetectedSubject at runtime; from a Character Focus pre-pass
+    image_report: Any | None  # ImageReport at runtime; from analysis.compute_report
 
 
 # --- nodes ---
@@ -45,6 +46,7 @@ def _generate_plan(state: EditState) -> dict:
         framing_intent=state.get("framing_intent"),
         detected_subject=state.get("detected_subject"),
         genai_available=default_provider_available(),
+        image_report=state.get("image_report"),
     )
     return {"plan": plan, "feedback": None, "approved": False}
 
@@ -61,6 +63,8 @@ def _revise_plan(state: EditState) -> dict:
         framing_intent=state.get("framing_intent"),
         detected_subject=state.get("detected_subject"),
         genai_available=default_provider_available(),
+        image_report=state.get("image_report"),
+        original_intent=state.get("intent"),
     )
     return {"plan": plan, "feedback": None, "approved": False}
 

@@ -10,6 +10,12 @@ if TYPE_CHECKING:
     from vlm_photo_editor.schema.prefs import Preferences
 
 
+# Bump when the op vocabulary the planner is told about changes meaning (e.g. WB direction),
+# or the planner prompt/plan shape changes (v3: diagnosis, few-shot, order/minimal-edit rules;
+# v4: tone op; v5: saturation, sharpen ops), so plans cached under the old wording are not replayed.
+_KEY_VERSION = 5
+
+
 class PlanCache:
     def __init__(self, ttl: int = 3600) -> None:
         self._store: dict[str, tuple[HumanPlan, float]] = {}
@@ -29,7 +35,7 @@ class PlanCache:
         # part of the key — otherwise a second request on the same image+mode replays
         # the first plan.
         intent_hash = hashlib.sha256(intent.encode("utf-8")).hexdigest()[:16]
-        return f"{img_hash}:{mode}:{prefs_ver}:{framing_mode or '-'}:{intent_hash}"
+        return f"v{_KEY_VERSION}:{img_hash}:{mode}:{prefs_ver}:{framing_mode or '-'}:{intent_hash}"
 
     def get(self, key: str) -> HumanPlan | None:
         entry = self._store.get(key)

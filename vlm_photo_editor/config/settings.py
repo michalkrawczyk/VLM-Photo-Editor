@@ -64,6 +64,9 @@ class AppSettings:
     genai_model: str = "black-forest-labs/flux-fill-dev"
     # Retries after first crop-bounds failure (not counting initial attempt).
     max_crop_retries: int = 3
+    # Send the planner a MEASUREMENTS block (analysis.compute_report). Off = the pre-report
+    # prompt, kept as the A/B baseline for tests/eval.
+    image_report_enabled: bool = True
     # Character Focus (P13) detector model files — no auto-download. Each resolves
     # <NAME>_MODEL_PATH from env, then .env; yolo_onnx also falls back to the bundled
     # infer_models/yolo/yolo26s.onnx when present. See _path_setting().
