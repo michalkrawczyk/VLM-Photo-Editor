@@ -6,18 +6,6 @@ Audit date: 2026-06-16. All tests pass (122 passed, 2 skipped) but the issues be
 
 ## BUGS — cause crashes or incorrect behavior
 
-### B5: Uploaded image temp file never deleted
-**File:** [vlm_photo_editor/app/main.py:37-40](vlm_photo_editor/app/main.py#L37)
-
-```python
-with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-    tmp.write(file.getvalue())
-```
-
-`delete=False` and no cleanup path. Every upload leaks a temp file. Large RAWs (30–100 MB each) accumulate in `/tmp` until the OS sweeps them. Fix: track `tmp_path` in session state and delete on new upload or session end, or use `delete=True` + immediately call `load(tmp_path)` before the context manager exits.
-
----
-
 ### B7: Saved file and recipe written to `/tmp`
 **File:** [vlm_photo_editor/app/main.py:128-136](vlm_photo_editor/app/main.py#L128)
 
@@ -102,17 +90,6 @@ Fix: validate on construction (`Path(v).resolve()` and check it's within an allo
 ---
 
 ### Code Smells / Maintainability
-
-**S-C1: `Op.params: dict[str, Any]` — complete type erasure**
-**File:** [vlm_photo_editor/schema/ops.py:67](vlm_photo_editor/schema/ops.py#L67)
-
-Every `OpName` has a specific parameter contract (`crop` needs `left/top/right/bottom`; `rotate` needs `angle`; etc.), but `params` accepts any dict. No per-op discriminated union exists. Validation is deferred entirely to the executor, making the schema useless as a correctness gate.
-
-This is the single largest schema weakness: a mistyped param key (`"angl"` instead of `"angle"`) passes schema validation, passes compilation, and only fails at executor dispatch.
-
-Fix (incremental): define a `CropParams`, `RotateParams`, etc. `TypedDict` or `BaseModel` per op and add a `model_validator` that parses `params` against the correct model when `op_name` is known.
-
----
 
 **S-C3: `HumanPlan.mode` and `EditDelta.mode` are unvalidated bare strings**
 **Files:** [vlm_photo_editor/schema/plan.py:23](vlm_photo_editor/schema/plan.py#L23), [vlm_photo_editor/schema/prefs.py:35](vlm_photo_editor/schema/prefs.py#L35)
@@ -295,15 +272,6 @@ Fix: `_rotate` — work on the numpy array via `scipy.ndimage.rotate` (preserves
 
 ---
 
-**OPS-B2: `cv_backend` 16-bit inpaint and denoise round-trip destroys lower byte**
-**Files:** [vlm_photo_editor/ops/backends/cv_backend.py:30,44](vlm_photo_editor/ops/backends/cv_backend.py#L30), [cv_backend.py:63,77](vlm_photo_editor/ops/backends/cv_backend.py#L63)
-
-cv2.inpaint and cv2.fastNlMeansDenoising only support uint8. Both ops down-convert with `pixels >> 8`, process, then reconstruct with `<< 8`. The lower 8 bits of every processed pixel are permanently zeroed — a lossy transform silently applied to RAW images with no warning. For inpaint the loss is confined to the masked region; for denoise it affects the entire image.
-
-Fix: document as a known limitation; log a warning when `bit_depth == 16`; consider scikit-image `restoration.denoise_bilateral` (float32 path, no bit-depth drop) as an alternative denoise backend.
-
----
-
 ### Security & Data Integrity
 
 **OPS-D1: `genai_backend` forwards arbitrary `op.params` as `**extra_kwargs` to pipeline**
@@ -347,7 +315,7 @@ Fix: replace `.astype(np.float64)` with `.astype(np.float32)` in both functions.
 **OPS-O1: Two undocumented DENOISE implementations with different characteristics**
 **Files:** [vlm_photo_editor/ops/backends/pil_backend.py:105](vlm_photo_editor/ops/backends/pil_backend.py#L105), [vlm_photo_editor/ops/backends/cv_backend.py:58](vlm_photo_editor/ops/backends/cv_backend.py#L58)
 
-PIL uses `MedianFilter(size=3)`; CV uses `fastNlMeansDenoisingColored`. Which is used depends entirely on `op.backend`. No documentation of trade-offs or planner guidance on which to prefer. Both implementations handle 16-bit RAW poorly (see OPS-B1, OPS-B2), so neither is a safe default for RAW.
+PIL uses `MedianFilter(size=3)`; CV uses `fastNlMeansDenoisingColored`. Which is used depends entirely on `op.backend`. No documentation of trade-offs or planner guidance on which to prefer. Both implementations handle 16-bit RAW poorly (PIL: see OPS-B1; CV: 8-bit downconvert, now warned + documented per OPS-B2 fix), so neither is a safe default for RAW.
 
 ---
 
@@ -653,15 +621,6 @@ Fix: `confidence: float = Field(ge=0.0, le=1.0)`; type `source` as `CharacterFoc
 ---
 
 ### Security & Data Integrity
-
-**SC-S1: `required_params` checks presence but never rejects unknown keys — extra params still reach backends**
-**File:** [vlm_photo_editor/schema/op_catalog.py:20](vlm_photo_editor/schema/op_catalog.py#L20)
-
-`validate_op` only asserts required keys are present; any additional key in `op.params` passes through untouched into the executor, where `genai_backend` forwards unrecognised keys as `**extra_kwargs` (open issue OPS-D1) and the compiler itself injects `invert`/`focus_*`. Introducing the catalog was the natural point to make the param contract closed rather than open, and it stayed open — so a planner-controlled op can still smuggle keys that override internal pipeline arguments.
-
-Fix: add `optional_params: tuple[str, ...]` to `OpSpec` (plus the compiler-injected set) and have `validate_op` raise on any key outside `required ∪ optional`. This also subsumes the round-1 S-C1 concern with far less machinery than per-op param models.
-
----
 
 **SC-S2: `BatchImageRecord.plan` / `op_graph` erased to `Any` for a circular import that does not exist**
 **File:** [vlm_photo_editor/schema/batch.py:27-30](vlm_photo_editor/schema/batch.py#L27)
@@ -1208,7 +1167,7 @@ img.save(dest, format=fmt, **kwargs)
 Three gaps, in descending order of how likely they are:
 
 1. **Any existing file at `dest` is silently clobbered.** `img.save` has no exist check, and no caller passes one. `_do_save` ([main.py:491](vlm_photo_editor/app/main.py#L491)) always computes `f"{source.stem}_edited{dest_suffix}"`, so pressing Save twice — or running the same image through a second session — destroys the earlier edit with no prompt. That is not "writes a new file".
-2. **`source_path` is not the user's original in the app path.** Streamlit writes the upload to a temp file and loads *that* ([main.py:45](vlm_photo_editor/app/main.py#L45), see B5/B7), so the guard compares `dest` against a temp copy. The one path the principle exists to protect is the one path the guard does not cover.
+2. **`source_path` is not the user's original in the app path.** Streamlit writes the upload to a per-image scratch dir and loads *that* ([main.py:45](vlm_photo_editor/app/main.py#L45), see B7), so the guard compares `dest` against a temp copy. The one path the principle exists to protect is the one path the guard does not cover.
 3. **A hardlink defeats `resolve()`.** `resolve()` normalises symlinks and relative segments, but two hardlinks to one inode resolve to different paths, so writing through the second overwrites the original's bytes.
 
 Fix: refuse to write an existing `dest` unless an explicit `overwrite=True` is passed, and compare `os.stat().st_ino`/`st_dev` rather than resolved paths.
@@ -1257,6 +1216,8 @@ Mode `"I"` is 32-bit signed; the TIFF lands at 32 bits per sample — double the
 ### Security & Data Integrity
 
 **IO-D3: `save()` discards all image metadata — EXIF, XMP and IPTC are lost on every write**
+
+**Status 2026-10-05: EXIF fixed for Pillow saves** (`savers._exif_bytes`). Rebuilt through `Image.Exif`, not copied verbatim as suggested below: a verbatim copy keeps the IFD1 thumbnail, which shows viewers the *unedited* picture. Still open: XMP/IPTC, the 16-bit RGB `tifffile` path (no EXIF written), RAW (IO-D2).
 **File:** [vlm_photo_editor/imageio/savers.py:47-51](vlm_photo_editor/imageio/savers.py#L47)
 
 ```python
@@ -1727,33 +1688,6 @@ No new violations. `config/policy.py:26` (`_OP_SETS["ps_strict"] = set(OpName)`)
 
 ### Bugs & Correctness
 
-**CFG-B1: `ModelRegistry.set()` drops the provider when switching a role to a model from a different provider — the planner selector can silently build a mismatched client**
-**File:** [vlm_photo_editor/config/registry.py:78-83](vlm_photo_editor/config/registry.py#L78), consumed by [app/components/settings.py:190-219](vlm_photo_editor/app/components/settings.py#L219)
-
-```python
-def set(self, role: str, model: str) -> None:
-    existing = self._entries.get(role)
-    if existing is not None:
-        self._entries[role] = replace(existing, model_id=model)
-    else:
-        self._entries[role] = ModelEntry(model)
-```
-
-`set()` only ever changes `model_id`; `provider`/`loader`/`vllm_base_url` carry over from whatever entry already occupies the role. The "Model Selection" panel's `planner` dropdown — the only role not restricted to a same-provider preset list — lists models across all three providers (`AVAILABLE_MODELS` mixes Claude/GPT/local ids) and calls `registry.set(role, selected)` with just the picked id. The *correctly computed* provider from `provider_for_model()` is used only for the availability check ([settings.py:190-195](vlm_photo_editor/app/components/settings.py#L190)) and then discarded.
-
-Reproduced directly against `ModelRegistry`:
-```
->>> r = ModelRegistry()
->>> r.set("planner", "gpt-4o-mini")
->>> r.get_entry("planner")
-ModelEntry(model_id='gpt-4o-mini', provider='anthropic', ...)
-```
-The default `planner` entry is Anthropic; picking `gpt-4o-mini` in the UI leaves `provider='anthropic'`, so `build_client("planner")` constructs `ChatAnthropic(model="gpt-4o-mini", ...)` — an Anthropic client asked to serve an OpenAI model id, breaking every subsequent planner call. No test exercises this path: `test_model_registry_set_preserves_extra_fields` ([tests/unit/test_secrets.py:159](tests/unit/test_secrets.py#L159)) asserts the *same-provider* preservation is intentional, but nothing guards the cross-provider case its one real caller actually needs.
-
-Fix: have `set()` require/derive `provider` (e.g. accept a full `ModelEntry`, like `set_entry()` already does), or change the `app/components/settings.py` selector to call `registry.set_entry(role, ModelEntry(selected, provider=provider_for_model(selected), loader=...))` instead of `.set()`.
-
----
-
 **CFG-B3: `model_entry_available()` reports `provider="replicate"` entries as available; `build_client()` has no branch for them**
 **File:** [vlm_photo_editor/models/registry.py:70-82](vlm_photo_editor/models/registry.py#L70), [models/registry.py:151](vlm_photo_editor/models/registry.py#L151)
 
@@ -2048,7 +1982,6 @@ All issues across all batches, sorted by severity.
 |---|----------|------|-------|
 | SEC-D1 | High | settings.py:32 | `vlm_prompt_debug = True` by default — VLM prompts logged in production |
 | OPS-B1 | High | pil_backend.py:74,105 | `_rotate` and `_denoise` silently downgrade 16-bit RAW to 8-bit via `_to_pil_8bit` |
-| OPS-B2 | High | cv_backend.py:30,63 | 16-bit inpaint and denoise round-trip destroys lower byte permanently |
 | PLN-D1 | High | planner.py:161,187 | User-controlled preference strings and `user_instruction` injected verbatim into system prompt — prompt injection |
 | RCP-D1 | High | preferences/store.py:33 | `add_explicit()` persists description without sanitization — write path for PLN-D1 prompt injection, persists adversarial content across sessions |
 | PL-P2 | High | compiler.py:6-13 | Compiler imports `background.providers`, explicitly banned by `planner/AGENTS.md`; CLAUDE.md and AGENTS.md also disagree about `ops.validator` |
@@ -2061,11 +1994,8 @@ All issues across all batches, sorted by severity.
 | BG-B1 | High | composite.py:104,130-133 | Gaussian alpha tail (~0.0045) beyond the `3*feather` safe zone trips the RuntimeError on any realistic frame (verified 400x400) — genAI path dead outside small fixtures |
 | BG-B2 | High | replicate.py:49, openai_provider.py:38, google_provider.py:29, huggingface.py:41 | `np.array(img, dtype=uint16)` keeps 0-255 values in a 16-bit container (verified) — generated background renders near-black |
 | SR-P1 | High | secrets/redaction.py:20-21 | `install_redaction_filter()` adds the filter to the root *logger*, not a handler — every named logger in the app (verified) and all structlog output bypass redaction entirely; more fundamental than AGT-D2/SEC-C4 |
-| CFG-B1 | High | config/registry.py:78-83 | `ModelRegistry.set()` drops provider on cross-provider model swap (verified) — planner selector can build e.g. `ChatAnthropic(model="gpt-4o-mini")` |
-| B5 | Medium | main.py:37 | Uploaded image temp file never deleted |
 | B7 | Medium | main.py:128 | Saved file and recipe written to `/tmp` |
 | D6 | Medium | edit_flow.py:107 | Module-level `edit_graph` singleton breaks multi-worker deploy |
-| S-C1 | Medium | ops.py:67 | `Op.params: dict[str, Any]` — type erasure, no per-op validation |
 | S-D2 | Medium | recipe.py:11 | `GenAIOp.prompt`/`model` accept empty strings |
 | S-D3 | Medium | recipe.py:20 | `source_path` unvalidated bare string — replay path risk |
 | SEC-D2 | Medium | registry.py:95, settings.py:22 | Module-level singletons mutated across Streamlit sessions |
@@ -2077,7 +2007,7 @@ All issues across all batches, sorted by severity.
 | IO-D2 | Medium | loaders.py:33 | RAW loader discards ICC profile and EXIF; container fields always empty for RAW |
 | IO-P1 | Medium | loaders.py:52-57 | `_load_pil` converts every 16-bit PNG/TIFF to 8-bit RGB before the dtype test — the `uint16` branch is unreachable (verified) |
 | IO-P2 | Medium | savers.py:15-16,51 | Source guard is path-inequality only: existing `dest` silently clobbered, app path guards a temp copy, hardlink defeats `resolve()` |
-| IO-D3 | Medium | savers.py:47-51 | All EXIF/XMP/IPTC discarded on save — `container.metadata` is populated by 6 modules and read by none |
+| IO-D3 | Medium | savers.py:47-51 | (EXIF fixed 2026-10-05; XMP/IPTC/16-bit open) All EXIF/XMP/IPTC discarded on save — `container.metadata` is populated by 6 modules and read by none |
 | IO-B6 | Medium | savers.py:40 | Non-`uint8`/`uint16` dtypes silently wrapped mod 256 instead of rejected (verified: float32 300.7 → 44) |
 | OPS-D1 | Medium | genai_backend.py:23 | Arbitrary `op.params` forwarded as `**extra_kwargs` — injection risk |
 | PLN-D2 | Medium | compiler.py:48 | Caller-supplied `mode` never checked against `plan.mode` — full-mode permissions can apply to a background-mode plan |
@@ -2091,7 +2021,6 @@ All issues across all batches, sorted by severity.
 | SC-P3 | Medium | op_catalog.py:24, policy.py:26 | `ps_expressible` read only by the prompt builder; `_OP_SETS["ps_strict"]` allows every op — PS-strict parity is unenforced (Principle 8) |
 | SC-B2 | Medium | op_catalog.py:31-39 | `PARAM_BOUNDS` keyed by param name globally, not per op; `float()` in the validator raises `TypeError` past the compiler's `except ValueError` |
 | SC-B3 | Medium | op_catalog.py:120-140 | `mask`'s MEDIUM risk tier is dropped by `_collapse_mask_ops` — `mask` + `exposure` auto-approves as LOW |
-| SC-S1 | Medium | op_catalog.py:20 | `required_params` checks presence only; unknown keys still flow to backends as `**extra_kwargs` (compounds OPS-D1) |
 | SC-S2 | Medium | batch.py:27-30 | `plan` / `op_graph` erased to `Any` citing a circular import that does not exist — unvalidated op_graph can reach the executor |
 | PL-P4 | Medium | compiler.py:119-124, policy.py:26 | PS-strict enforced only as prompt prose; `compile()` never receives a policy mode and `ps_expressible` is never validated (extends SC-P3) |
 | PL-P5 | Medium | compiler.py:19-36,119,170 | `compile()` depends on a socket probe, a 5 s cache, provider credentials and mutable settings — contradicts planner/AGENTS.md "deterministic" invariant |
