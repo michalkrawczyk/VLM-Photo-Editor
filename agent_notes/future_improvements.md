@@ -152,3 +152,19 @@ out of scope, per the note below — still needs its own threat-model doc.
 **Extension point B — planner-authored scripts at plan time:** the LLM itself proposes a small novel script as part of a plan, executed as a MEDIUM/HIGH-risk op. Flagged explicitly as a materially bigger, security-sensitive feature — arbitrary AI-authored code execution — with no sandboxing infrastructure anywhere in this codebase today. This needs its own dedicated design/threat-model document (execution sandbox, resource limits, review/approval flow beyond the existing plan-approval UI, secrets isolation) before any implementation. Do not fold into the catalog work above.
 
 **Trigger for adoption:** once another op or two gets added and the scattered-table pattern causes a second sync bug, or before any custom-op work (extension point A or B) begins.
+
+---
+
+## Detector Models: Segmentation Heads & Multi-Output Graphs
+
+**Why deferred:** The pluggable Character Focus registry (`detection/registry.py`) decodes three YOLO output layouts (`yolov8`, `yolov5`, `nms`) via `model.json`. Instance-segmentation exports (extra mask-proto output) and multi-output graphs are not decoded; such models fail with a layout/class-count error.
+
+**Trigger for adoption:** A user model that is worth supporting and cannot be re-exported to one of the three layouts. Would add a `layout` value and, if masks are wanted, a mask path into the freeze region instead of a bbox.
+
+---
+
+## EXIF / XMP / IPTC on 16-bit TIFF and RAW
+
+**Why deferred:** only RAW input yields a 16-bit container, and `loaders._load_raw` sets `metadata={}` (rawpy exposes no EXIF). The 16-bit save path (`savers.py`, tifffile) also cannot write the Exif sub-IFD: tifffile's `extratags` documents "cannot be used to write IFD type tags", so ISO / exposure / lens tags would need a new dependency. ICC is now carried (`iccprofile=`); EXIF is not.
+
+**Trigger for adoption:** an approved dependency that can both read EXIF from RAW (e.g. exifread) and write it into a 16-bit TIFF, or a user need to keep capture metadata on RAW exports. Needs T3 (dep + `stack.md`).

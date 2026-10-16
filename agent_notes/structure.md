@@ -1,8 +1,8 @@
 # Project File Structure
 
-Modules: `config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `detection` · `background` · `agents` · `planner` · `recipe` · `preferences` · `pipeline` · `templates` · `app`
+Modules: `config` · `secrets` · `schema` · `imageio` · `models` · `ops` · `detection` · `analysis` · `background` · `agents` · `planner` · `recipe` · `preferences` · `pipeline` · `templates` · `app`
 
-For per-module invariants, import rules, and common mistakes see `AGENTS.md`, where present: `agents`, `secrets`, `ops`, `background`, `detection`, `imageio`, `schema`, `planner`, `app`. Not yet written for `config`, `pipeline`, `recipe`, `preferences`, `models`, `templates`.
+For per-module invariants, import rules, and common mistakes see `AGENTS.md`, where present: `agents`, `secrets`, `ops`, `background`, `detection`, `analysis`, `imageio`, `schema`, `planner`, `app`. Not yet written for `config`, `pipeline`, `recipe`, `preferences`, `models`, `templates`.
 
 ---
 
@@ -25,6 +25,7 @@ vlm_photo_editor/
 │   ├── ops.py
 │   ├── plan.py
 │   ├── recipe.py
+│   ├── report.py
 │   └── prefs.py
 │
 ├── imageio/
@@ -50,6 +51,11 @@ vlm_photo_editor/
 │   ├── mediapipe_backend.py
 │   ├── u2netp_backend.py
 │   └── yolo_onnx_backend.py
+│
+├── analysis/
+│   ├── __init__.py
+│   ├── exif.py
+│   └── image_report.py
 │
 ├── background/
 │   ├── __init__.py
