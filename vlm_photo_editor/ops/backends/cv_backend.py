@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.ops import Op, OpName
+
+logger = logging.getLogger(__name__)
 
 
 def apply(container: ImageContainer, op: Op) -> ImageContainer:
@@ -27,6 +31,11 @@ def apply_inpaint(container: ImageContainer, op: Op) -> ImageContainer:
 
     pixels = container.pixels
     is_16bit = container.bit_depth == 16
+    if is_16bit:
+        logger.warning(
+            "cv2.inpaint is uint8-only; the inpainted region of this 16-bit image is "
+            "reconstructed at 8-bit precision (masked region only)."
+        )
     pixels_8 = (pixels >> 8).astype(np.uint8) if is_16bit else pixels.astype(np.uint8)
 
     mask_bool = bbox_to_mask(container, op.bbox)
@@ -47,7 +56,9 @@ def apply_inpaint(container: ImageContainer, op: Op) -> ImageContainer:
     result = container.copy()
     if is_16bit:
         combined = pixels.copy()
-        combined[mask_bool] = (inpainted_8[mask_bool].astype(np.uint16)) << 8
+        # * 257 maps [0,255] evenly onto [0,65535] (255*257 == 65535); << 8 would
+        # zero the low byte, causing banding and a halved near-white range (OPS-B2).
+        combined[mask_bool] = inpainted_8[mask_bool].astype(np.uint16) * 257
         result.pixels = combined
     else:
         combined = pixels.copy()
@@ -101,6 +112,11 @@ def _denoise(container: ImageContainer, params: dict) -> ImageContainer:
 
     pixels = container.pixels
     if pixels.dtype == np.uint16:
+        logger.warning(
+            "cv2 denoise is uint8-only; this 16-bit image is denoised at 8-bit "
+            "precision across the whole frame. For lossless 16-bit denoise use the "
+            "PIL backend or a float denoiser."
+        )
         pixels_8 = (pixels >> 8).astype(np.uint8)
     else:
         pixels_8 = pixels.astype(np.uint8)
@@ -120,7 +136,9 @@ def _denoise(container: ImageContainer, params: dict) -> ImageContainer:
 
     result = container.copy()
     if container.bit_depth == 16:
-        result.pixels = denoised.astype(np.uint16) << 8
+        # * 257 spreads [0,255] across the full 16-bit range; << 8 would zero the
+        # low byte (banding, halved near-white range) — OPS-B2.
+        result.pixels = denoised.astype(np.uint16) * 257
     else:
         result.pixels = denoised
     return result
