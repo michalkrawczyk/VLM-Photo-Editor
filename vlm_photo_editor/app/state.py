@@ -12,7 +12,7 @@ _DEFAULTS: dict[str, Any] = {
     "current_file_index": 0,
     "batch_mode": False,
     "batch_records": None,
-    "batch_review_index": 0,
+    "batch_view_index": 0,  # image shown in the batch results viewer
     "batch_retry_id": None,
     "batch_apply_all": True,  # the mode checkbox; default ON = Mode A
     "batch_per_intents": {},  # Mode B: {filename: instruction}

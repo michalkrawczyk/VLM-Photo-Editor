@@ -28,8 +28,11 @@ def _to_display(img: DisplayImage) -> Image.Image:
     return img
 
 
-def render(before: DisplayImage = None, after: DisplayImage = None) -> None:
-    st.subheader("Preview")
+def render(
+    before: DisplayImage = None, after: DisplayImage = None, *, show_header: bool = True
+) -> None:
+    if show_header:
+        st.subheader("Preview")
     col_b, col_a = st.columns(2)
     with col_b:
         st.caption("Before")
