@@ -122,6 +122,13 @@ class ModelRegistry:
         return self._entries[role]
 
     def set(self, role: str, model: str) -> None:
+        """Change only ``model_id`` for ``role``.
+
+        ``provider``/``loader``/``vllm_base_url`` are preserved from the existing
+        entry. For a cross-provider swap (e.g. Anthropic default → an OpenAI id)
+        use :meth:`set_entry` with a fully populated ``ModelEntry`` — otherwise the
+        stale provider drives ``build_client`` and the wrong client is built (CFG-B1).
+        """
         existing = self._entries.get(role)
         if existing is not None:
             self._entries[role] = replace(existing, model_id=model)

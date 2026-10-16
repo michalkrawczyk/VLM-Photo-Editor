@@ -208,3 +208,17 @@ def test_model_registry_set_preserves_extra_fields():
     assert updated.vllm_base_url == "http://my-server:9000/v1"
     assert updated.max_images_per_call == 4
     assert updated.loader == "vllm"
+
+
+def test_model_registry_set_entry_swaps_provider_cross_provider():
+    """CFG-B1: a cross-provider swap must go through set_entry so the provider follows
+    the model id — set() alone would leave the stale provider and build the wrong client."""
+    from vlm_photo_editor.config.registry import ModelEntry
+
+    reg = ModelRegistry()
+    assert reg.get_entry("cost_router").provider == "local"
+
+    reg.set_entry("cost_router", ModelEntry("gpt-4o", provider="openai"))
+    updated = reg.get_entry("cost_router")
+    assert updated.model_id == "gpt-4o"
+    assert updated.provider == "openai"

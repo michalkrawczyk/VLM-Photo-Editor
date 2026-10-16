@@ -3,8 +3,9 @@
 Contract:
   - API key inputs: password type; key stored in OS keyring via SecretStore.set_in_keyring(),
     never written to session state.
-  - Model selectors: call get_registry().set(role, model) immediately so the next
-    Planner/build_client call picks up the change.
+  - Model selectors: call get_registry().set_entry(role, ModelEntry(...)) immediately
+    so the next Planner/build_client call picks up the change. Pass a full ModelEntry
+    (not .set(role, model_id)) so the provider stays consistent with the model id.
 """
 
 from __future__ import annotations
@@ -260,7 +261,17 @@ def render() -> None:
                         key=f"model_{role}",
                     )
                     if selected != current:
-                        registry.set(role, selected)
+                        # set_entry (not set) so the provider derived from the picked
+                        # id is kept — AVAILABLE_MODELS mixes providers and .set()
+                        # would leave the previous entry's provider in place (CFG-B1).
+                        registry.set_entry(
+                            role,
+                            ModelEntry(
+                                selected,
+                                provider=provider_for_model(selected),  # type: ignore[arg-type]
+                                loader="transformers" if selected in LOCAL_MODEL_IDS else None,
+                            ),
+                        )
                         model_roles[role] = selected
                         state.log_intent("model_selected", {"role": role, "model": selected})
                 else:
