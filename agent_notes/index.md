@@ -24,7 +24,6 @@ Read at task start: `commands.md`, `module_map.md`. Read on demand: everything e
 | `search_module_map.py` | Searches the map by name/type | See `module_map.md` |
 | `utility_scripts/run_checks.sh` | Done Gate T1/T3: `ruff`, `black`, `isort`, `pydocstyle`, `pytest` | Before claiming any code task done |
 | `utility_scripts/cleanup.sh` | End-of-session: `black`, `isort`, regenerate module map | End of a work session |
-| `utility_scripts/run_all_reviews.sh` | Loops `/batch_review` until `plans/plan_review.md` batches are all `[DONE]` | Running the batch plan-review loop |
 | `utility_scripts/validate_okf.py` | Checks bundle links resolve, `index.md` covers every file, CLAUDE.md's `agent_notes/` pointers exist | After adding, renaming, or removing a bundle file |
 
 Per-module code rules: `vlm_photo_editor/<module>/AGENTS.md`, where present (see `structure.md` for the current list) — not part of this bundle, but linked from it.
