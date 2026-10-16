@@ -32,13 +32,17 @@ AGGREGATOR_PRESETS: dict[str, ModelEntry] = {
     ),
     "claude-haiku-4.5": ModelEntry("claude-haiku-4-5-20251001"),
     "gpt-4.1-mini": ModelEntry("gpt-4.1-mini", provider="openai"),
-    "gpt-5.6-luna": ModelEntry("gpt-5.6-luna", provider="openai", use_responses_api=True),
-    "gpt-5.6-luna (no reasoning)": ModelEntry(
-        "gpt-5.6-luna", provider="openai", reasoning_effort="none"
+    "gpt-6-luna": ModelEntry("gpt-6-luna", provider="openai", use_responses_api=True),
+    "gpt-6-luna (no reasoning)": ModelEntry(
+        "gpt-6-luna", provider="openai", reasoning_effort="none"
     ),
-    "gpt-5.6-terra": ModelEntry("gpt-5.6-terra", provider="openai", use_responses_api=True),
-    "gpt-5.6-terra (no reasoning)": ModelEntry(
-        "gpt-5.6-terra", provider="openai", reasoning_effort="none"
+    "gpt-6.1-sol": ModelEntry("gpt-6.1-sol", provider="openai", use_responses_api=True),
+    "gpt-6.1-sol (no reasoning)": ModelEntry(
+        "gpt-6.1-sol", provider="openai", reasoning_effort="none"
+    ),
+    "gpt-6-astra": ModelEntry("gpt-6-astra", provider="openai", use_responses_api=True),
+    "gpt-6-astra (no reasoning)": ModelEntry(
+        "gpt-6-astra", provider="openai", reasoning_effort="none"
     ),
 }
 
@@ -50,38 +54,44 @@ CRITIC_PRESETS: dict[str, ModelEntry] = {
         hf_repo="LiquidAI/LFM2.5-VL-1.6B",
         loader="transformers",
     ),
-    "claude-sonnet-4.6": ModelEntry("claude-sonnet-4-6"),
-    "gpt-4o": ModelEntry("gpt-4o", provider="openai"),
-    "gpt-5.6-luna": ModelEntry("gpt-5.6-luna", provider="openai", use_responses_api=True),
-    "gpt-5.6-luna (no reasoning)": ModelEntry(
-        "gpt-5.6-luna", provider="openai", reasoning_effort="none"
+    "claude-sonnet-5.5": ModelEntry("claude-sonnet-5-5"),
+    "gpt-6-luna": ModelEntry("gpt-6-luna", provider="openai", use_responses_api=True),
+    "gpt-6-luna (no reasoning)": ModelEntry(
+        "gpt-6-luna", provider="openai", reasoning_effort="none"
     ),
-    "gpt-5.6-terra": ModelEntry("gpt-5.6-terra", provider="openai", use_responses_api=True),
-    "gpt-5.6-terra (no reasoning)": ModelEntry(
-        "gpt-5.6-terra", provider="openai", reasoning_effort="none"
+    "gpt-6.1-sol": ModelEntry("gpt-6.1-sol", provider="openai", use_responses_api=True),
+    "gpt-6.1-sol (no reasoning)": ModelEntry(
+        "gpt-6.1-sol", provider="openai", reasoning_effort="none"
+    ),
+    "gpt-6-astra": ModelEntry("gpt-6-astra", provider="openai", use_responses_api=True),
+    "gpt-6-astra (no reasoning)": ModelEntry(
+        "gpt-6-astra", provider="openai", reasoning_effort="none"
     ),
 }
 
 # Named presets for the planner role — shown in the UI model switcher.
 PLANNER_PRESETS: dict[str, ModelEntry] = {
-    "claude-sonnet-4.6": ModelEntry("claude-sonnet-4-6"),
+    "claude-sonnet-5.5": ModelEntry("claude-sonnet-5-5"),
     "claude-haiku-4.5": ModelEntry("claude-haiku-4-5-20251001"),
-    "claude-opus-4.8": ModelEntry("claude-opus-4-8"),
-    "gpt-4o": ModelEntry("gpt-4o", provider="openai"),
+    "claude-opus-5.5": ModelEntry("claude-opus-5-5"),
     "gpt-4.1-mini": ModelEntry("gpt-4.1-mini", provider="openai"),
-    "gpt-5.6-luna": ModelEntry("gpt-5.6-luna", provider="openai", use_responses_api=True),
-    "gpt-5.6-luna (no reasoning)": ModelEntry(
-        "gpt-5.6-luna", provider="openai", reasoning_effort="none"
+    "gpt-6-luna": ModelEntry("gpt-6-luna", provider="openai", use_responses_api=True),
+    "gpt-6-luna (no reasoning)": ModelEntry(
+        "gpt-6-luna", provider="openai", reasoning_effort="none"
     ),
-    "gpt-5.6-terra": ModelEntry("gpt-5.6-terra", provider="openai", use_responses_api=True),
-    "gpt-5.6-terra (no reasoning)": ModelEntry(
-        "gpt-5.6-terra", provider="openai", reasoning_effort="none"
+    "gpt-6.1-sol": ModelEntry("gpt-6.1-sol", provider="openai", use_responses_api=True),
+    "gpt-6.1-sol (no reasoning)": ModelEntry(
+        "gpt-6.1-sol", provider="openai", reasoning_effort="none"
+    ),
+    "gpt-6-astra": ModelEntry("gpt-6-astra", provider="openai", use_responses_api=True),
+    "gpt-6-astra (no reasoning)": ModelEntry(
+        "gpt-6-astra", provider="openai", reasoning_effort="none"
     ),
 }
 
 _DEFAULT_ENTRIES: dict[str, ModelEntry] = {
-    "planner": ModelEntry("claude-sonnet-4-6"),
-    "critic": ModelEntry("claude-sonnet-4-6"),
+    "planner": PLANNER_PRESETS["gpt-6.1-sol"],
+    "critic": CRITIC_PRESETS["gpt-6.1-sol"],
     # Default: local LFM2.5-1.2B — no API cost; switchable via AGGREGATOR_PRESETS in the UI.
     "preference_aggregator": AGGREGATOR_PRESETS["LFM2.5-1.2B (local)"],
     # Lightweight on-device router for P10 cost triage; no API key required.

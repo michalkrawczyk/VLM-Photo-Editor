@@ -166,15 +166,16 @@ def test_reframe_only_flow(
         cleanup_saved_output(saved)
 
 
-_GPT56_PRESET_SLUG = {
-    "gpt-5.6-terra": "gpt5_6-terra",
-    "gpt-5.6-terra (no reasoning)": "gpt5_6-terra-noreason",
-    "gpt-5.6-luna": "gpt5_6-luna",
+_GPT6_PRESET_SLUG = {
+    "gpt-6.1-sol": "gpt6_1-sol",
+    "gpt-6.1-sol (no reasoning)": "gpt6_1-sol-noreason",
+    "gpt-6-luna": "gpt6-luna",
+    "gpt-6-astra": "gpt6-astra",
 }
 
 
-@pytest.mark.parametrize("planner_preset", list(_GPT56_PRESET_SLUG))
-def test_character_focus_yolo_onnx_gpt56(
+@pytest.mark.parametrize("planner_preset", list(_GPT6_PRESET_SLUG))
+def test_character_focus_yolo_onnx_gpt6(
     page: Page,
     streamlit_server: str,
     sample_image_jpg: Path,
@@ -183,7 +184,7 @@ def test_character_focus_yolo_onnx_gpt56(
     screenshot_dir: Path,
     planner_preset: str,
 ) -> None:
-    """Character Focus via the ``yolo_onnx`` backend, planned by a gpt-5.6 preset.
+    """Character Focus via the ``yolo_onnx`` backend, planned by a gpt-6 preset.
 
     Reframe Only flow: a ``None`` detection degrades to a centre crop rather than
     blocking on a hand-drawn Region Selection (unlike Full Edit's mask step). Skips
@@ -197,7 +198,7 @@ def test_character_focus_yolo_onnx_gpt56(
             "(set E2E_YOLO_ONNX_MODEL_PATH or drop one at infer_models/yolo/yolo26s.onnx)"
         )
 
-    slug = _GPT56_PRESET_SLUG[planner_preset]
+    slug = _GPT6_PRESET_SLUG[planner_preset]
     page.goto(streamlit_server)
     upload_image(page, sample_image_jpg)
     snap(page, screenshot_dir, f"cf_yolo_{slug}_01_uploaded")

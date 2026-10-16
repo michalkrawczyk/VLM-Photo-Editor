@@ -92,7 +92,7 @@ def test_build_client_llamacpp_without_gguf_path_raises():
 def _openai_entry(**kw):
     from vlm_photo_editor.config.registry import ModelEntry
 
-    return ModelEntry(model_id="gpt-5.6-luna", provider="openai", **kw)
+    return ModelEntry(model_id="gpt-6-luna", provider="openai", **kw)
 
 
 @pytest.mark.parametrize(
@@ -122,7 +122,7 @@ def test_build_client_openai_passes_reasoning_knobs(entry_kw, expected_extra):
     ):
         build_client("planner")
 
-    mock_cls.assert_called_once_with(model="gpt-5.6-luna", api_key="sk-test", **expected_extra)
+    mock_cls.assert_called_once_with(model="gpt-6-luna", api_key="sk-test", **expected_extra)
 
 
 # ── C. available_loaders ──────────────────────────────────────────────────────

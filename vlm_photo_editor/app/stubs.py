@@ -77,11 +77,9 @@ MOCK_PREFS = Preferences(
 MODEL_ROLES = ["planner", "critic", "preference_aggregator"]
 
 AVAILABLE_MODELS = [
-    "claude-sonnet-4-6",
+    "claude-sonnet-5-5",
     "claude-haiku-4-5-20251001",
-    "claude-opus-4-8",
-    "gpt-4o",
-    "gpt-4o-mini",
+    "claude-opus-5-5",
     "gpt-4.1-mini",
     "LiquidAI/LFM2.5-1.2B-Instruct",
 ]
@@ -96,11 +94,9 @@ LOCAL_MODEL_IDS: frozenset[str] = frozenset(
 )
 
 _MODEL_ID_TO_PROVIDER: dict[str, str] = {
-    "claude-sonnet-4-6": "anthropic",
+    "claude-sonnet-5-5": "anthropic",
     "claude-haiku-4-5-20251001": "anthropic",
-    "claude-opus-4-8": "anthropic",
-    "gpt-4o": "openai",
-    "gpt-4o-mini": "openai",
+    "claude-opus-5-5": "anthropic",
     "gpt-4.1-mini": "openai",
     "LiquidAI/LFM2.5-1.2B-Instruct": "local",
 }

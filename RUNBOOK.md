@@ -26,7 +26,7 @@ pip install -e .
 Default `requirements.txt` includes `langchain-anthropic`. For other providers:
 
 ```bash
-pip install -r requirements-openai.txt       # GPT-4o
+pip install -r requirements-openai.txt       # OpenAI
 pip install -r requirements-huggingface.txt  # open-source models
 ```
 
@@ -83,7 +83,7 @@ Set secrets via **Space Settings → Repository secrets**:
 | Secret | Required for |
 |--------|-------------|
 | `ANTHROPIC_API_KEY` | Claude planner |
-| `OPENAI_API_KEY` | GPT-4o planner |
+| `OPENAI_API_KEY` | OpenAI planner |
 | `REPLICATE_API_TOKEN` | AI background replacement |
 
 ---
