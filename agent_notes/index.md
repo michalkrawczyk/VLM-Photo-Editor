@@ -16,7 +16,6 @@ Read at task start: `commands.md`, `module_map.md`. Read on demand: everything e
 | `description.md` | Full product description, target user, MVP acceptance criteria, out-of-scope | Scoping a feature; checking if something is out-of-scope |
 | `stack.md` | Tech stack choices with rationale + rejected alternatives per concern | Choosing a library; before adding a dependency |
 | `structure.md` | Module list + file tree for `vlm_photo_editor/` and `tests/` | Orientation; finding where a file should live |
-| `future_improvements.md` | Deferred features/libraries, why-deferred, adoption trigger | Considering something explicitly out of current scope |
 | `insights.md` | Cross-session observations/conclusions that improve future runs | Session end; before trusting a documented fact that looks stale |
 | `log.md` | Append-only dated history of bundle/convention changes | Rarely; write on a nontrivial change |
 | `generate_module_map.py` | Regenerates `agent_ignore/module_map.json` | See `module_map.md` |
