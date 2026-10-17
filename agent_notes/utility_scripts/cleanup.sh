@@ -11,6 +11,6 @@ echo "==> Running isort..."
 isort vlm_photo_editor/ tests/ --profile black
 
 echo "==> Regenerating module map..."
-python agent_notes/generate_module_map.py
+python agent_notes/utility_scripts/generate_module_map.py
 
 echo "==> Done."

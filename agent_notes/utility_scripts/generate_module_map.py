@@ -7,10 +7,10 @@ Output format: list of objects, each representing one .py file.
 
 Usage
 -----
-    python agent_notes/generate_module_map.py
-    python agent_notes/generate_module_map.py --root /path/to/project
-    python agent_notes/generate_module_map.py --dirs vlm_photo_editor tests
-    python agent_notes/generate_module_map.py --output agent_ignore/custom_map.json
+    python agent_notes/utility_scripts/generate_module_map.py
+    python agent_notes/utility_scripts/generate_module_map.py --root /path/to/project
+    python agent_notes/utility_scripts/generate_module_map.py --dirs vlm_photo_editor tests
+    python agent_notes/utility_scripts/generate_module_map.py --output agent_ignore/custom_map.json
 
 Filtering examples (Python)
 ---------------------------
@@ -418,7 +418,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         Parsed arguments.
     """
     script_dir = Path(__file__).parent
-    default_root = script_dir.parent
+    default_root = script_dir.parent.parent
     default_output = default_root / "agent_ignore" / "module_map.json"
 
     parser = argparse.ArgumentParser(
