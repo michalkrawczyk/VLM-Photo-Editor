@@ -16,12 +16,11 @@ Read at task start: `commands.md`, `module_map.md`. Read on demand: everything e
 | `description.md` | Full product description, target user, MVP acceptance criteria, out-of-scope | Scoping a feature; checking if something is out-of-scope |
 | `stack.md` | Tech stack choices with rationale + rejected alternatives per concern | Choosing a library; before adding a dependency |
 | `structure.md` | Module list + file tree for `vlm_photo_editor/` and `tests/` | Orientation; finding where a file should live |
-| `future_improvements.md` | Deferred features/libraries, why-deferred, adoption trigger | Considering something explicitly out of current scope |
 | `insights.md` | Cross-session observations/conclusions that improve future runs | Session end; before trusting a documented fact that looks stale |
 | `log.md` | Append-only dated history of bundle/convention changes | Rarely; write on a nontrivial change |
-| `generate_module_map.py` | Regenerates `agent_ignore/module_map.json` | See `module_map.md` |
-| `view_module_map.py` | Formats the map for reading | See `module_map.md` |
-| `search_module_map.py` | Searches the map by name/type | See `module_map.md` |
+| `utility_scripts/generate_module_map.py` | Regenerates `agent_ignore/module_map.json` | See `module_map.md` |
+| `utility_scripts/view_module_map.py` | Formats the map for reading | See `module_map.md` |
+| `utility_scripts/search_module_map.py` | Searches the map by name/type | See `module_map.md` |
 | `utility_scripts/run_checks.sh` | Done Gate T1/T3: `ruff`, `black`, `isort`, `pydocstyle`, `pytest` | Before claiming any code task done |
 | `utility_scripts/cleanup.sh` | End-of-session: `black`, `isort`, regenerate module map | End of a work session |
 | `utility_scripts/validate_okf.py` | Checks bundle links resolve, `index.md` covers every file, CLAUDE.md's `agent_notes/` pointers exist | After adding, renaming, or removing a bundle file |

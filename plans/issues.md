@@ -4,25 +4,6 @@ Audit date: 2026-06-16. All tests pass (122 passed, 2 skipped) but the issues be
 
 ---
 
-## BUGS — cause crashes or incorrect behavior
-
-### B7: Saved file and recipe written to `/tmp`
-**File:** [vlm_photo_editor/app/main.py:128-136](vlm_photo_editor/app/main.py#L128)
-
-```python
-source = edited.source_path   # == temp file path e.g. /tmp/tmpXXXXXX.jpg
-dest = source.parent / f"{source.stem}_edited{source.suffix}"
-# → /tmp/tmpXXXXXX_edited.jpg
-RecipeStore.save(recipe, directory=source.parent)
-# → /tmp/tmpXXXXXX.edit.json
-```
-
-Output is siloed in the system temp directory, not beside the original upload. The `/tmp` path shown in the success banner confuses users and files may be deleted by OS cleanup.
-
-Fix: determine an actual output directory (e.g., prompt user or use `~/Pictures/vlm_edits/`).
-
----
-
 ## DESIGN ISSUES — incomplete implementations or principle violations
 
 ### D6: `edit_graph` module-level singleton creates a LangGraph on import
@@ -36,29 +17,9 @@ edit_graph = build_edit_graph()
 
 ---
 
-### D7: Batch mode omits Composition, Character Focus, and plan-preview controls
-**File:** [vlm_photo_editor/app/main.py:388](vlm_photo_editor/app/main.py#L388) (`_render_batch_panel`), contrast [main.py:734](vlm_photo_editor/app/main.py#L734) and [main.py:751](vlm_photo_editor/app/main.py#L751)
-
-The single-image flow renders a Composition selectbox (`main.py:734-746`), a Character Focus selectbox (`main.py:751-766`), and a Generate/Regenerate Plan button (`main.py:778-791`). `_render_batch_panel` renders only the intent box, mode buttons, and Start button.
-
-`_render_batch_panel` *reads* `state.get("framing_mode")` at `main.py:486` to build a `FramingIntent`, but no batch widget sets it — a batch run silently inherits whatever value the single-image flow last left in session state, or the default. `character_focus` is never consulted for batch at all. There is no per-image plan preview before the run commits.
-
-Fix: render the Composition and Character Focus selectors in `_render_batch_panel` — extract the shared block from the single-image flow into a helper so the two paths can't drift — thread `character_focus` into the `run_batch` call, and gate "Start Batch Processing" behind an optional per-image plan preview (the deferred per-image preview strip follow-up under `plans/photo_editor_build_plan.md` P11 / P11.5).
-
-**Partially addressed** (two-mode batch change): Mode B now renders a per-image
-instruction box + thumbnail per image, and Mode A gates the run behind an explicit
-"Preview plan on first image" → approve → "Apply to all" preview loop. Character
-Focus *is* honoured for batch (`_detect_subject_if_enabled` runs per image at record
-load in both modes). Still open: a shared **Composition** selector and a shared
-**Character Focus** selector are not rendered in the batch panel — batch still
-inherits `framing_mode` / `character_focus` from whatever the single-image flow last
-left in session state.
-
----
-
 ## MISSING TESTS
 
-### T2: No test for revision error path in UI (uncovers B2)
+### T2: No test for the `_do_revise_plan` error branch in the UI (`app/main.py`)
 
 ---
 
@@ -69,7 +30,6 @@ Review date: 2026-06-26. Files: `schema/__init__.py`, `schema/ops.py`, `schema/p
 ---
 
 ### Security & Data Integrity
-
 
 **S-D2: `GenAIOp.prompt` and `GenAIOp.model` accept empty strings**
 **File:** [vlm_photo_editor/schema/recipe.py:11-14](vlm_photo_editor/schema/recipe.py#L11)
@@ -122,12 +82,12 @@ No significant issues at the schema layer (pure data classes, no hot paths).
 
 ### Over-engineered / Unjustified Functionality
 
-**S-O1: `Recipe.branch` field has no documented purpose**
-**File:** [vlm_photo_editor/schema/recipe.py:23](vlm_photo_editor/schema/recipe.py#L23)
+**S-O1: `Recipe.branch` is hardcoded `"main"` and never populated**
+**File:** [vlm_photo_editor/schema/recipe.py:30](vlm_photo_editor/schema/recipe.py#L30)
 
-`branch: str = "main"` is hardcoded to `"main"` everywhere and never populated with actual git branch info. If intended for reproducibility, it should be populated at recipe-creation time; if not, it adds noise to every saved sidecar.
+`RecipeStore.sidecar_path` uses the field for sidecar naming, so removing it is a contract change. As-is it is noise in every sidecar and carries no real branch info.
 
-Fix: remove the field or populate it from `subprocess.check_output(["git", "branch", "--show-current"])` at save time (guarded for non-git environments).
+Fix: either populate it at save time (guarded for non-git environments) or document it as a user-chosen variant label.
 
 ---
 
@@ -183,15 +143,13 @@ The underscore-prefix convention signals private. The `ModelRegistry` class shou
 
 ---
 
-**SEC-C4: Redaction filter not guaranteed to run before first log call**
+**SEC-C4: `install_redaction_filter()` runs first in `app/main.py`, but nothing enforces the ordering**
 
-`install_redaction_filter()` must be called at application startup. Nothing enforces that it is called before any log output. If a module logs at import time (before `main.py` starts), those records skip redaction.
+The call site (`app/main.py:8-10`) precedes the other app imports. Any other entry point (tests, scripts, a future CLI) that imports modules which log at import time still skips redaction. In practice superseded by SR-P1: the filter is attached to the root logger and does not fire for named loggers regardless of call order.
 
-Fix: call `install_redaction_filter()` at the top of `secrets/redaction.py` itself (module-level side effect), or document clearly that it must be the very first call in `app/main.py`.
+Fix: resolve SR-P1 first; then either call the installer from a package-level `__init__` or document it as the first call of every entry point.
 
 ---
-
-### Performance
 
 ### Over-engineered / Unjustified Functionality
 
@@ -211,7 +169,6 @@ Review date: 2026-06-26. Files: `imageio/container.py`, `imageio/loaders.py`, `i
 ---
 
 ### Bugs & Correctness
-
 
 **IO-B3: `bit_depth` and `pixels.dtype` can be inconsistent — field is not authoritative**
 **File:** [vlm_photo_editor/imageio/container.py:11-13](vlm_photo_editor/imageio/container.py#L11)
@@ -258,64 +215,27 @@ No significant issues. `np.array(img)` in `_load_pil` necessarily copies the buf
 ## Batch 4 Review — Ops Execution
 
 Review date: 2026-06-26. Files: `ops/executor.py`, `ops/mask.py`, `ops/validator.py`, `ops/backends/cv_backend.py`, `ops/backends/pil_backend.py`, `ops/backends/genai_backend.py`, `ops/backends/stubs.py`.
-
----
-
-### Bugs & Correctness
-
-**OPS-B1: `pil_backend._rotate` and `pil_backend._denoise` silently downgrade 16-bit RAW to 8-bit**
-**Files:** [vlm_photo_editor/ops/backends/pil_backend.py:74-76](vlm_photo_editor/ops/backends/pil_backend.py#L74), [pil_backend.py:105-108](vlm_photo_editor/ops/backends/pil_backend.py#L105)
-
-Both ops call `_to_pil_8bit(container)` and return via `_from_pil()`, which hardcodes `bit_depth=8`. A 16-bit RAW image rotated or denoised through the PIL backend permanently loses its precision with no warning or error. By contrast, `_crop`, `_white_balance`, `_exposure`, and `_frame` all work on numpy arrays directly and preserve bit depth.
-
-Fix: `_rotate` — work on the numpy array via `scipy.ndimage.rotate` (preserves dtype), or use PIL's `I;16` mode for 16-bit TIFFs. `_denoise` — route 16-bit inputs through cv_backend, or use a pure-numpy bilateral approximation.
-
 ---
 
 ### Security & Data Integrity
 
-**OPS-D1: `genai_backend` forwards arbitrary `op.params` as `**extra_kwargs` to pipeline**
-**File:** [vlm_photo_editor/ops/backends/genai_backend.py:23-25](vlm_photo_editor/ops/backends/genai_backend.py#L23)
+**OPS-D1: `genai_backend` forwards unknown `op.params` keys as `**extra_kwargs` to the pipeline**
+**File:** [vlm_photo_editor/ops/backends/genai_backend.py](vlm_photo_editor/ops/backends/genai_backend.py) (`extra_kwargs` comprehension)
 
-```python
-extra_kwargs = {k: v for k, v in op.params.items() if k not in _KNOWN_OP_KEYS}
-result, genai_op, _ = run_background_pipeline(..., **extra_kwargs)
-```
+`validate_op` now rejects keys the catalog does not declare, which covers planner-generated ops. A replayed or hand-edited recipe is still forwarded verbatim, and `_KNOWN_OP_KEYS` still needs manual sync with the catalog.
 
-Any key in `op.params` not in `_KNOWN_OP_KEYS` is forwarded directly to `run_background_pipeline`. An untrusted or planner-generated op with unexpected keys (e.g. `"mask"`) can override internal pipeline arguments without triggering validation. The filter is also fragile: `_KNOWN_OP_KEYS` must be manually synchronised with `_REQUIRED_PARAMS` in validator.py.
-
-Fix: raise `ValueError` for any key not in an explicit allowlist of passthrough kwargs rather than forwarding unknowns silently.
+Fix: raise `ValueError` for any key outside an explicit passthrough allowlist.
 
 ---
-
-### Code Smells / Maintainability
-
-**OPS-C2: `_from_pil` hardcodes `bit_depth=8` — root cause of silent bit-depth loss**
-**File:** [vlm_photo_editor/ops/backends/pil_backend.py:41-49](vlm_photo_editor/ops/backends/pil_backend.py#L41)
-
-The function name does not signal that it permanently downgrades precision. Any future PIL op added that calls `_from_pil` will silently discard 16-bit data. The coupling between `_to_pil_8bit` and `_from_pil` is invisible at the call site.
-
-Fix: rename to `_from_pil_8bit` to make the loss explicit at every call site.
-
----
-
-### Performance
-
-**OPS-P1: `_white_balance` and `_exposure` allocate float64 unnecessarily**
-**File:** [vlm_photo_editor/ops/backends/pil_backend.py:86](vlm_photo_editor/ops/backends/pil_backend.py#L86), [pil_backend.py:99](vlm_photo_editor/ops/backends/pil_backend.py#L99)
-
-`.astype(np.float64)` allocates a full-resolution float64 array. For a 24 MP RAW image at 16-bit, this is ~576 MB peak vs ~288 MB for float32. Float32 (7 significant digits) is more than sufficient for EV and white-balance adjustments applied to 16-bit (5 decimal digits of precision).
-
-Fix: replace `.astype(np.float64)` with `.astype(np.float32)` in both functions.
 
 ---
 
 ### Over-engineered / Unjustified
 
-**OPS-O1: Two undocumented DENOISE implementations with different characteristics**
-**Files:** [vlm_photo_editor/ops/backends/pil_backend.py:105](vlm_photo_editor/ops/backends/pil_backend.py#L105), [vlm_photo_editor/ops/backends/cv_backend.py:58](vlm_photo_editor/ops/backends/cv_backend.py#L58)
+**OPS-O1: Two DENOISE implementations with no planner guidance on which to prefer**
+**Files:** [vlm_photo_editor/ops/backends/pil_backend.py](vlm_photo_editor/ops/backends/pil_backend.py) (`_denoise`, 3×3 median, native dtype), [vlm_photo_editor/ops/backends/cv_backend.py](vlm_photo_editor/ops/backends/cv_backend.py) (`fastNlMeansDenoisingColored`, 8-bit downconvert with warning)
 
-PIL uses `MedianFilter(size=3)`; CV uses `fastNlMeansDenoisingColored`. Which is used depends entirely on `op.backend`. No documentation of trade-offs or planner guidance on which to prefer. Both implementations handle 16-bit RAW poorly (PIL: see OPS-B1; CV: 8-bit downconvert, now warned + documented per OPS-B2 fix), so neither is a safe default for RAW.
+Which one runs depends entirely on `op.backend`; the `denoise` catalog spec carries no trade-off guidance. The PIL path is now 16-bit safe, the CV path is not.
 
 ---
 
@@ -363,24 +283,6 @@ Fix: add `if mode != plan.mode: raise CompilerError(...)` or derive the mode exc
 ## Batch 6 Review — Agents
 
 Review date: 2026-06-27. Files: `agents/planner.py`, `agents/critic.py`, `agents/edit_flow.py`, `agents/aggregator.py`.
-
----
-
-### Bugs & Correctness
-
-**AGT-B2: `Planner._encode_image` min-max normalization misrepresents actual exposure to VLM**
-**File:** [vlm_photo_editor/agents/planner.py:122-124](vlm_photo_editor/agents/planner.py#L122)
-
-```python
-lo, hi = int(pixels.min()), int(pixels.max())
-span = hi - lo or 1
-pixels = ((pixels.astype(np.float32) - lo) / span * 255).round().astype(np.uint8)
-```
-
-Min-max maps the darkest pixel to 0 and the brightest to 255 regardless of actual exposure. A correctly exposed dark scene (values 100–200) becomes full-contrast in the VLM's view. The model sees a different tonal range than the user does, making brightness-related intents unreliable.
-
-Fix: divide by `np.iinfo(pixels.dtype).max` to preserve relative luminance.
-
 ---
 
 ### Security & Data Integrity
@@ -448,9 +350,6 @@ CLAUDE.md Principle 4 states "Nothing executes until user explicitly approves." 
 **File:** [vlm_photo_editor/agents/critic.py:48](vlm_photo_editor/agents/critic.py#L48)
 
 In a multi-step edit flow, the same before-image is encoded repeatedly. For large RAW images this is ~100 ms of redundant JPEG encoding per step. Caching the before-image base64 at the session level would eliminate this in multi-step flows.
-
----
-
 ---
 
 ## Batch 7 Review — Recipe & Preferences
@@ -514,13 +413,6 @@ Fix: use `fcntl.flock(f, fcntl.LOCK_EX)` immediately after opening, or serialize
 
 ### Code Smells / Maintainability
 
-**RCP-C1: `AGGREGATE_AFTER = 5` constant defined in wrong module**
-**File:** [vlm_photo_editor/preferences/store.py:17](vlm_photo_editor/preferences/store.py#L17)
-
-This threshold controls when the aggregator is triggered, but nothing inside `store.py` reads it. The `agents/aggregator.py` module is the natural owner. The constant appears unused within `store.py` — it was presumably copied here for the aggregator to import, but storing a policy constant in the store layer inverts the dependency direction.
-
-Fix: move to `agents/aggregator.py` or a shared `preferences/constants.py`.
-
 ---
 
 **RCP-C2: `write_xmp` / `read_xmp` stubs reachable from public API**
@@ -538,18 +430,6 @@ Fix: add `# TODO(P10): not implemented` inline to clarify deferral, or exclude t
 `add_explicit`, `remove_explicit`, `toggle_rule`, `add_learned`, and `approve_learned` all follow: `load()` → mutate → `prefs.version = uuid4()` → `save()`. Five copies of the same 3-step pattern. Adding a new mutation method requires remembering all three steps; omitting `save()` is a silent data loss bug with no static check to catch it.
 
 Fix: extract a `_mutate(fn: Callable[[Preferences], None]) -> None` helper.
-
----
-
-### Performance
-
-**RCP-P1: `PreferenceStore` reads and writes the full JSON file on every single mutation**
-**File:** [vlm_photo_editor/preferences/store.py:33-79](vlm_photo_editor/preferences/store.py#L33)
-
-Five mutation methods each do a full file read and full file write. For a user with many learned rules, each `add_learned` call rewrites the entire preferences JSON. In the aggregator's batch-update path (adding multiple rules at once), this is O(n) rewrites for what could be a single write.
-
-Fix: in `add_learned` (the only bulk-update caller), accept the entire batch and write once; already done for the list at line 62 — the overhead is one read + one write regardless of batch size. The real fix is ensuring all callers batch mutations rather than calling `add_learned([one_rule])` in a loop.
-
 ---
 
 # Review Round 2 — `plans/plan_review.md` batching (13 batches)
@@ -577,28 +457,27 @@ Principle 8 states the planner "may only propose ops the executor can run under 
 
 ---
 
-**SC-P4: `schema/AGENTS.md` describes a contract the code no longer matches**
-**File:** [vlm_photo_editor/schema/AGENTS.md:14-23](vlm_photo_editor/schema/AGENTS.md#L14)
+**SC-P4: `schema/AGENTS.md` still drifts from the code**
+**File:** [vlm_photo_editor/schema/AGENTS.md](vlm_photo_editor/schema/AGENTS.md)
 
-Per-module AGENTS.md is the documented pre-edit reference for this layer, and Principle 7 is "contracts before behavior". Current drift:
+Per-module AGENTS.md is the documented pre-edit reference for this layer, and Principle 7 is "contracts before behavior". Remaining drift (the `batch.py` row has since been added):
 
-- `batch.py` has no row in the file table at all (`BatchImageRecord`, `ImageStatus` undocumented).
 - prefs.py row lists `PrefsVersion` — no such type exists anywhere in the repo.
 - ops.py row omits `BoundingBox`, `FramingMode`, `FramingIntent`, `AcceptMode`, `CharacterFocusBackend` — including `AcceptMode`, which is the auto-approval contract.
-- op_catalog.py row says the registry holds "per-op required params, **bounds**" — `PARAM_BOUNDS` is a flat module-level dict keyed by param *name*, shared across all ops, not part of `OpSpec` (see SC-B2).
+- op_catalog.py row says the registry holds "per-op required params, **bounds**" — `PARAM_BOUNDS` is a flat module-level dict keyed by param *name* (see SC-B2).
 
 ---
 
 ### Bugs & Correctness
 
 **SC-B2: `PARAM_BOUNDS` is keyed by param name globally, not per op**
-**File:** [vlm_photo_editor/schema/op_catalog.py:31-39](vlm_photo_editor/schema/op_catalog.py#L31)
+**File:** [vlm_photo_editor/schema/op_catalog.py:36](vlm_photo_editor/schema/op_catalog.py#L36)
 
-The comment states the sharing is deliberate, but it defeats the module's stated purpose ("single source of truth **per op**"). `radius: (0.5, 50.0)` exists solely for `region_edit`'s Gaussian blur; the validator applies it to every op that happens to carry a `radius` key ([validator.py:20-24](vlm_photo_editor/ops/validator.py#L20)). The first op that legitimately needs a different range for a same-named param has no way to express it, and the conflict surfaces as a confusing bounds error, not a registration error.
+The comment states the sharing is deliberate, but it defeats the module's stated purpose ("single source of truth **per op**"). `radius: (0.5, 50.0)` exists solely for `region_edit`'s Gaussian blur; the validator applies it to every op that carries a `radius` key. The first op that legitimately needs a different range for a same-named param has no way to express it, and the conflict surfaces as a confusing bounds error, not a registration error.
 
-Related defect in the consumer, same code path: `float(op.params[key])` raises `TypeError` (not `ValueError`) when a param is a list or dict. `Compiler.compile` wraps validation in `except ValueError` ([compiler.py:216](vlm_photo_editor/planner/compiler.py#L216)), so `{"ev": [1, 2]}` from the VLM escapes as an uncaught `TypeError` instead of a `CompilerError`. Also `float(True) == 1.0`, so `{"ev": true}` validates. (Fix belongs in Batch 3; recorded here because the bounds table is the trigger.)
+(The consumer-side `TypeError` / `bool` defect is resolved: `validator._as_number` rejects non-numeric and bool values.)
 
-Fix: move bounds into `OpSpec` as `param_bounds: tuple[tuple[str, float, float], ...]`; in the validator, reject non-`(int, float)` param values explicitly before coercing, and exclude `bool`.
+Fix: move bounds into `OpSpec` as `param_bounds: tuple[tuple[str, float, float], ...]`.
 
 ---
 
@@ -665,7 +544,7 @@ Fix: `from vlm_photo_editor.ops.constants import INPAINT_OPS` in the compiler, a
 **SC-C4: schema layer now owns LLM prompt prose**
 **File:** [vlm_photo_editor/schema/op_catalog.py:25](vlm_photo_editor/schema/op_catalog.py#L25)
 
-`doc_lines` puts pre-formatted, indentation-sensitive prompt text (down to the two-space prefixes) inside the Pydantic contract layer, and [test_op_catalog.py:104](tests/unit/test_op_catalog.py#L104) pins the assembled prompt byte-for-byte against a fixture. Consequence: rewording one line of planner guidance is now a change to `schema/` plus a fixture regeneration. The centralisation is the right call (it is what `future_improvements.md` asked for) — but the coupling should be acknowledged in AGENTS.md, and the byte-identical test is a migration guard that should be retired once the port is settled, not a permanent contract.
+`doc_lines` puts pre-formatted, indentation-sensitive prompt text (down to the two-space prefixes) inside the Pydantic contract layer, and [test_op_catalog.py:104](tests/unit/test_op_catalog.py#L104) pins the assembled prompt byte-for-byte against a fixture. Consequence: rewording one line of planner guidance is now a change to `schema/` plus a fixture regeneration. The centralisation is the right call (it is what `plans/future_improvements.md` asked for) — but the coupling should be acknowledged in AGENTS.md, and the byte-identical test is a migration guard that should be retired once the port is settled, not a permanent contract.
 
 ---
 
@@ -700,7 +579,7 @@ No material issues — pure data classes, no hot paths. Minor: `all_specs()` all
 
 All ten specs are registered by ten consecutive `register_op(...)` calls at the bottom of the same module. The duplicate guard and the `replace` escape hatch protect against a scenario that cannot occur, and `replace=True` has exactly one caller: [test_register_op_replace_allows_overwrite](tests/unit/test_op_catalog.py#L33), which must restore the original spec in a `finally` block to avoid poisoning global state for other tests.
 
-The mutability is also illusory: `ops/constants.py` and `compiler.py` snapshot `INPAINT_OPS` / `_SIZE_CHANGING_OPS` from `all_specs()` at *import* time, so an op registered later is invisible to both — the system would be silently inconsistent rather than extended. `future_improvements.md` cites this as "Extension Point A", but no caller outside tests exists.
+The mutability is also illusory: `ops/constants.py` and `compiler.py` snapshot `INPAINT_OPS` / `_SIZE_CHANGING_OPS` from `all_specs()` at *import* time, so an op registered later is invisible to both — the system would be silently inconsistent rather than extended. `plans/future_improvements.md` cites this as the shipped "Extension Point A", but no caller outside tests exists.
 
 Fix: replace with a module-level dict literal `_CATALOG: dict[OpName, OpSpec] = {OpName.CROP: OpSpec(...), ...}` and keep `get_spec`/`all_specs`. Reintroduce `register_op` when a real second registration site appears, and at that point make the derived sets lazy so registration actually works.
 
@@ -822,23 +701,6 @@ Fix: `state.get("op_graph")`, and include `crop_error` in the interrupt payload 
 The spread puts `invert: True` last, so an explicit `invert: False` from the plan is discarded with no error and no log line. The plan the user approved says "apply inside this region"; the compiled op does the opposite. Principle 3 ("compiled ops link back by stable step-ID; never silently rewritten") is about IDs, but the same reasoning applies to semantics-inverting param rewrites — this one is invisible in the plan view.
 
 Fix: raise `CompilerError` if `nxt.params.get("invert") is False`, or record the override on the op so `plan_view` can surface it.
-
----
-
-**PL-B5: crop-retry budget is off by one**
-**File:** [vlm_photo_editor/agents/edit_flow.py:76,113](vlm_photo_editor/agents/edit_flow.py#L76)
-
-`_compile` increments `crop_retry_count` *before* `_route_after_compile` compares it with `<=`:
-
-```python
-"crop_retry_count": state.get("crop_retry_count", 0) + 1,
-...
-if state.get("crop_retry_count", 0) <= get_settings().max_crop_retries:
-    return "revise_plan"
-```
-
-With `max_crop_retries = 3` the flow performs 4 revisions, i.e. 4 extra VLM calls, before surfacing the error. Use `<` or compare before incrementing.
-
 ---
 
 **PL-B6: `templates/framing.py` dict lookups raise `KeyError` for any new `FramingMode`**
@@ -963,21 +825,12 @@ Fix: reject `params.get("invert")` in `validate_op` for ops whose bbox class is 
 
 ---
 
-**OE-P3: a GENAI op with no bbox regenerates the whole image — subject pixels are not frozen**
+**OE-P3: `genai_backend` falls back to an all-True fill mask when `op.bbox` is `None`**
 **File:** [vlm_photo_editor/ops/backends/genai_backend.py:17-20](vlm_photo_editor/ops/backends/genai_backend.py#L17)
 
-```python
-if op.bbox is not None:
-    mask = bbox_to_mask(container, op.bbox)
-else:
-    mask = np.ones((container.height, container.width), dtype=bool)
-```
+`background_replace` now has `requires_bbox=True` and `Executor.apply` enforces it, so the compile path cannot reach the fallback. The backend itself still defaults to `np.ones(...)` — regenerating the whole frame, subject included (Principle 6) — if handed a bbox-less op, e.g. from a replayed or hand-edited recipe.
 
-`mask` is the *fill* region for the whole background pipeline — `composite.color_match` and the blenders write generated pixels wherever it is `True` and restore the original outside it ([composite.py:33-60](vlm_photo_editor/background/composite.py#L33)). An all-`True` mask therefore means "replace every pixel with model output", i.e. the subject is regenerated too.
-
-Principle 6 states subject pixels are frozen during background generation and only the masked region changes. The fallback here chooses the maximally destructive default for the one op class where the principle applies. It is also the opposite of the `apply_inpaint`/`apply_blur` convention in the sibling backend, which raise on a missing bbox.
-
-Fix: `raise ValueError` when a GENAI op has no bbox (subsumed by the `requires_bbox` fix in OE-P1). A genuine full-frame regeneration should be an explicit bbox covering the frame, recorded in the recipe, not an implicit fallback.
+Fix: `raise ValueError` in the backend when `op.bbox is None`.
 
 ---
 
@@ -1017,10 +870,10 @@ Fix: remap `left/top/right/bottom` in `_remap_for_origin` exactly as `bbox` is (
 ---
 
 **OE-B5: float→int truncation and unchecked `astype` in `cv_backend`**
-**Files:** [vlm_photo_editor/ops/backends/cv_backend.py:87-89](vlm_photo_editor/ops/backends/cv_backend.py#L87), [cv_backend.py:104-106](vlm_photo_editor/ops/backends/cv_backend.py#L104)
+**Files:** [vlm_photo_editor/ops/backends/cv_backend.py](vlm_photo_editor/ops/backends/cv_backend.py) (`apply_blur`, `_denoise`)
 
 - `cv2.GaussianBlur(...).astype(pixels.dtype)` truncates toward zero instead of rounding — a uniform ~0.5-level darkening across the blurred region. `np.rint(...)` before the cast fixes it.
-- `_denoise`'s `else` branch is `pixels.astype(np.uint8)`, which wraps silently for any dtype that is neither `uint8` nor `uint16` (e.g. a float container from a future backend). `_to_pil_8bit` has the identical shape. Prefer an explicit dtype check that raises.
+- `_denoise`'s `else` branch is `pixels.astype(np.uint8)`, which wraps silently for any dtype that is neither `uint8` nor `uint16`. Prefer an explicit dtype check that raises.
 
 ---
 
@@ -1105,8 +958,6 @@ Fix (incremental, no API change): slice the bbox out, run the backend on the sub
 
 **OE-PF2: full-image comparison on every inpaint** — the assertion in OE-C3 reads both arrays end-to-end for a property that holds by construction.
 
-Round-1 OPS-P1 (`float64` in `_white_balance`/`_exposure`, [pil_backend.py:87,100](vlm_photo_editor/ops/backends/pil_backend.py#L87)) is still open and unchanged.
-
 ---
 
 ### Over-engineered / Unjustified Functionality
@@ -1167,7 +1018,7 @@ img.save(dest, format=fmt, **kwargs)
 Three gaps, in descending order of how likely they are:
 
 1. **Any existing file at `dest` is silently clobbered.** `img.save` has no exist check, and no caller passes one. `_do_save` ([main.py:491](vlm_photo_editor/app/main.py#L491)) always computes `f"{source.stem}_edited{dest_suffix}"`, so pressing Save twice — or running the same image through a second session — destroys the earlier edit with no prompt. That is not "writes a new file".
-2. **`source_path` is not the user's original in the app path.** Streamlit writes the upload to a per-image scratch dir and loads *that* ([main.py:45](vlm_photo_editor/app/main.py#L45), see B7), so the guard compares `dest` against a temp copy. The one path the principle exists to protect is the one path the guard does not cover.
+2. **`source_path` is not the user's original in the app path.** Streamlit writes the upload to a per-image scratch dir and loads *that* ([main.py:45](vlm_photo_editor/app/main.py#L45), see `settings.output_dir`), so the guard compares `dest` against a temp copy. The one path the principle exists to protect is the one path the guard does not cover.
 3. **A hardlink defeats `resolve()`.** `resolve()` normalises symlinks and relative segments, but two hardlinks to one inode resolve to different paths, so writing through the second overwrites the original's bytes.
 
 Fix: refuse to write an existing `dest` unless an explicit `overwrite=True` is passed, and compare `os.stat().st_ino`/`st_dev` rather than resolved paths.
@@ -1196,7 +1047,7 @@ img = Image.fromarray(pixels.astype(np.uint8) if pixels.dtype != np.uint8 else p
 
 The `else` branch is reached by everything that is not `uint16` — `float32`, `float64`, `int16`, `bool`. `astype(np.uint8)` truncates toward zero and wraps modulo 256 with no warning. Verified: a `float32` array of `300.7` saves as `44`.
 
-Backends do float math internally (`_white_balance`/`_exposure` at float64, cv blur/denoise producing floats — see OPS-P1, OE-B5); any path that forgets the cast back produces a plausible-looking image with wrapped pixel values rather than an error. "Fail loudly and safely" — this is the loudest possible place to be silent, since it is the last code that touches the pixels before they hit disk.
+Backends do float math internally (cv blur/denoise producing floats — see OE-B5); any path that forgets the cast back produces a plausible-looking image with wrapped pixel values rather than an error. "Fail loudly and safely" — this is the loudest possible place to be silent, since it is the last code that touches the pixels before they hit disk.
 
 Fix: `raise ValueError` for any dtype outside `{uint8, uint16}`.
 
@@ -1281,24 +1132,7 @@ Boundary check: the three backends import only `schema`, `imageio`, numpy, and l
 
 ---
 
-### Principle & Scope Violations
-
 ### Bugs & Correctness
-
-**DET-B1: YOLO objectness column is not handled, despite the comment claiming it is**
-**File:** [vlm_photo_editor/detection/yolo_onnx_backend.py:52,58-61](vlm_photo_editor/detection/yolo_onnx_backend.py#L52)
-
-```python
-preds = preds.T  # normalize to (N, 4 + num_classes[+obj])
-...
-class_scores = row[4:]
-class_id = int(np.argmax(class_scores))
-score = float(class_scores[class_id])
-```
-
-The comment advertises support for the `+obj` layout, the code has none. For a YOLOv5/v7 export — output `(1, 25200, 85)` = 4 box + 1 objectness + 80 classes — `row[4:]` is 81 wide with objectness at index 0. Objectness is usually the largest value, so `class_id` collapses to `0` and `score` becomes the objectness, not a class probability; the confidence filter and NMS then run on the wrong number, and every detection is labelled `class_0`. Only the YOLOv8 layout (`4 + nc`, transposed) is actually correct.
-
-Fix: branch on `preds.shape[1] - 4` against the model's class count, or make the supported export explicit and reject other widths — silently mis-decoding is worse than refusing.
 
 ---
 
@@ -1328,9 +1162,9 @@ The `ndim == 2` and `shape[2] == 4` cases are handled; `shape[2] == 1` falls thr
 ---
 
 **DET-B6: mediapipe takes the top-scoring detection of any class as "the subject"**
-**File:** [vlm_photo_editor/detection/mediapipe_backend.py:23,31-38](vlm_photo_editor/detection/mediapipe_backend.py#L23)
+**File:** [vlm_photo_editor/detection/mediapipe_backend.py:30](vlm_photo_editor/detection/mediapipe_backend.py#L30)
 
-`max_results=1` caps the detector before any subject-selection logic runs, so a foreground bicycle outranks the person riding it, and there is no way to prefer people or the largest box. The `category is None` fallback also emits `label="object", confidence=0.0` — a zero confidence indistinguishable from a genuinely worthless detection, again with nothing downstream gating on it (DET-P1). Request several results and pick by a documented rule (person-class preference, then area).
+`max_results=1` caps the detector before any subject-selection logic runs, so a foreground bicycle outranks the person riding it, and there is no way to prefer people or the largest box. (The zero-confidence `category is None` fallback is now dropped by `_MIN_CONFIDENCE` in `detection/__init__.py`.) Request several results and pick by a documented rule (person-class preference, then area).
 
 ---
 
@@ -1357,11 +1191,6 @@ _Partial (2026-09-08):_ `yolo_onnx` now reads a sibling `classes.txt` before inf
 
 The final branch is unconditional. A future `CharacterFocusBackend` member added without a dispatch branch silently routes to u2netp instead of failing — the same shape as OE-C5 in the executor. Make the chain exhaustive and raise on the fallthrough.
 
-**DET-C3: the model-path preamble is copy-pasted into all three backends**
-**File:** [vlm_photo_editor/detection/mediapipe_backend.py:10-17](vlm_photo_editor/detection/mediapipe_backend.py#L10), [u2netp_backend.py:14-21](vlm_photo_editor/detection/u2netp_backend.py#L14), [yolo_onnx_backend.py:29-36](vlm_photo_editor/detection/yolo_onnx_backend.py#L29)
-
-Same lazy `get_settings()` import, same falsiness check, same three-line message differing only in the setting name and file suffix. `_common.py` exists exactly for this: `require_model_path(attr: str, backend: str, kind: str) -> str`. Also collapses the DET-D2 existence check into one place.
-
 **DET-C4: redundant best-index scan after NMS**
 **File:** [vlm_photo_editor/detection/yolo_onnx_backend.py:71-75](vlm_photo_editor/detection/yolo_onnx_backend.py#L71)
 
@@ -1371,11 +1200,6 @@ Same lazy `get_settings()` import, same falsiness check, same three-line message
 **File:** [vlm_photo_editor/detection/AGENTS.md:41-45](vlm_photo_editor/detection/AGENTS.md#L41)
 
 The test section claims "each backend's bbox is clamped inside image bounds" as a covered scenario, but `tests/unit/test_p13_character_focus.py` exercises only mediapipe and yolo_onnx — u2netp, the backend with the most post-processing (threshold, connected components, confidence derivation), has no clamp test. The import rules also list `opencv` among the lazily-imported optional SDKs, though `opencv-python-headless` is a base dependency ([requirements.txt:17](requirements.txt#L17)) and `available_backends()` never checks for it.
-
-**DET-D3: a stale cached `face_only` plan replays after the face detector is turned off**
-**File:** [vlm_photo_editor/schema/op_catalog.py:198-213](vlm_photo_editor/schema/op_catalog.py#L198)
-
-`FramingMode.FACE_ONLY` is filtered from the Composition dropdown and the planner RECOMMEND_BEST menu by `detection.detector_has_label(cf, "face")` (2026-09-08), but `FRAME`'s `enum_params` stay permissive by design — schema validation must not depend on `detection`/session state. So a plan compiled while a `face`-labelled detector was active, then replayed from the plan cache with Character Focus off, still carries `frame.mode == "face_only"`. Accepted: `pil_backend._FRAME_ASPECT["face_only"] == (3,4)` is identical to `portrait_headroom`, so the crop is valid, just not "tight to the face". No crash, no silent no-op.
 
 ---
 
@@ -1400,16 +1224,6 @@ The test section claims "each backend's bbox is clamped inside image bounds" as 
 **File:** [vlm_photo_editor/detection/u2netp_backend.py:35-48](vlm_photo_editor/detection/u2netp_backend.py#L35)
 
 The mask is resized 320×320 → full resolution, then thresholded and passed to `connectedComponentsWithStats` at full size, purely to obtain one bounding box. Threshold and label at 320×320 and scale the resulting box by `w/320, h/320` — same box, orders of magnitude less work.
-
----
-
-### Over-engineered / Unjustified Functionality
-
-**DET-O1: `install_backend_deps` returns a bare bool**
-**File:** [vlm_photo_editor/detection/__init__.py:32-40](vlm_photo_editor/detection/__init__.py#L32)
-
-The function's entire contract is "it worked / it didn't", which forces DET-B3's dead-end error message and makes DET-B2 undiagnosable from the UI. Either it surfaces pip's diagnostics or it should not exist — a documented `pip install -r requirements-mediapipe.txt` line in the caption carries the same information with no environment-mutation surface (DET-D1).
-
 ---
 
 ### UX
@@ -1514,14 +1328,6 @@ So ~2.5% of the *replaced* background survives at the centre of the fill, and fo
 **File:** [vlm_photo_editor/background/composite.py:78](vlm_photo_editor/background/composite.py#L78)
 
 `src_noise = noise_std(src_f, mask)` samples the region that the generated content replaces (old background, or the object being removed), not the region the result must blend into. `color_match` gets this right — it samples `_border_ring(mask)` ([composite.py:40](vlm_photo_editor/background/composite.py#L40)) — and `AGENTS.md` describes the step as "grain/noise match to subject". Sampling a smooth removed object makes the fill *less* grainy than its surroundings, sampling a noisy one makes it more. Use `_border_ring(mask)` here too.
-
----
-
-**BG-B7: the Qwen path loads a multi-gigabyte model and runs inference, then raises `NotImplementedError`**
-**File:** [vlm_photo_editor/background/providers/huggingface.py:146-180](vlm_photo_editor/background/providers/huggingface.py#L146)
-
-`_generate_qwen` downloads/loads `Qwen2_5_VLForConditionalGeneration`, moves it to the GPU, runs `processor(...)` and `vlm.generate(**inputs, max_new_tokens=512)` — and *then* raises `NotImplementedError("Qwen2.5-VL produces text, not pixels")` inside the loop. `output_ids` and `inputs` are computed and discarded, and `return candidates` at [line 182](vlm_photo_editor/background/providers/huggingface.py#L182) is unreachable. A user selecting a Qwen model waits for a full model load and a generation pass before learning the path does not exist. Raise at the top of the method (or reject the model in `generate`'s dispatch at [line 71](vlm_photo_editor/background/providers/huggingface.py#L71)).
-
 ---
 
 **BG-B10: `GoogleProvider` calls SDK symbols that do not exist in `google-generativeai`**
@@ -1588,19 +1394,19 @@ A ~24 GB FLUX-Fill load plus a host→device transfer per call, with no module-l
 
 ---
 
-**BG-O2: the Qwen provider path is scaffolding for a capability the file itself says does not exist**
-**File:** [vlm_photo_editor/background/providers/huggingface.py:25-26,71-74,126-182](vlm_photo_editor/background/providers/huggingface.py#L126)
+**BG-O2: Qwen dispatch scaffolding remains for a path that always raises**
+**File:** [vlm_photo_editor/background/providers/huggingface.py](vlm_photo_editor/background/providers/huggingface.py), [replicate.py:20](vlm_photo_editor/background/providers/replicate.py#L20)
 
-57 lines of model loading, chat-template construction and tokenisation whose terminal statement is `NotImplementedError` explaining that Qwen produces text, not pixels. `_is_qwen_model` and the dispatch branch exist only to reach it, and `replicate.py:15` carries a parallel `_INSTRUCT_MODEL_PREFIXES = ("qwen",)` for a different interpretation of the same model family. Per CLAUDE.md §2, delete the branch until the prompt-refiner use case is actually built.
+`_generate_qwen` is now a fail-fast stub, but `_is_qwen_model`, the dispatch branch in `generate`, and `replicate.py`'s parallel `_INSTRUCT_MODEL_PREFIXES = ("qwen",)` still exist to reach it. Per CLAUDE.md §2, delete the branches until the prompt-refiner use case is actually built.
 
 ---
 
 ### UX
 
-**BG-U1: `needs_manual_review` is computed, returned, and never reaches the user**
-**File:** [vlm_photo_editor/background/__init__.py:53](vlm_photo_editor/background/__init__.py#L53), [ops/backends/genai_backend.py:30](vlm_photo_editor/ops/backends/genai_backend.py#L30)
+**BG-U1: `needs_manual_review` is computed and then dropped before it reaches the user**
+**File:** [vlm_photo_editor/ops/backends/genai_backend.py:49](vlm_photo_editor/ops/backends/genai_backend.py#L49)
 
-Even once BG-P1 makes the flag capable of being `True`, the executor discards it and no surface displays it. The user has no way to know a background composite failed its own quality gate — they see the result and nothing else. CLAUDE.md's "make the invisible inspectable" argues for surfacing the seam metric and the flag next to the generated preview, with the candidate list available for manual override.
+The candidate picker now shows each candidate's seam metric, but the executor path still unpacks `result, genai_op, _` and discards the `needs_manual` flag, so a composite that failed its own quality gate is not flagged (and per BG-P1 it cannot fail the gate anyway). Surface the flag next to the generated preview, with the candidate list available for manual override.
 
 ---
 
@@ -1711,13 +1517,11 @@ Already-open findings, confirmed against current code, no new rows:
 ### Code Smells / Maintainability
 
 **CFG-C2: Lint failures in this batch's files**
-**Files:** [vlm_photo_editor/config/registry.py:3](vlm_photo_editor/config/registry.py#L3), [vlm_photo_editor/models/registry.py:38,55](vlm_photo_editor/models/registry.py#L38)
+**File:** [vlm_photo_editor/models/registry.py:38,55](vlm_photo_editor/models/registry.py#L38)
 
-`ruff check` reports an unused `dataclasses.field` import in `config/registry.py` (never called — `ModelEntry` has no `default_factory` fields), and two lines over the 100-char limit in `models/registry.py` (the `llamacpp`/`huggingface` `ImportError` messages).
+Two lines over the 100-char limit (the `llamacpp`/`huggingface` `ImportError` messages). The unused `field` import in `config/registry.py` is already fixed.
 
-Fix: `ruff check --fix vlm_photo_editor/config/ vlm_photo_editor/models/` resolves the import; wrap the two long error strings.
-
-Also confirmed unchanged, no new row: PL-C5 (`PolicyMode` remains unreferenced outside its own definition; `settings.ps_mode`'s Literal is what every consumer actually checks).
+Fix: wrap the two long error strings.
 
 ---
 
@@ -1746,41 +1550,6 @@ Fix: either implement the two behaviours or amend the P11 section and un-tick th
 ---
 
 ### Bugs & Correctness
-
-**PIP-B1: the batch path never validates crop bounds, so a crop the single-image path would repair is a terminal failure (verified)**
-**File:** [vlm_photo_editor/pipeline/batch.py:56-73](vlm_photo_editor/pipeline/batch.py#L56)
-
-`_plan_single` calls `planner.plan()` then `compiler.compile()` and stops. `Compiler.compile()` runs `validate_op_graph` ([compiler.py:218](vlm_photo_editor/planner/compiler.py#L218)) which checks crop *params* but never the image dimensions — `validate_crop_bounds(graph, w, h)` needs the container and is called from exactly two places, both in the single-image flow ([main.py:117](vlm_photo_editor/app/main.py#L117), [main.py:198](vlm_photo_editor/app/main.py#L198)) plus `edit_flow._compile`. Both wrap it in a revise loop bounded by `settings.max_crop_retries` (default 3).
-
-Verified against current code (mocked planner/compiler, real 100×100 container, `full_auto`, crop to 500×500):
-
-```
-batch_execute_failed image=a.jpg error=crop params out of bounds: left=0 top=0 right=500 bottom=500 image=100x100
-status: ImageStatus.FAILED | error: crop params out of bounds: ... | retry_count: 0
-```
-
-The failure surfaces from `_crop` ([pil_backend.py:64-68](vlm_photo_editor/ops/backends/pil_backend.py#L64)) during execution instead of from the validator during compilation, so the image lands in "Needs Attention" with a backend error message and no revision was attempted. A VLM that misjudges crop coordinates — the one failure mode the retry loop exists for — costs the user a manual retry per image in the high-volume path.
-
-Fix: call `validate_crop_bounds(result.op_graph, record.container.width, record.container.height)` inside `_plan_single` after compile, and re-plan via `planner.revise(...)` on failure up to `settings.max_crop_retries`, matching `edit_flow._route_after_compile`.
-
----
-
-**PIP-B2: retrying a batch image drops the framing intent — the re-plan ignores the framing mode the user picked**
-**File:** [vlm_photo_editor/app/main.py:437-447](vlm_photo_editor/app/main.py#L437), [app/components/batch_review.py:175](vlm_photo_editor/app/components/batch_review.py#L175)
-
-```python
-anyio.run(
-    run_batch, [record], state.get("intent") or "", state.get("prefs"),
-    state.get("edit_mode") or "full",
-    None,                      # ← framing_intent
-    AcceptMode(...), 3, None,
-)
-```
-
-The initial run 40 lines below passes `fi = _build_framing_intent(framing_val)` ([main.py:484-495](vlm_photo_editor/app/main.py#L484)); every retry path passes a hardcoded `None`. In `frame` mode the framing intent is the entire instruction — the retried image gets planned against a different prompt than its 199 siblings, and nothing in the UI says so. `state.get("framing_mode")` is available at both call sites.
-
-Fix: build the framing intent once per render and pass it to all three `run_batch` call sites.
-
 ---
 
 **PIP-B3: the plan cache key omits `detected_subject` and `genai_available` — toggling Character Focus or adding a provider key replays the stale plan**
@@ -1841,12 +1610,12 @@ Fix: bound the fan-out with an `anyio.CapacityLimiter` (or a semaphore) sized fr
 
 ### Code Smells / Maintainability
 
-**PIP-C1: `run_batch` is a second, lossier copy of the `edit_flow` graph — every divergence above is a missing branch of the original**
-**File:** [vlm_photo_editor/pipeline/batch.py:96-159](vlm_photo_editor/pipeline/batch.py#L96) vs [agents/edit_flow.py:66-121](vlm_photo_editor/agents/edit_flow.py#L66)
+**PIP-C1: `run_batch` is still a separate copy of the `edit_flow` graph**
+**File:** [vlm_photo_editor/pipeline/batch.py](vlm_photo_editor/pipeline/batch.py) vs [agents/edit_flow.py](vlm_photo_editor/agents/edit_flow.py)
 
-Both implement plan → compile → auto-approve check → execute, and both call the same `_can_auto_approve` (batch imports the private helper across module boundaries, [batch.py:20](vlm_photo_editor/pipeline/batch.py#L20)). What the batch copy lacks: crop-bounds validation and the revise loop (PIP-B1), the recipe write (PIP-P1), the critic hook, and `crop_error` surfacing. `app/components/batch_review.py:147-171` then adds a *third* copy of plan→compile for the re-plan case, which is where PIP-P2 comes from. Three implementations of one flow, and the two derivatives are both missing pieces the original has.
+Crop-bounds validation and the revise loop are now shared through `planner/repair.py` (`compile_with_repair`). What remains: `run_batch` and `edit_flow` still implement plan → compile → auto-approve → execute separately (batch lacks the recipe write and the critic hook), and `app/components/batch_review.py::_replan_record` is a third plan → compile copy.
 
-Fix: give the batch path one shared function — either drive `build_edit_graph()` per image inside the task group (each image gets its own thread/config), or extract the plan→validate→compile→revise core into a single coroutine that `edit_flow`, `run_batch`, and the re-plan button all call.
+Fix: drive `build_edit_graph()` per image, or extract the remaining core into one coroutine all three call.
 
 ---
 
@@ -1968,7 +1737,7 @@ Fix: give `run_batch` a second callback (or reuse `on_image_progress` with a pha
 **PIP-U2: "Needs Attention" shows a backend exception string as the entire explanation, and the only action re-runs the same plan**
 **File:** [vlm_photo_editor/app/components/batch_review.py:260-268](vlm_photo_editor/app/components/batch_review.py#L260)
 
-The user sees e.g. `crop params out of bounds: left=0 top=0 right=500 bottom=500 image=100x100` (PIP-B1) with a Retry button that re-plans with the same intent and, per PIP-B2, without their framing mode. There is no way to edit the intent for just that image, and no indication of what would make the retry succeed.
+The user sees e.g. `crop params out of bounds: left=0 top=0 right=500 bottom=500 image=100x100` with a Retry button that re-plans with the same intent. There is no way to edit the intent for just that image, and no indication of what would make the retry succeed.
 
 Fix: pair each failed record with an editable intent/feedback box that routes through the re-plan path, and map known failure classes to a plain-language cause.
 
@@ -1981,26 +1750,23 @@ All issues across all batches, sorted by severity.
 | # | Severity | File | Issue |
 |---|----------|------|-------|
 | SEC-D1 | High | settings.py:32 | `vlm_prompt_debug = True` by default — VLM prompts logged in production |
-| OPS-B1 | High | pil_backend.py:74,105 | `_rotate` and `_denoise` silently downgrade 16-bit RAW to 8-bit via `_to_pil_8bit` |
 | PLN-D1 | High | planner.py:161,187 | User-controlled preference strings and `user_instruction` injected verbatim into system prompt — prompt injection |
 | RCP-D1 | High | preferences/store.py:33 | `add_explicit()` persists description without sanitization — write path for PLN-D1 prompt injection, persists adversarial content across sessions |
 | PL-P2 | High | compiler.py:6-13 | Compiler imports `background.providers`, explicitly banned by `planner/AGENTS.md`; CLAUDE.md and AGENTS.md also disagree about `ops.validator` |
 | PL-P3 | High | planner.py:40,75, edit_flow.py:66,88 | `agents/` imports `ops.backends.pil_backend`, `ops.validator`, `ops.executor` — banned by `agents/AGENTS.md` invariant 1 |
 | OE-P2 | High | executor.py:152, cv_backend.py:15, genai_backend.py:17 | `invert` honoured on only 2 of 4 dispatch paths — `apply_inpaint`/genAI edit exactly the region the flag says to protect (Principle 6) |
-| OE-P3 | High | genai_backend.py:17-20 | GENAI op with no bbox builds an all-True fill mask — the model regenerates the subject too (Principle 6) |
+| OE-P3 | Medium | genai_backend.py:17-20 | Backend still falls back to an all-True fill mask without a bbox; the `requires_bbox` guard covers only the compile/executor path |
 | OE-B1 | High | executor.py:44-120 | `CROP` params never remapped through `origin` while `bbox`/focus are — a second size-changing op crashes or crops the wrong region (verified) |
-| DET-B1 | High | yolo_onnx_backend.py:52,58-61 | YOLOv5/v7 objectness column not stripped despite the comment claiming `[+obj]` — every detection decodes as `class_0` with objectness as its score |
 | BG-P1 | High | quality.py:36,43 | Seam metric is bounded ~0.1 but threshold defaults to 10.0 (verified) — gate never fires, re-roll branch dead, and `genai_backend.py:30` discards `needs_manual` anyway |
 | BG-B1 | High | composite.py:104,130-133 | Gaussian alpha tail (~0.0045) beyond the `3*feather` safe zone trips the RuntimeError on any realistic frame (verified 400x400) — genAI path dead outside small fixtures |
 | BG-B2 | High | replicate.py:49, openai_provider.py:38, google_provider.py:29, huggingface.py:41 | `np.array(img, dtype=uint16)` keeps 0-255 values in a 16-bit container (verified) — generated background renders near-black |
 | SR-P1 | High | secrets/redaction.py:20-21 | `install_redaction_filter()` adds the filter to the root *logger*, not a handler — every named logger in the app (verified) and all structlog output bypass redaction entirely; more fundamental than AGT-D2/SEC-C4 |
-| B7 | Medium | main.py:128 | Saved file and recipe written to `/tmp` |
 | D6 | Medium | edit_flow.py:107 | Module-level `edit_graph` singleton breaks multi-worker deploy |
 | S-D2 | Medium | recipe.py:11 | `GenAIOp.prompt`/`model` accept empty strings |
 | S-D3 | Medium | recipe.py:20 | `source_path` unvalidated bare string — replay path risk |
 | SEC-D2 | Medium | registry.py:95, settings.py:22 | Module-level singletons mutated across Streamlit sessions |
 | SEC-D3 | Medium | models/registry.py:67 | API key in constructor kwarg — exposed in exception repr/traceback |
-| SEC-C4 | Medium | redaction.py | `install_redaction_filter()` not auto-called; logs before startup skip redaction |
+| SEC-C4 | Low | redaction.py | `install_redaction_filter()` ordering is by convention in `app/main.py` only; other entry points unprotected (superseded by SR-P1) |
 | SR-S1 | Medium | secrets/redaction.py:6 | Redaction regex covers `sk-ant-`/`sk-`/`r8_` only — Google API keys (live `google` provider) pass through unredacted |
 | IO-B3 | Medium | container.py:11 | `bit_depth` and `pixels.dtype` can be inconsistent — no validation |
 | IO-D1 | Medium | loaders.py:45 | PIL file handle not closed — fd leak under batch load |
@@ -2009,9 +1775,8 @@ All issues across all batches, sorted by severity.
 | IO-P2 | Medium | savers.py:15-16,51 | Source guard is path-inequality only: existing `dest` silently clobbered, app path guards a temp copy, hardlink defeats `resolve()` |
 | IO-D3 | Medium | savers.py:47-51 | (EXIF fixed 2026-10-05; XMP/IPTC/16-bit open) All EXIF/XMP/IPTC discarded on save — `container.metadata` is populated by 6 modules and read by none |
 | IO-B6 | Medium | savers.py:40 | Non-`uint8`/`uint16` dtypes silently wrapped mod 256 instead of rejected (verified: float32 300.7 → 44) |
-| OPS-D1 | Medium | genai_backend.py:23 | Arbitrary `op.params` forwarded as `**extra_kwargs` — injection risk |
+| OPS-D1 | Medium | genai_backend.py | Unknown `op.params` keys forwarded as `**extra_kwargs` — validator covers the planner path, recipe replay unguarded |
 | PLN-D2 | Medium | compiler.py:48 | Caller-supplied `mode` never checked against `plan.mode` — full-mode permissions can apply to a background-mode plan |
-| AGT-B2 | Medium | planner.py:122 | Min-max normalization of 16-bit images misrepresents actual exposure to VLM; should divide by dtype max |
 | AGT-D3 | Medium | planner.py:67 | Revision prompt embeds full previous plan JSON — amplifies PLN-D1 prompt injection across revision cycles |
 | AGT-D4 | Medium | aggregator.py:50, critic.py:67 | Greedy `re.DOTALL` regex spans multiple JSON objects — `json.loads` gets invalid input, rules silently dropped |
 | AGT-C2 | Medium | edit_flow.py:73 | `FULL_AUTO` accept mode bypasses Principle 4 (human approval) with no safeguard or documentation |
@@ -2019,7 +1784,7 @@ All issues across all batches, sorted by severity.
 | RCP-B3 | Medium | preferences/store.py:96 | `DeltaStore.list()` raises unhandled `JSONDecodeError` on malformed line — entire delta history unreadable from one corrupt entry |
 | RCP-D2 | Medium | preferences/store.py:88 | `DeltaStore.append()` not atomic across concurrent callers — interleaved writes corrupt JSONL in multi-session deployment |
 | SC-P3 | Medium | op_catalog.py:24, policy.py:26 | `ps_expressible` read only by the prompt builder; `_OP_SETS["ps_strict"]` allows every op — PS-strict parity is unenforced (Principle 8) |
-| SC-B2 | Medium | op_catalog.py:31-39 | `PARAM_BOUNDS` keyed by param name globally, not per op; `float()` in the validator raises `TypeError` past the compiler's `except ValueError` |
+| SC-B2 | Low | op_catalog.py:36 | `PARAM_BOUNDS` keyed by param name globally, not per op (validator TypeError/bool handling already fixed) |
 | SC-B3 | Medium | op_catalog.py:120-140 | `mask`'s MEDIUM risk tier is dropped by `_collapse_mask_ops` — `mask` + `exposure` auto-approves as LOW |
 | SC-S2 | Medium | batch.py:27-30 | `plan` / `op_graph` erased to `Any` citing a circular import that does not exist — unvalidated op_graph can reach the executor |
 | PL-P4 | Medium | compiler.py:119-124, policy.py:26 | PS-strict enforced only as prompt prose; `compile()` never receives a policy mode and `ps_expressible` is never validated (extends SC-P3) |
@@ -2036,24 +1801,21 @@ All issues across all batches, sorted by severity.
 | BG-P5 | Medium | replicate.py:93, openai_provider.py:76, google_provider.py:71, huggingface.py:106,165 | All providers return 1 candidate when `seed` is set, breaking the "exactly N candidates" contract on the recipe-replay path |
 | BG-B4 | Medium | composite.py:104-107 | Blurred-mask alpha peaks at 0.975 for a 100px mask (verified) — the removed background stays faintly visible through the fill |
 | BG-B5 | Medium | composite.py:78 | `grain_match` samples source noise inside the mask (pixels being discarded) instead of the border ring used by `color_match` |
-| BG-B7 | Medium | huggingface.py:146-180 | Qwen path loads a multi-GB model and runs inference, then raises `NotImplementedError`; `return candidates` unreachable |
 | BG-D1 | Medium | replicate.py:40-48 | `urlopen` on a model-supplied URL with no scheme allowlist, timeout, or size cap — `file://` read and unbounded blocking fetch |
 | BG-C5 | Medium | providers/\_\_init\_\_.py:50-63 | `available_genai_providers()` checks key OR deps but never both — advertises providers that raise `ImportError` at call time |
-| BG-U1 | Medium | background/\_\_init\_\_.py:53, genai_backend.py:30 | `needs_manual_review` computed, returned, discarded — no surface tells the user a composite failed its quality gate |
+| BG-U1 | Low | genai_backend.py:49 | `needs_manual` flag discarded on the executor path (candidate picker shows the metric, nothing shows the flag) |
 | CFG-B3 | Medium | models/registry.py:70-82,151 | `model_entry_available()` greenlights `provider="replicate"`; `build_client()` has no branch for it and raises |
 | PIP-P3 | Medium | batch.py:122-145, registry.py:15 | P11 spec drift: `max_images_per_call` never read (no grouping/cap), `full_auto` executes but does not save; DoD boxes ticked anyway |
-| PIP-B1 | Medium | batch.py:56-73 | Batch never calls `validate_crop_bounds` and has no revise loop — an out-of-bounds crop the single-image path repairs is a terminal FAILED (verified) |
-| PIP-B2 | Medium | main.py:437-447, batch_review.py:175 | Every batch retry path hardcodes `framing_intent=None` — the re-plan ignores the framing mode the initial run used |
 | PIP-B3 | Medium | plan_cache.py:18-32, main.py:96 | Cache key omits `detected_subject` and `genai_available` — toggling Character Focus or adding a provider key replays the stale plan |
 | PIP-S2 | Medium | batch.py:122-136 | No concurrency/cost ceiling — up to 40 concurrent paid VLM calls (verified limiter) with correlated ≤1 s-jitter retry waves |
-| PIP-C1 | Medium | batch.py:96-159 vs edit_flow.py:66-121 | `run_batch` is a lossier copy of the edit_flow graph (no crop validation, no revise, no recipe, no critic); batch_review adds a third copy |
+| PIP-C1 | Low | batch.py vs edit_flow.py | `run_batch` still a separate copy of the edit flow (no recipe write / critic); `batch_review._replan_record` a third copy |
 | PIP-PF1 | Medium | batch.py:56-69 | Batch never consults `PlanCache` — re-running a batch or near-duplicate frames re-pays for every plan |
 | PIP-PF4 | Medium | batch.py:138-145, schema/batch.py:27-28 | Both `container` and `edited_container` retained per record for the whole session — ~7 GB for 50 × 24 MP; nothing streams to disk |
 | PIP-O1 | Medium | cost_router.py:16-34 | `classify_intent` has no callers — P10's "cheap router that skips full VLM planning" does not exist; also interpolates raw intent into a prompt (PLN-D1 shape) |
 | S-C3 | Low | plan.py:23 | `HumanPlan.mode` and `EditDelta.mode` unvalidated bare strings |
 | S-C5 | Low | prefs.py:24 | `Preferences.version` uses UUID — no ordering or migration semantics |
 | S-C6 | Low | batch.py:25 | `BatchImageRecord` runtime types erased to `Any` |
-| S-O1 | Low | recipe.py:23 | `Recipe.branch` hardcoded `"main"`, never populated from git |
+| S-O1 | Low | recipe.py:30 | `Recipe.branch` hardcoded `"main"`, never populated (used for sidecar naming, so removal is a contract change) |
 | T2 | Low | — | No test for revision error path (uncovers B2) |
 | SEC-C3 | Low | models/registry.py:95 | `_entries` accessed as public attribute from outside |
 | SEC-O1 | Low | models/registry.py:129 | `install_loader_deps()` runs pip at runtime — setup concern, not runtime |
@@ -2064,16 +1826,12 @@ All issues across all batches, sorted by severity.
 | IO-C2 | Low | loaders.py:11 | Module-level `assert` for a static invariant — stripped under `python -O` |
 | IO-C3 | Low | savers.py:23-40 | PIL mode ladder duplicated across both dtype branches; `bit_depth` never read by the saver (extends IO-B3) |
 | IO-O1 | Low | savers.py:13 | `fmt` duplicates `dest.suffix`; both call sites derive it from their own tables and its only live effect is enabling IO-D4 |
-| OPS-C2 | Low | pil_backend.py:41 | `_from_pil` hardcodes `bit_depth=8` — root cause of silent bit-depth loss |
-| OPS-P1 | Low | pil_backend.py:86,99 | `_white_balance` and `_exposure` use float64 — 2× memory; float32 sufficient |
-| OPS-O1 | Low | pil_backend.py:105, cv_backend.py:58 | Two undocumented DENOISE implementations; neither handles 16-bit RAW safely |
+| OPS-O1 | Low | pil_backend.py, cv_backend.py | Two DENOISE implementations, no planner guidance on which to prefer (PIL path now 16-bit safe, CV path is not) |
 | AGT-C1 | Low | edit_flow.py:34,39 | New `Planner()` + LLM client constructed on every graph node call — wasteful in batch mode |
 | AGT-P1 | Low | critic.py:48 | Before-image re-encoded to JPEG on every `verify` call — redundant in multi-step edit flows |
-| RCP-C1 | Low | preferences/store.py:17 | `AGGREGATE_AFTER = 5` constant defined in store.py, unused there — wrong module ownership |
 | RCP-C2 | Low | recipe/store.py:48 | `write_xmp` / `read_xmp` stubs on public API with no deferral marker — any call site crashes with `NotImplementedError` |
 | RCP-C3 | Low | preferences/store.py:33-79 | Load-modify-save pattern repeated 5× with no shared helper — missing `save()` in new method is silent data loss |
-| RCP-P1 | Low | preferences/store.py:33-79 | `PreferenceStore` reads + writes full JSON file on every mutation — callers that loop `add_learned` cause O(n) writes |
-| SC-P4 | Low | schema/AGENTS.md:14-23 | Contract doc drift: no `batch.py` row, `PrefsVersion` does not exist, ops.py row omits `AcceptMode`, op_catalog row claims per-op bounds |
+| SC-P4 | Low | schema/AGENTS.md | Contract doc drift: `PrefsVersion` does not exist, ops.py row omits `AcceptMode` and friends, op_catalog row claims per-op bounds |
 | SC-B4 | Low | detection.py:8-12 | `DetectedSubject.confidence` unbounded (vs. `LearnedRule.confidence` bounded in the same layer); `source` free-form despite `CharacterFocusBackend` |
 | SC-C1 | Low | constants.py:8, compiler.py:39 | `_INPAINT_OPS` still derived twice — contradicts the comment on the file created to centralise it (was PLN-B3) |
 | SC-C2 | Low | op_catalog.py:8 | Absolute intra-package import in the one package whose hard rule is about import direction |
@@ -2084,7 +1842,6 @@ All issues across all batches, sorted by severity.
 | SC-O1 | Low | op_catalog.py:41-55 | `register_op` / `replace=` mutable registry for a static table registered in one file; mutation cannot propagate (consumers snapshot at import) |
 | SC-O2 | Low | op_catalog.py:27-28 | `render_doc()` wraps `list(self.doc_lines)` — one-line method plus a line-count test |
 | PL-P6 | Low | planner/AGENTS.md:14, agents/AGENTS.md:16 | Contract drift: `op_params` padding no longer exists, critic/aggregator are not stubs, `edit_flow.py` absent from the file table |
-| PL-B5 | Low | edit_flow.py:76,113 | Crop-retry budget off by one — `max_crop_retries=3` allows 4 revision round-trips |
 | PL-B6 | Low | framing.py:36-41 | `_FOCUS[mode]`/`_RATIO[mode]` unguarded lookups — a new `FramingMode` member crashes prompt building at runtime |
 | PL-S1 | Low | compiler.py:19-36 | `_ps_available()` global cache is unsynchronised and any listener on 127.0.0.1:8080 passes as Photoshop; stale `True` keeps PS-strict open for 5 s after disconnect |
 | PL-C1 | Low | compiler.py:135 | Vestigial `params_list` left over from the removed padding behaviour |
@@ -2106,18 +1863,15 @@ All issues across all batches, sorted by severity.
 | OE-PF2 | Low | cv_backend.py:57 | Full-image comparison on every inpaint for a property that holds by construction |
 | OE-O1 | Low | executor.py:15-120 | Origin-remapping machinery is half-built: it skips `CROP`'s own params (OE-B1) and any `ROTATE` disables it outright |
 | DET-B4 | Low | _common.py:21-24 | `to_rgb_uint8` leaves `HxWx1` arrays single-channel (verified) — opaque SDK shape failure downstream |
-| DET-B6 | Low | mediapipe_backend.py:23,31-38 | `max_results=1` picks the top-scoring detection of any class as "the subject"; no-category fallback emits `confidence=0.0` with nothing gating on it |
+| DET-B6 | Low | mediapipe_backend.py:30 | `max_results=1` picks the top-scoring detection of any class as "the subject" |
 | DET-D2 | Low | u2netp_backend.py:31, yolo_onnx_backend.py:46, mediapipe_backend.py:22 | Free-text model path handed to `InferenceSession`/`BaseOptions` unvalidated — no existence or suffix check before loading executable graph content (partial 2026-09-08: yolo_onnx now pre-checks its sibling `classes.txt`) |
-| DET-D3 | Low | op_catalog.py:198-213 | Stale cached `face_only` plan replays as `portrait_headroom` geometry after the face detector is turned off — `FRAME.enum_params` left permissive by design (accepted) |
 | DET-C1 | Low | detection/\_\_init\_\_.py:14-58 | Backend list encoded three different ways (find_spec chain, `_BACKEND_REQS`, dispatch if-chain); AGENTS.md documents the resulting 4-edit checklist as design |
 | DET-C2 | Low | detection/\_\_init\_\_.py:56-58 | Unconditional u2netp fallthrough in `detect_subject()` — a new enum member silently routes to the wrong backend (same shape as OE-C5) |
-| DET-C3 | Low | mediapipe_backend.py:10-17, u2netp_backend.py:14-21, yolo_onnx_backend.py:29-36 | Model-path lookup + ValueError preamble copy-pasted into all three backends; belongs in `_common.py` |
 | DET-C4 | Low | yolo_onnx_backend.py:71-75 | Redundant `max(flat_indices, key=…)` — `NMSBoxes` already returns score-sorted indices |
 | DET-C5 | Low | detection/AGENTS.md:41-45 | Drift: claims per-backend clamp coverage but u2netp is untested; lists `opencv` as an optional lazy SDK though it is a base requirement |
 | DET-PF2 | Low | mediapipe_backend.py:24-27 | `ObjectDetector` never closed — native resources leak per call across a batch run |
 | DET-PF3 | Low | _common.py:20 | `pixels / 256` promotes to float64 (verified) — ~1.2 GB temporary on a 50 MP 16-bit frame; `>> 8` is exact and 8× cheaper |
 | DET-PF4 | Low | u2netp_backend.py:35-48 | Mask upsampled to full resolution and connected-component-labelled there just to read one bbox; do it at 320×320 and scale |
-| DET-O1 | Low | detection/\_\_init\_\_.py:32-40 | `install_backend_deps` returns a bare bool, which forces DET-B3's dead-end message and makes DET-B2 undiagnosable |
 | DET-U1 | Low | app/components/settings.py:356-358 | "No auto-download" caption gives no source URL for the `.tflite`/`.onnx` models, and the path field is hidden until the package installs |
 | DET-U2 | Low | app/main.py:66-72 | Detected bbox is never rendered or overridable although it silently defines the subject-freeze region — "make the invisible inspectable" |
 | BG-B10 | Low | google_provider.py:76-82 | `genai.ImageGenerationModel` / `genai.types.Image` are not `google-generativeai` symbols — provider cannot have been exercised |
@@ -2125,9 +1879,9 @@ All issues across all batches, sorted by severity.
 | BG-PF1 | Low | huggingface.py:101-102 | `FluxFillPipeline.from_pretrained` on every call — no cache; batch runs and seed re-rolls reload the full model each time |
 | BG-PF2 | Low | composite.py:122-130 | Five full-frame float64 passes plus a 60-iteration binary dilation per candidate; mask-bbox-restricted work would avoid nearly all of it |
 | BG-O1 | Low | generator.py:9-13 | `Generator(ReplicateProvider)` forwards one argument and has no non-test consumer |
-| BG-O2 | Low | huggingface.py:25-26,71-74,126-182 | 57 lines of Qwen scaffolding whose terminal statement says the capability does not exist |
+| BG-O2 | Low | huggingface.py, replicate.py:20 | Qwen dispatch branch + `_INSTRUCT_MODEL_PREFIXES` remain for a path that always raises |
 | SR-B1 | Low | secrets/redaction.py:11-14 | `except TypeError` too narrow — a `%(key)s`-dict formatting mismatch raises `KeyError` uncaught, crashing the log call (latent, unused pattern today) |
-| CFG-C2 | Low | config/registry.py:3, models/registry.py:38,55 | Ruff lint failures: unused `field` import, two lines >100 chars |
+| CFG-C2 | Low | models/registry.py:38,55 | Ruff E501: two lines >100 chars |
 | PIP-B4 | Low | batch.py:30-33 | `_is_rate_limit` substring test: any message containing "429" retries, while `status_code=429`/"Too Many Requests" exceptions are missed |
 | PIP-B5 | Low | cost_router.py:31 | `"TRIVIAL" in text` matches "not TRIVIAL, it is COMPLEX" — mis-routes as soon as the module is wired in |
 | PIP-C2 | Low | batch.py:20 | Private `_can_auto_approve` imported across packages — risk-gating policy hidden behind an underscore |
@@ -2139,4 +1893,4 @@ All issues across all batches, sorted by severity.
 | PIP-PF3 | Low | plan_cache.py:34-45 | Expired entries evicted only on re-request; no size cap |
 | PIP-O2 | Low | job_queue.py:16-37 | `run_job` starts an event loop + worker thread per call to run `fn(*args)` synchronously; `on_progress` can only ever fire `1.0` |
 | PIP-U1 | Low | batch.py:138-145, main.py:471-496 | Progress bar frozen at "Planned N/N" during the whole execution phase — minutes of apparent hang in full_auto |
-| PIP-U2 | Low | batch_review.py:260-268 | Failed images show a raw backend exception as the only explanation; Retry re-runs the same plan (minus framing, PIP-B2) |
+| PIP-U2 | Low | batch_review.py:260-268 | Failed images show a raw backend exception as the only explanation; Retry re-runs the same plan |

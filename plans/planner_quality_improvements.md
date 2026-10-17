@@ -24,7 +24,7 @@ Findings below are the original 2026-10 review; this table is current.
 | T3-H Critic v2 | Done as two-stage in `app/main.py`; `edit_flow` graph not updated (it is not what the app runs). |
 | T3-I proxy preview | **Open.** |
 | T3-J richer prefs | **Open** — `EditDelta` unchanged. |
-| T3-K output polish | JPEG quality 95 / 4:4:4 + EXIF carried over (IO-D3 partial). 16-bit TIFF: ICC now carried (2026-10-13); EXIF **deferred** (no source data, tifffile can't write the Exif IFD — see `future_improvements.md`). XMP/IPTC open. |
+| T3-K output polish | JPEG quality 95 / 4:4:4 + EXIF carried over (IO-D3 partial). 16-bit TIFF: ICC now carried (2026-10-13); EXIF **deferred** (no source data, tifffile can't write the Exif IFD — see `plans/future_improvements.md`). XMP/IPTC open. |
 
 ## Context
 
@@ -40,7 +40,7 @@ Core diagnosis: planner guesses numbers from vibes, has a thin toolbox, has no f
 ### A. Planner gets no measured data
 - `_user_content` sends: JPEG q85 (full-res, no downscale, no colour-space conversion) + `WxH` + intent (`agents/planner.py:126-167`). Nothing else.
 - `ImageContainer.metadata` = PIL `img.info` only; EXIF (ISO, WB, exposure, lens, focal) never reaches the prompt.
-- Consequence: `ev`, `temperature`, `angle`, crop ints are guessed. Bounds are loose (`ev ±10`, `temp 1000–20000`) so a wild guess validates. VLMs are weak at pixel-precise grounding (already noted in `future_improvements.md`).
+- Consequence: `ev`, `temperature`, `angle`, crop ints are guessed. Bounds are loose (`ev ±10`, `temp 1000–20000`) so a wild guess validates. VLMs are weak at pixel-precise grounding (already noted in `plans/future_improvements.md`).
 
 ### B. Toolbox too thin for "professional" edits
 - Global ops: crop, rotate, white_balance, exposure, denoise, frame. Local: mask + blur/fill/inpaint/background_replace.

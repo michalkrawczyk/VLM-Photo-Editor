@@ -235,3 +235,6 @@ infer_models/**
 
 # Claude Code local config (commands, skills, hooks) — kept on disk, not versioned
 .claude/
+
+# Claude project instructions
+CLAUDE.md

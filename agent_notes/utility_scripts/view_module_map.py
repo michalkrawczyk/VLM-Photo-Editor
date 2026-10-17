@@ -19,14 +19,15 @@ Available --include values
 
 Usage examples
 --------------
-    python agent_notes/view_module_map.py
-    python agent_notes/view_module_map.py --include classes
-    python agent_notes/view_module_map.py --include classes methods docstring
-    python agent_notes/view_module_map.py --include all
-    python agent_notes/view_module_map.py --limit_module ops
-    python agent_notes/view_module_map.py --limit_file image_io.py
-    python agent_notes/view_module_map.py --limit_module schema --include classes methods signatures
-    python agent_notes/view_module_map.py --include classes --json
+    python agent_notes/utility_scripts/view_module_map.py
+    python agent_notes/utility_scripts/view_module_map.py --include classes
+    python agent_notes/utility_scripts/view_module_map.py --include classes methods docstring
+    python agent_notes/utility_scripts/view_module_map.py --include all
+    python agent_notes/utility_scripts/view_module_map.py --limit_module ops
+    python agent_notes/utility_scripts/view_module_map.py --limit_file image_io.py
+    python agent_notes/utility_scripts/view_module_map.py --limit_module schema \
+        --include classes methods signatures
+    python agent_notes/utility_scripts/view_module_map.py --include classes --json
 """
 
 from __future__ import annotations
@@ -367,12 +368,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 Examples
 --------
-  python agent_notes/view_module_map.py
-  python agent_notes/view_module_map.py --include classes
-  python agent_notes/view_module_map.py --include classes methods
-  python agent_notes/view_module_map.py --include all --limit_module ops
-  python agent_notes/view_module_map.py --limit_file image_io --include classes methods docstring signatures
-  python agent_notes/view_module_map.py --include classes methods --json
+  python agent_notes/utility_scripts/view_module_map.py
+  python agent_notes/utility_scripts/view_module_map.py --include classes
+  python agent_notes/utility_scripts/view_module_map.py --include classes methods
+  python agent_notes/utility_scripts/view_module_map.py --include all --limit_module ops
+  python agent_notes/utility_scripts/view_module_map.py --limit_file image_io \
+      --include classes methods docstring signatures
+  python agent_notes/utility_scripts/view_module_map.py --include classes methods --json
 """,
     )
     parser.add_argument(
@@ -426,7 +428,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.map:
         map_path = Path(args.map).expanduser().resolve()
     else:
-        map_path = Path(__file__).parent.parent / "agent_ignore" / "module_map.json"
+        map_path = Path(__file__).parent.parent.parent / "agent_ignore" / "module_map.json"
 
     module_map = load_map(map_path)
 

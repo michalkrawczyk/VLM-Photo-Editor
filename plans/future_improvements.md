@@ -4,30 +4,13 @@ Items deferred from the current build plan — not required for MVP but worth tr
 
 ---
 
-## vLLM & llama.cpp Local Loader Backends + Loader Auto-Detect / On-Demand Install
-
-Moved out of build-plan P10. MVP needs only one local loader (`transformers` or `ollama`, the existing defaults) for the `critic` / `cost_router` / `input_guard` roles.
-
-**Deferred scope:**
-- `loader="vllm"` — `langchain_openai.ChatOpenAI(base_url=...)` against a running vLLM OpenAI-compatible server (`ModelEntry.vllm_base_url`, default `"http://localhost:8000/v1"`). GPU-oriented throughput for large batch runs.
-- `loader="llamacpp"` — `langchain_community.chat_models.ChatLlamaCpp` over a local GGUF file (`ModelEntry.gguf_path`). CPU-friendly for the 1.2B text-only models.
-- `registry.available_loaders()` — probe installed packages via `importlib.util.find_spec` (plus an HTTP health probe for vLLM) and return which loaders are ready.
-- `registry.install_loader_deps(loader)` — `sys.executable -m pip install -r requirements-<loader>.txt` as a subprocess; unknown loader raises `ValueError`.
-- Settings UI "Local Model Backends" expander (`app/components/settings.py`) — per-loader status badge + Install / Ping buttons.
-
-**Status:** implementation already exists in the tree (`models/registry.py`, `app/components/settings.py`). This entry records that it is out of MVP acceptance scope — not that it must be removed.
-
-**Trigger for adoption:** a batch workflow that needs vLLM throughput, or a target user whose hardware can't run the `transformers` default.
-
----
-
 ## Photoshop PS-Strict Mode + MCP / UXP Bridge
 
-Moved out of build-plan P9 (which now covers the Critic layer only). Supersedes the "Photoshop backend (P9)" line under "Additional Deferred Items".
+Moved out of build-plan P9 (which now covers the Critic layer only).
 
 **Deferred scope:**
-- PS-strict policy enforcement — intersect the compiler's allowed-op set with `{n for n, s in all_specs().items() if s.ps_expressible}` when the policy mode is PS-strict. Today this is prompt prose only (see `plans/issues.md` SC-P3 / PL-P4); needs the policy mode threaded into `Compiler.compile()`.
-- No-PS mode messaging when Photoshop is unavailable.
+- PS-strict policy enforcement — intersect the compiler's allowed-op set with `{n for n, s in all_specs().items() if s.ps_expressible}` when the policy mode is PS-strict. Today the compiler only gates on Photoshop reachability (`settings.ps_mode == "strict"` probe, `planner/compiler.py`) and the op set is prompt prose only (see `plans/issues.md` SC-P3 / PL-P4); needs the policy mode threaded into `Compiler.compile()`.
+- Compiler enforcement of `ps_mode == "none"` (the Settings "Photoshop Mode" expander and the strict-mode unavailable warning already exist).
 - MCP server wrapping UXP / ExtendScript with capability discovery; feed the PS op vocabulary into the planner prompt.
 
 **Kept in MVP:** the `AcceptMode` / policy enums and the `ps_expressible` flag stay; only enforcement + the bridge are deferred.
@@ -40,7 +23,7 @@ Moved out of build-plan P9 (which now covers the Critic layer only). Supersedes 
 
 Name each operation as it runs instead of a single indeterminate bar.
 
-**Motivation:** During execution the UI shows one static `st.progress(0.0, text="Applying edits…")` (`app/main.py:318,325`); batch shows `text="Planned N/M images…"` (`app/main.py:476-483`). On a multi-op plan the user has no signal which op is running or how many remain. `pipeline/job_queue.py:19-37` only fires `on_progress(1.0)` on completion and already carries an "Extend for incremental updates" comment.
+**Motivation:** During execution the UI shows one static `st.progress(0.0, text="Applying edits…")` (`app/main.py:360-367`); batch shows per-image bars (`app/main.py:668-691`, `:739-762`). On a multi-op plan the user has no signal which op is running or how many remain. `pipeline/job_queue.py:19-37` only fires `on_progress(1.0)` on completion and already carries an "Extend for incremental updates" comment.
 
 **Proposed design:**
 - Extend `run_job` / `Executor.apply` with an `on_step(index, total, op_name)` callback; the executor calls it per op inside the `for op in op_graph.ops` loop (`ops/executor.py:49`).
@@ -91,9 +74,76 @@ Let the planner ask a structured multiple-choice question before building a plan
 
 ---
 
+## Pre-VLM Face Anonymization
+
+**Problem:** Sending user photos to external VLM/planner APIs (Anthropic, Replicate, etc.) exposes identifiable faces to third-party systems. Users may not expect or consent to this.
+
+**Mechanism:** Before encoding any `ImageContainer` for a VLM API call, run a local face-detection pass (the mediapipe backend in `detection/` already ships for Character Focus; reuse it) and replace each detected face region with a neutral placeholder (solid fill, Gaussian blur, or a synthetic face via a local diffusion model). This anonymized copy is sent to the API; the original pixels are never transmitted. The anonymization is ephemeral — it exists only in the encoded bytes, never written to disk.
+
+**Integration point:** `Planner._encode_image` (`vlm_photo_editor/agents/planner.py:296`). Add an optional `anonymize_faces: bool` parameter (default `False`). The session state or `AppSettings` exposes this toggle to the user.
+
+**Scope:** Applies to the planning step only. The executor operates entirely locally on the original pixels.
+
+**Constraints:**
+- Anonymization must not alter bounding-box geometry visible to the VLM (blurring is safer than cropping).
+- The redaction must be reversible to zero: the unmodified `ImageContainer` must remain accessible in session state after the API call.
+- Log that anonymization ran, but never log which regions were masked (face coordinates are PII-adjacent).
+
+**Trigger for adoption:** When the app handles photos of real people in production, or when a user requests a privacy mode.
+
+---
+
+## Open-Vocabulary Detection / Visual Grounding for Precise Coordinates
+
+**Problem:** The planner VLM (Claude/GPT) guesses raw pixel `{left, top, right, bottom}` integers for `crop`, and bbox targets for `region_edit`/`background_replace`/`mask`, purely from prose reasoning over the image (`templates/planner.py`) — general-purpose chat VLMs aren't trained for precise pixel grounding, and nothing verifies the numbers before they're compiled into an `Op`. FRAME ops already centre on the Character Focus box (`focus_*` params, `pil_backend.frame_crop_box`), but only for fixed detector classes and only when the toggle is on. A grounding/detection model is the general form — resolving *any* free-text target (e.g. "the trash can," "the person in red") to a verified box.
+
+**Candidates considered:**
+
+| Model | License | Hardware | Open-vocabulary (free-text target)? | Verdict |
+|---|---|---|---|---|
+| `nvidia/LocateAnything-3B` | NVIDIA — academic/non-profit research only | ~11–35GB VRAM, Ampere+ GPU | Yes (full VLM grounding) | Ruled out — fails both license (non-commercial-only) and hardware (vs. this project's CPU/light-GPU local-model profile: `LFM2.5-1.2B`, `LFM2.5-VL-1.6B`) |
+| **YOLO-World** | GPL-v3 (commercial license available on request) | CPU-deployable (ONNX), edge-capable (TFLite/INT8) | Yes — text-prompted, no retraining needed | Best current candidate — matches the need and this project's light, CPU-friendly local-model profile far better than a 3B VLM. Confirm commercial license terms before committing if the project ships commercially. |
+| RT-DETR / RT-DETRv2 | Apache-2.0 (fully permissive) | GPU-oriented for real-time speed, but ONNX/OpenVINO/CPU deployment documented | No — closed-set detector (COCO/Objects365 classes only) | Cleanest license, lightweight, but only covers generic "person"-class subject boxes (useful for `frame`'s `face_only`/`portrait_headroom` modes), not arbitrary `region_edit`/`background_replace` targets |
+
+**Trigger for adoption:** Revisit once this feature is prioritized. Trial YOLO-World first; fall back to RT-DETR for the narrower "generic subject bbox" case if YOLO-World's license terms don't work out.
+
+**Integration point (whenever a candidate is chosen):** A new registry role (e.g. `"grounding"` or `"detector"`) following the `ModelEntry` pattern already used for `critic`/`cost_router` in `config/registry.py`. Called from `planner/compiler.py` — not exposed to the planner VLM as an op — to resolve semantic targets into a verified `BoundingBox` before `Op` construction. This keeps the human-readable plan semantic while making the compiled coordinates deterministic and correct.
+
+---
+
+## Planner-Authored Scripts (Op Catalog Extension Point B)
+
+The op registry and developer-registered ops (Extension Point A) shipped — see `vlm_photo_editor/schema/op_catalog.py`. Still out of scope: the LLM proposing a small novel script as part of a plan, executed as a MEDIUM/HIGH-risk op. This is arbitrary AI-authored code execution with no sandboxing infrastructure in this codebase. Needs its own design/threat-model document first (execution sandbox, resource limits, review/approval flow beyond the existing plan-approval UI, secrets isolation). Do not fold into catalog work.
+
+**Trigger for adoption:** a concrete workflow that no catalog op can express.
+
+---
+
+## Leonardo.AI API for GenAI Ops
+
+**Why deferred:** Leonardo.AI offers image generation and inpainting via REST API (`/generations/img2img`, `/inpainting`). It would slot in as a `leonardo:` prefix in the provider routing convention established in `background/providers/`. Key: `LEONARDO_API_KEY`. Deferred because API surface, pricing, and inpainting quality relative to Replicate/OpenAI are not evaluated; no official Python SDK exists as of 2026-06.
+
+**Integration point:** New `LeonardoProvider(GenAIProvider)` in `background/providers/leonardo.py`; register prefix in `providers/__init__.py`.
+
+---
+
+## Detector Models: Segmentation Heads & Multi-Output Graphs
+
+**Why deferred:** The pluggable Character Focus registry (`detection/registry.py`) decodes three YOLO output layouts (`yolov8`, `yolov5`, `nms`) via `model.json`. Instance-segmentation exports (extra mask-proto output) and multi-output graphs are not decoded; such models fail with a layout/class-count error.
+
+**Trigger for adoption:** A user model that is worth supporting and cannot be re-exported to one of the three layouts. Would add a `layout` value and, if masks are wanted, a mask path into the freeze region instead of a bbox.
+
+---
+
+## EXIF / XMP / IPTC on 16-bit TIFF and RAW
+
+**Why deferred:** only RAW input yields a 16-bit container, and `loaders._load_raw` sets `metadata={}` (rawpy exposes no EXIF). The 16-bit save path (`savers.py`, tifffile) also cannot write the Exif sub-IFD: tifffile's `extratags` documents "cannot be used to write IFD type tags", so ISO / exposure / lens tags would need a new dependency. ICC is carried (`iccprofile=`); EXIF is not.
+
+**Trigger for adoption:** an approved dependency that can both read EXIF from RAW (e.g. exifread) and write it into a 16-bit TIFF, or a user need to keep capture metadata on RAW exports. Needs T3 (dep + `stack.md`).
+
+---
+
 ## Additional Deferred Items
 
-- **Output directory picker (B7):** Let users choose a destination folder instead of always saving beside the temp upload path.
-- **Photoshop backend (P9):** see "Photoshop PS-Strict Mode + MCP / UXP Bridge" above.
-- **Subject-aware framing (D13):** Face/saliency detection to drive FRAME ops rather than the current center-crop stub.
-- **AcceptMode AUTO / FULL_AUTO (B6):** Hook `edit_flow.py` LangGraph into the UI so mode switches have effect.
+- **Output directory picker (B7):** Saves now go to `settings.output_dir` (default `~/Pictures/vlm_edits`, or `$VLM_OUTPUT_DIR`). Still missing: a per-save destination picker in the UI.
+- **Subject-aware framing (D13):** The center-crop stub is gone; FRAME ops centre on the detected subject when Character Focus is on. Still missing: automatic face/saliency detection without the Character Focus toggle.
