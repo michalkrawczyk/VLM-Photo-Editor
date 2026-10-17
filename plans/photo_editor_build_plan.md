@@ -265,7 +265,7 @@ PS-strict enforcement (constrain the planner to Photoshop-expressible ops), No-P
 
 **User-facing result.** Upload a folder of images, review AI plans in bulk, save accepted edits — without waiting for one image to finish before the next starts.
 
-"Approve once, apply to all" and per-image instructions land in **P11.5**. Follow-ups still deferred — see `plans/future_improvements.md`: per-image plan preview strip before the run, per-op (not just per-image) progress with the op named, and a shared Composition / Character Focus selector block so batch mode stops silently inheriting the single-image flow's framing state (tracked as `plans/issues.md` D7 — partially addressed by P11.5).
+"Approve once, apply to all" and per-image instructions land in **P11.5**. Follow-ups still deferred — see `plans/future_improvements.md`: per-image plan preview strip before the run, per-op (not just per-image) progress with the op named (the shared Composition / Character Focus selector block for batch has since shipped).
 
 **Definition of Done.**
 - [x] N images are planned concurrently; total wall time < N × single-image time.
