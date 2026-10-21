@@ -369,6 +369,7 @@ def _do_execute() -> None:
         state.set("edited_container", result.container)
         if result.genai_candidates:
             state.set("genai_candidates", result.genai_candidates)
+        state.set("genai_needs_manual", result.genai_needs_manual)
         state.set("ui_phase", "done")
         state.set("error", None)
         state.log_intent(
@@ -1097,6 +1098,11 @@ with main_col:
             # genAI candidate override (BG-U2)
             if ui_phase == "done" and state.get("genai_candidates"):
                 st.divider()
+                if state.get("genai_needs_manual"):
+                    st.warning(
+                        "Generated background failed the seam check — review the "
+                        "candidates below and pick one before saving."
+                    )
                 picked = candidate_picker.render(
                     state.get("genai_candidates"),
                     state.get("genai_override"),

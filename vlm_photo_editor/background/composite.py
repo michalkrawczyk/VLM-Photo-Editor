@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.ndimage import binary_dilation, gaussian_filter, uniform_filter
+from scipy.ndimage import binary_dilation, distance_transform_edt, gaussian_filter, uniform_filter
 from skimage.color import lab2rgb, rgb2lab
 
 from vlm_photo_editor.config.settings import get_settings
@@ -27,6 +27,14 @@ def _border_ring(mask: np.ndarray, dilation_px: int = 5) -> np.ndarray:
     """Return bool mask of pixels just outside the fill region (border ring)."""
     dilated = binary_dilation(mask, iterations=dilation_px)
     return dilated & ~mask
+
+
+def _feather_zone(mask: np.ndarray, feather_px: int) -> np.ndarray:
+    """Pixels the feather may touch: within 3 sigma (Euclidean) of the mask.
+
+    Beyond it the blend alpha is forced to 0, so everything outside is source by construction.
+    """
+    return distance_transform_edt(~mask) <= 3 * feather_px
 
 
 def color_match(
@@ -104,11 +112,16 @@ def seam_blend(
     src_f = _to_float(source)
     gen_f = _to_float(generated)
 
-    alpha = gaussian_filter(mask.astype(np.float64), sigma=feather_px)
+    # BG-B1: a Gaussian has unbounded support; truncate the ramp at the feather zone
+    # so the "outside is untouched" invariant holds exactly, not approximately.
+    zone = _feather_zone(mask, feather_px)
+    alpha = np.where(zone, gaussian_filter(mask.astype(np.float64), sigma=feather_px), 0.0)
     alpha = alpha[..., np.newaxis]
 
     blended = alpha * gen_f + (1.0 - alpha) * src_f
     result = _from_float(blended, source)
+    # The float round-trip can land a level off; outside the zone the source wins outright.
+    result.pixels[~zone] = source.pixels[~zone]
     return result
 
 
@@ -120,20 +133,11 @@ def composite(
 ) -> ImageContainer:
     """Full pipeline: color_match → grain_match → seam_blend.
 
-    Asserts that pixels well outside the feather zone are byte-identical to source.
+    Pixels outside the feather zone are byte-identical to source by construction
+    (`seam_blend` zeroes the alpha ramp there and copies source through).
     """
     if feather_px is None:
         feather_px = get_settings().feather_px
     matched = color_match(source, generated, mask)
     matched = grain_match(source, matched, mask)
-    result = seam_blend(source, matched, mask, feather_px=feather_px)
-
-    # Pixels that are far outside the feather zone must come from source exactly.
-    # `binary_dilation(mask, 3*feather_px)` defines the feather influence region;
-    # anything outside that should be source. Skip assertion when the image is
-    # too small to have safe territory (e.g., small unit test fixtures).
-    safe_outside = ~binary_dilation(mask, iterations=feather_px * 3)
-    if safe_outside.any():
-        if not np.all(result.pixels[safe_outside] == source.pixels[safe_outside]):
-            raise RuntimeError("composite: subject pixels outside feather zone were modified")
-    return result
+    return seam_blend(source, matched, mask, feather_px=feather_px)

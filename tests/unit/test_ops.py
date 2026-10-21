@@ -172,7 +172,9 @@ def test_exposure_is_linear_light() -> None:
 @pytest.mark.parametrize("dtype,maxv", [(np.uint8, 255), (np.uint16, 65535)])
 def test_exposure_highlight_shoulder_has_no_hard_clip(dtype, maxv) -> None:
     ramp = np.linspace(0, maxv, 256, dtype=np.float64).astype(dtype)
-    container = _container(np.tile(ramp[:, None, None], (1, 8, 3)), bit_depth=8 * (maxv // 255))
+    container = _container(
+        np.tile(ramp[:, None, None], (1, 8, 3)), bit_depth=16 if dtype == np.uint16 else 8
+    )
     out = Executor().apply(container, _graph(_op(OpName.EXPOSURE, {"ev": 0.5}))).container.pixels
     column = out[:, 0, 0].astype(np.int64)
     assert out.dtype == dtype
@@ -197,7 +199,9 @@ def test_exposure_preserves_alpha_and_hue() -> None:
 
 def _tone_ramp(dtype, maxv: int, params: dict) -> np.ndarray:
     ramp = np.linspace(0, maxv, 256, dtype=np.float64).astype(dtype)
-    container = _container(np.tile(ramp[:, None, None], (1, 4, 3)), bit_depth=8 * (maxv // 255))
+    container = _container(
+        np.tile(ramp[:, None, None], (1, 4, 3)), bit_depth=16 if dtype == np.uint16 else 8
+    )
     out = Executor().apply(container, _graph(_op(OpName.TONE, params))).container.pixels
     assert out.dtype == dtype
     return out[:, 0, 0].astype(np.int64)
@@ -278,7 +282,8 @@ def test_saturation_moves_chroma_and_keeps_dtype(dtype, maxv, params, direction)
     out = (
         Executor()
         .apply(
-            _container(before, bit_depth=8 * (maxv // 255)), _graph(_op(OpName.SATURATION, params))
+            _container(before, bit_depth=16 if dtype == np.uint16 else 8),
+            _graph(_op(OpName.SATURATION, params)),
         )
         .container.pixels
     )
@@ -342,7 +347,7 @@ def test_sharpen_steepens_edge_and_keeps_dtype(dtype, maxv) -> None:
     out = (
         Executor()
         .apply(
-            _container(before, bit_depth=8 * (maxv // 255)),
+            _container(before, bit_depth=16 if dtype == np.uint16 else 8),
             _graph(_op(OpName.SHARPEN, {"amount": 150, "radius": 1.5})),
         )
         .container.pixels
@@ -404,7 +409,7 @@ def test_white_balance_follows_lightroom_convention(temperature, red_vs_blue) ->
 def test_white_balance_neutral_is_identity_and_keeps_alpha(dtype, maxv) -> None:
     ramp = np.linspace(0, maxv, 64).astype(dtype)
     pixels = np.stack([ramp, ramp[::-1], ramp, np.full_like(ramp, 9)], axis=-1)[None]
-    container = _container(pixels, bit_depth=8 * (maxv // 255))
+    container = _container(pixels, bit_depth=16 if dtype == np.uint16 else 8)
     neutral = Executor().apply(
         container, _graph(_op(OpName.WHITE_BALANCE, {"temperature": 6500.0}))
     )
@@ -498,6 +503,77 @@ def test_crop_then_bbox_outside_cropped_region_raises() -> None:
     )
     with pytest.raises(ValueError, match="falls outside"):
         Executor().apply(container, graph)
+
+
+def test_crop_then_crop_uses_plan_start_coordinates() -> None:
+    """OE-B1: a second CROP is expressed in the original image's coordinates (like bbox)."""
+    pixels = np.zeros((100, 100, 3), dtype=np.uint8)
+    pixels[:, :, 0] = np.arange(100)[None, :]  # red channel encodes the original column
+    pixels[:, :, 1] = np.arange(100)[:, None]  # green channel encodes the original row
+    graph = _graph(
+        _op(OpName.CROP, {"left": 20, "top": 20, "right": 100, "bottom": 100}),
+        _op(OpName.CROP, {"left": 30, "top": 40, "right": 90, "bottom": 90}),
+    )
+
+    out = Executor().apply(_container(pixels), graph).container.pixels
+
+    assert out.shape == (50, 60, 3)
+    assert tuple(out[0, 0, :2]) == (30, 40)  # top-left is original (x=30, y=40)
+    assert tuple(out[-1, -1, :2]) == (89, 89)
+
+
+def test_crop_then_crop_beyond_first_crop_clamps_to_current_image() -> None:
+    """OE-B1 repro: crop(0,0,80,80) then crop(10,10,90,90) both pass plan-time bounds
+    on 100x100; the second must clamp to what the first left, not crash."""
+    graph = _graph(
+        _op(OpName.CROP, {"left": 0, "top": 0, "right": 80, "bottom": 80}),
+        _op(OpName.CROP, {"left": 10, "top": 10, "right": 90, "bottom": 90}),
+    )
+
+    out = Executor().apply(_container(np.zeros((100, 100, 3), dtype=np.uint8)), graph)
+
+    assert out.container.pixels.shape == (70, 70, 3)
+
+
+def test_crop_then_crop_outside_first_crop_raises() -> None:
+    graph = _graph(
+        _op(OpName.CROP, {"left": 50, "top": 50, "right": 100, "bottom": 100}),
+        _op(OpName.CROP, {"left": 0, "top": 0, "right": 40, "bottom": 40}),
+    )
+    with pytest.raises(ValueError, match="Crop region falls outside"):
+        Executor().apply(_container(np.zeros((100, 100, 3), dtype=np.uint8)), graph)
+
+
+def test_frame_then_crop_uses_plan_start_coordinates() -> None:
+    """OE-B1: FRAME shifts the origin too, so a following CROP is remapped through it."""
+    pixels = np.zeros((100, 200, 3), dtype=np.uint8)
+    pixels[:, :, 0] = np.arange(200)[None, :]
+    frame = _op(
+        OpName.FRAME,
+        {
+            "mode": "negative_space",
+            "focus_x": 150.0,
+            "focus_y": 40.0,
+            "focus_w": 4.0,
+            "focus_h": 4.0,
+        },
+    )
+    framed = Executor().apply(_container(pixels), _graph(frame)).container
+    assert framed.width < 200  # FRAME actually moved the origin
+    crop_left = 160
+    out = (
+        Executor()
+        .apply(
+            _container(pixels),
+            _graph(
+                frame, _op(OpName.CROP, {"left": crop_left, "top": 0, "right": 190, "bottom": 100})
+            ),
+        )
+        .container.pixels
+    )
+
+    assert out.shape[1] == 30
+    assert out[0, 0, 0] == crop_left
 
 
 def test_crop_then_frame_remaps_focus() -> None:

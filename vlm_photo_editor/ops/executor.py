@@ -27,6 +27,8 @@ class ExecutionResult:
     genai_ops: list[GenAIOp] = field(default_factory=list)
     # step_id → every candidate scored for that genAI step (best first).
     genai_candidates: dict[str, list["ScoredCandidate"]] = field(default_factory=dict)
+    # step_ids of genAI steps whose result failed the seam gate and need manual review.
+    genai_needs_manual: list[str] = field(default_factory=list)
 
 
 class Executor:
@@ -45,23 +47,39 @@ class Executor:
         result = container.copy()
         genai_ops: list[GenAIOp] = []
         candidates: dict[str, list[ScoredCandidate]] = {}
+        needs_manual: list[str] = []
         origin: Origin = (0, 0)
+        start_size = (container.width, container.height)
         for op in op_graph.ops:
-            op = self._remap_for_origin(op, origin)
             h, w = result.pixels.shape[:2]
+            op = self._remap_for_origin(op, origin, (w, h), (w, h) != start_size)
             selection = (genai_selection or {}).get(op.step_id)
-            result, genai_op, scored = self._apply_op(result, op, selection)
+            result, genai_op, scored, flagged = self._apply_op(result, op, selection)
             origin = self._advance_origin(op, origin, w, h)
             if genai_op is not None:
                 genai_ops.append(genai_op)
             if scored:
                 candidates[op.step_id] = scored
-        return ExecutionResult(container=result, genai_ops=genai_ops, genai_candidates=candidates)
+            if flagged:
+                needs_manual.append(op.step_id)
+        return ExecutionResult(
+            container=result,
+            genai_ops=genai_ops,
+            genai_candidates=candidates,
+            genai_needs_manual=needs_manual,
+        )
 
     @staticmethod
-    def _remap_for_origin(op: Op, origin: Origin) -> Op:
-        """Shift op.bbox / FRAME focus_* from plan-start coordinates into the current
-        (possibly already cropped) image's coordinate space."""
+    def _remap_for_origin(
+        op: Op, origin: Origin, size: tuple[int, int], resized: bool = False
+    ) -> Op:
+        """Shift op.bbox / FRAME focus_* / CROP bounds from plan-start coordinates into
+        the current (possibly already cropped) image's coordinate space.
+
+        `size` is the working image's (width, height). `resized`: it is no longer the
+        plan-start size, so CROP bounds are also clamped to it (they were validated
+        against the original dimensions).
+        """
         has_focus = op.op_name == OpName.FRAME and all(
             k in op.params for k in ("focus_x", "focus_y", "focus_w", "focus_h")
         )
@@ -74,10 +92,13 @@ class Executor:
                 )
             return op
 
+        ox, oy = origin
+        if op.op_name == OpName.CROP and (origin != (0, 0) or resized):
+            op = Executor._remap_crop(op, ox, oy, *size)
+
         if origin == (0, 0):
             return op
 
-        ox, oy = origin
         if op.bbox is not None:
             x = op.bbox.x - ox
             y = op.bbox.y - oy
@@ -114,6 +135,25 @@ class Executor:
         return op
 
     @staticmethod
+    def _remap_crop(op: Op, ox: int, oy: int, w: int, h: int) -> Op:
+        """OE-B1: CROP bounds are plan-start coordinates like bbox; shift them into the
+        current image and clamp to it."""
+        left = max(0, int(op.params["left"]) - ox)
+        top = max(0, int(op.params["top"]) - oy)
+        right = min(w, int(op.params["right"]) - ox)
+        bottom = min(h, int(op.params["bottom"]) - oy)
+        if right <= left or bottom <= top:
+            raise ValueError(
+                "Crop region falls outside the already-cropped image; adjust the "
+                "crop or reorder the plan."
+            )
+        return op.model_copy(
+            update={
+                "params": {**op.params, "left": left, "top": top, "right": right, "bottom": bottom}
+            }
+        )
+
+    @staticmethod
     def _advance_origin(op: Op, origin: Origin, w: int, h: int) -> Origin:
         """Update the accumulated origin after `op` ran, given the container's
         width/height (`w`, `h`) before `op` ran."""
@@ -138,7 +178,7 @@ class Executor:
 
     def _apply_op(
         self, container: ImageContainer, op: Op, selection: "GenAISelection | None" = None
-    ) -> tuple[ImageContainer, GenAIOp | None, list["ScoredCandidate"]]:
+    ) -> tuple[ImageContainer, GenAIOp | None, list["ScoredCandidate"], bool]:
         if op.backend == Backend.GENAI:
             from .backends.genai_backend import apply as genai_apply
 
@@ -148,21 +188,21 @@ class Executor:
             if op.op_name == OpName.REGION_EDIT and op.params.get("method") == "blur":
                 from .backends.cv_backend import apply_blur
 
-                return apply_blur(container, op), None, []
+                return apply_blur(container, op), None, [], False
 
             from .backends.cv_backend import apply_inpaint
 
-            return apply_inpaint(container, op), None, []
+            return apply_inpaint(container, op), None, [], False
 
         if op.backend == Backend.PHOTOSHOP and op.op_name in _INPAINT_OPS:
             from .backends.stubs import apply as stub_apply
 
-            return stub_apply(container, op), None, []
+            return stub_apply(container, op), None, [], False
 
         backend_fn = self._resolve_backend(op)
 
         if op.bbox is None:
-            return backend_fn(container, op), None, []
+            return backend_fn(container, op), None, [], False
 
         # Region-confined: apply to full image then mask to bbox.
         edited = backend_fn(container, op)
@@ -180,7 +220,7 @@ class Executor:
             mask = ~mask
         combined = container.copy()
         combined.pixels = np.where(mask[..., np.newaxis], edited.pixels, container.pixels)
-        return combined, None, []
+        return combined, None, [], False
 
     @staticmethod
     def _resolve_backend(op: Op):

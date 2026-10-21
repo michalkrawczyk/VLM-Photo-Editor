@@ -18,11 +18,12 @@ def apply(
     container: ImageContainer,
     op: Op,
     selection: "GenAISelection | None" = None,
-) -> tuple[ImageContainer, GenAIOp, list["ScoredCandidate"]]:
+) -> tuple[ImageContainer, GenAIOp, list["ScoredCandidate"], bool]:
     """Route a GENAI op through the background pipeline.
 
     `selection` replays a prior generation (cached candidates + user's pick) instead
-    of calling the provider again.
+    of calling the provider again. The last element is the seam gate's needs-manual-review
+    flag (BG-P1) — callers must surface it, not drop it.
     """
     from vlm_photo_editor.background import run_background_pipeline
     from vlm_photo_editor.ops.mask import bbox_to_mask
@@ -46,7 +47,7 @@ def apply(
     seed_raw = op.params.get("seed")
     seed = int(seed_raw) if seed_raw is not None else None
 
-    result, genai_op, _, scored = run_background_pipeline(
+    result, genai_op, needs_manual, scored = run_background_pipeline(
         container,
         mask,
         prompt=prompt,
@@ -58,4 +59,4 @@ def apply(
         override_index=selection.override_index if selection is not None else None,
         **extra_kwargs,
     )
-    return result, genai_op, scored
+    return result, genai_op, scored, needs_manual

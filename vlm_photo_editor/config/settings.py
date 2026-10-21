@@ -38,7 +38,11 @@ def _path_setting(env_key: str, bundled_default: Path | None = None) -> str | No
 @dataclass
 class AppSettings:
     # Seam metric gate for genAI background composites (see background/quality.py::seam_metric).
-    seam_threshold: float = 10.0
+    # The metric lives on a 0-~0.1 scale; 0.03 sits ~1.4x above the worst benign composite
+    # measured and only catches gross seams. Env-overridable if it flags good results.
+    seam_threshold: float = field(
+        default_factory=lambda: float(os.environ.get("VLM_SEAM_THRESHOLD") or 0.03)
+    )
     # Gaussian sigma (px) for the composite seam feather.
     feather_px: int = 20
     cache_ttl_seconds: int = 3600

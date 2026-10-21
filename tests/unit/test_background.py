@@ -21,6 +21,7 @@ from vlm_photo_editor.background.providers import (
     provider_name_for,
 )
 from vlm_photo_editor.background.quality import GenAISelection, seam_metric, select_best
+from vlm_photo_editor.config.settings import get_settings
 from vlm_photo_editor.imageio.container import ImageContainer
 from vlm_photo_editor.schema.recipe import GenAIOp
 
@@ -285,6 +286,38 @@ def test_subject_pixels_unchanged_after_composite() -> None:
     assert np.all(result.pixels[safe_outside] == source.pixels[safe_outside])
 
 
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16], ids=["8bit", "16bit"])
+def test_composite_realistic_frame_default_feather(dtype) -> None:
+    """BG-B1: 400x400 frame, 100x100 mask, default feather must not raise, and every
+    pixel beyond the feather zone is byte-identical to source."""
+    from scipy.ndimage import distance_transform_edt
+
+    rng = np.random.default_rng(2)
+    top = np.iinfo(dtype).max
+    bit_depth = 16 if dtype == np.uint16 else 8
+    source = _container(rng.integers(0, top // 2, (400, 400, 3)).astype(dtype), bit_depth)
+    generated = _container(rng.integers(top // 2, top, (400, 400, 3)).astype(dtype), bit_depth)
+    mask = _center_mask(400, 400, margin=150)
+
+    result = composite(source, generated, mask)  # default feather_px
+
+    outside = distance_transform_edt(~mask) > 3 * get_settings().feather_px
+    assert outside.sum() > 0
+    assert np.array_equal(result.pixels[outside], source.pixels[outside])
+
+
+def test_provider_output_is_scaled_to_16bit_source() -> None:
+    """BG-B2: an 8-bit provider PNG fed into a 16-bit source spans the 16-bit range."""
+    source = _container(np.full((16, 16, 3), 30000, dtype=np.uint16), bit_depth=16)
+    gen = Generator(replicate_client=_mock_replicate(np.full((16, 16, 3), 200, dtype=np.uint8)))
+
+    cand = gen.generate(source, np.ones((16, 16), dtype=bool), "p", "m", "s1", n=1)[0]
+
+    assert cand.container.bit_depth == 16
+    assert cand.container.pixels.dtype == np.uint16
+    assert int(cand.container.pixels.max()) == 200 * 257
+
+
 def test_composite_modifies_masked_region() -> None:
     # Use random pixels so color_match computes non-degenerate std and preserves
     # the difference between source and generated regions.
@@ -431,6 +464,110 @@ class _StubProvider:
             )
             for i, px in enumerate(self._pixels)
         ]
+
+
+def _portrait_with_mask(frac: float, cx: float, cy: float) -> tuple[ImageContainer, np.ndarray]:
+    from vlm_photo_editor.imageio.loaders import load
+
+    source = load(FIXTURES.parent / "face_portrait.jpg")
+    h, w = source.height, source.width
+    mh, mw = int(h * frac), int(w * frac)
+    y0, x0 = int(cy * h - mh / 2), int(cx * w - mw / 2)
+    mask = np.zeros((h, w), dtype=bool)
+    mask[max(0, y0) : y0 + mh, max(0, x0) : x0 + mw] = True
+    return source, mask
+
+
+def _fill(kind: str, source: ImageContainer) -> ImageContainer:
+    from scipy.ndimage import gaussian_filter
+
+    px = source.pixels.astype(np.float64)
+    if kind == "blur":
+        out = gaussian_filter(px, (15, 15, 0))
+    elif kind == "flat":
+        out = np.broadcast_to(px.reshape(-1, 3).mean(0), px.shape)
+    else:  # "invert"
+        out = 255 - px
+    return _container(np.clip(out, 0, 255).astype(np.uint8))
+
+
+@pytest.mark.parametrize(
+    ("kind", "placement", "expect_manual"),
+    [
+        ("blur", (0.3, 0.5, 0.5), False),
+        ("blur", (0.5, 0.5, 0.5), False),
+        ("blur", (0.15, 0.3, 0.4), False),
+        ("flat", (0.3, 0.5, 0.5), False),
+        ("flat", (0.5, 0.5, 0.5), False),
+        ("flat", (0.25, 0.7, 0.7), False),
+        ("invert", (0.25, 0.7, 0.7), True),
+    ],
+)
+def test_default_seam_threshold_separates_benign_from_gross_seams(
+    kind: str, placement: tuple[float, float, float], expect_manual: bool
+) -> None:
+    """BG-P1: the shipped default threshold sits on the metric's real (~0-0.1) scale —
+    benign fills pass, a gross seam is flagged. Uses the default, not an override."""
+    source, mask = _portrait_with_mask(*placement)
+    cand = Candidate(
+        container=_fill(kind, source),
+        genai_op=GenAIOp(step_id="s1", model="m", prompt="p", seed=0),
+    )
+
+    selection = select_best(source, [cand], mask)
+
+    assert selection.needs_manual is expect_manual
+
+
+def test_seam_threshold_env_override(monkeypatch) -> None:
+    from vlm_photo_editor.config.settings import AppSettings
+
+    monkeypatch.setenv("VLM_SEAM_THRESHOLD", "0.07")
+    assert AppSettings().seam_threshold == 0.07
+    monkeypatch.delenv("VLM_SEAM_THRESHOLD")
+    assert AppSettings().seam_threshold == 0.03
+
+
+def test_worst_case_seam_exceeds_default_threshold() -> None:
+    """BG-P1: the issue's worst-case seam (noise outside, flat black inside) is above the
+    shipped default, so the gate has headroom to fire."""
+    rng = np.random.default_rng(3)
+    worst = _container(rng.integers(0, 256, (128, 128, 3), dtype=np.uint8))
+    mask = _center_mask(128, 128, margin=32)
+    worst.pixels[mask] = 0
+
+    assert seam_metric(worst, mask) > get_settings().seam_threshold
+
+
+@pytest.mark.parametrize(("fill", "expected"), [(105, []), (None, ["s1"])], ids=["benign", "gross"])
+def test_executor_surfaces_needs_manual_step_ids(monkeypatch, fill, expected) -> None:
+    """BG-P1: the seam-gate flag reaches ExecutionResult instead of being dropped."""
+    import vlm_photo_editor.background as background
+    from vlm_photo_editor.ops.executor import Executor
+    from vlm_photo_editor.schema.ops import Backend, BoundingBox, Op, OpGraph, OpName
+
+    mask = _center_mask(128, 128, margin=32)
+    if fill is None:  # gross: black fill into noisy surroundings around a white hole
+        rng = np.random.default_rng(4)
+        source = _container(rng.integers(0, 256, (128, 128, 3), dtype=np.uint8))
+        source.pixels[mask] = 255
+        gen_px = np.zeros((128, 128, 3), dtype=np.uint8)
+    else:  # benign: flat fill matching a flat frame
+        source = _container(np.full((128, 128, 3), fill, dtype=np.uint8))
+        gen_px = np.full((128, 128, 3), fill, dtype=np.uint8)
+    provider = _StubProvider([gen_px])
+    monkeypatch.setattr(background, "get_provider", lambda model: provider)
+    op = Op(
+        op_name=OpName.BACKGROUND_REPLACE,
+        params={"prompt": "sky", "model": "test-model", "n": 1},
+        backend=Backend.GENAI,
+        step_id="s1",
+        bbox=BoundingBox(x=32, y=32, width=64, height=64),
+    )
+
+    result = Executor().apply(source, OpGraph(ops=[op]))
+
+    assert result.genai_needs_manual == expected
 
 
 def test_select_best_rejects_empty_candidate_list() -> None:

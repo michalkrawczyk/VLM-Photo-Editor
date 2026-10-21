@@ -11,7 +11,7 @@
 - **Subject pixels frozen:** after compositing, assert that every pixel outside the mask is byte-identical to the input. Test: `test_background.py::test_subject_pixels_unchanged_after_composite`. This is a hard assertion, not a warning.
 - **Provider honours the mask (BG-P3):** a provider must regenerate *only* the masked region — via a native mask/inpaint parameter, or by only ever sending the model the masked crop (see `GoogleProvider`). Re-masking with `composite()` afterwards is not a substitute. A provider/model that cannot do this (e.g. Qwen2.5-VL, which emits text) raises in `generate()`; it must not return a full-frame regeneration.
 - **Seed/model/prompt stored:** every candidate generation records `model`, `prompt`, and `seed` in the `Recipe`. A provider whose API accepts no seed (OpenAI images.edit, Google Imagen edit) records `seed=None` — never a fabricated `random.randint` (BG-P2); such a step is regenerated fresh on replay, not falsely reproduced.
-- **Seam gate:** if the seam metric exceeds threshold after seed re-roll, flag the result for manual review — do not silently pass a bad composite.
+- **Seam gate:** if the seam metric exceeds threshold after seed re-roll, flag the result for manual review — do not silently pass a bad composite. Threshold is `settings.seam_threshold` (default 0.03, `VLM_SEAM_THRESHOLD` to override) on the metric's 0-~0.1 scale; the flag reaches `ExecutionResult.genai_needs_manual` and the UI warning (BG-P1).
 - **N candidates returned:** provider must return exactly N candidates (different seeds); caller picks one.
 - **All candidates scored and returned:** `select_best` returns every `ScoredCandidate`, not just the winner — the caller (UI) may override the pick via `override_index`.
 

@@ -43,7 +43,10 @@ class BackgroundSelection:
 def seam_metric(composited: ImageContainer, mask: np.ndarray) -> float:
     """Mean absolute gradient discontinuity at the mask boundary.
 
-    Lower is better. Computed on a 2px ring on each side of the boundary.
+    Lower is better. Computed on a 2px ring on each side of the boundary, on pixels
+    normalised to [0, 1], so values are small (worst constructible seam ~0.1; benign
+    composites stay below ~0.02). A coarse gross-defect gate, not a quality score: it
+    depends on image content and mask placement and cannot rank close candidates reliably.
     """
     pixels = composited.pixels.astype(np.float64)
     if composited.bit_depth == 16:
