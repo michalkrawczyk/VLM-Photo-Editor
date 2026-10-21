@@ -90,3 +90,4 @@ conventions. Newest at the bottom.
 - 2026-10-16 — bundle cleanup: removed `utility_scripts/run_all_reviews.sh` (its `plans/plan_review.md` is gone); pruned shipped entries from `future_improvements.md` (local face detection, structlog, Character Focus framing); `.claude/` is no longer tracked (ignored, stays on disk).
 - 2026-10-17 — merged `agent_notes/future_improvements.md` into `plans/future_improvements.md`; dropped stale entries (precision-exploration options superseded by module map, op-catalog Extension Point A shipped); file removed from bundle.
 - 2026-10-17 — moved `generate_/view_/search_module_map.py` into `utility_scripts/`; repo-root default now `parents[2]` of the script; CLAUDE.md, `module_map.md`, `index.md`, `cleanup.sh`, `.claude/` paths updated.
+- 2026-10-19 — stack.md Logging & Redaction rewritten: redaction now a log-record-factory hook + structlog processor (SR-P1), not a root-logger filter.

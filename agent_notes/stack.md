@@ -36,25 +36,16 @@ Cross-platform status:
 
 No third-party logging library. The only logging requirement in the build plan is **redaction** (Global Invariant #2: no API key ever appears in a log).
 
-This is implemented as a stdlib `logging.Filter` on the root logger:
+`install_redaction_filter()` (`secrets/redaction.py`, called first thing in `app/main.py`, idempotent) wires two hooks:
 
-```python
-class RedactionFilter(logging.Filter):
-    def filter(self, record):
-        record.msg = re.sub(r'sk-[A-Za-z0-9]{20,}', '[REDACTED]', str(record.msg))
-        record.args = ()  # prevent deferred formatting from exposing raw args
-        return True
+- **stdlib:** wraps `logging.setLogRecordFactory` so every `LogRecord` is scrubbed (`RedactionFilter.filter`) at creation. A `logging.Filter` on the root *logger* does not work: `Logger.handle()` only checks the filters of the logger a record was logged through, so child loggers (`logging.getLogger(__name__)`) bypass it (SR-P1). The factory covers every logger and handler, including ones created later.
+- **structlog:** `structlog.configure(processors=...)` inserts `redaction_processor` just before the renderer. structlog's default `PrintLogger` never touches stdlib `logging`, so it needs its own hook.
 
-logging.getLogger().addFilter(RedactionFilter())
-```
+**structlog `>=24.0`** is a project dependency, used in `agents/aggregator.py`, `agents/critic.py` and `agents/planner.py` via `structlog.get_logger()`.
 
-A root-logger filter fires for every `LogRecord` before any handler (existing or future) dispatches it — the same "no unguarded sink" guarantee that was cited for structlog. No extra dependency needed for redaction itself.
+Known gaps: exception tracebacks rendered after the processor (`ConsoleRenderer` formats `exc_info` itself) and non-`str` values rendered by `repr` are not scrubbed; Google `AIza…` keys are not matched by the pattern (SR-S1).
 
-**structlog `>=24.0`** is a project dependency (`requirements.txt`), adopted for structured log output in `agents/aggregator.py` and `agents/critic.py` via `structlog.get_logger()`. It does not replace `RedactionFilter` as the redaction mechanism.
-
-**Unverified caveat:** no `structlog.configure(...)` call exists anywhere in the repo, so `structlog.get_logger()` uses structlog's default `PrintLogger`, which does not route through stdlib `logging`. `RedactionFilter` is attached to the root stdlib logger — it may not see log calls made through structlog in `aggregator.py`/`critic.py`. Needs a follow-up check against Global Invariant #2 (no API key ever appears in a log).
-
-Alternative rejected for redaction itself: **loguru** — per-sink filter hooks can't guarantee universal redaction the way a root-logger filter does.
+Alternative rejected for redaction itself: **loguru** — per-sink filter hooks can't guarantee universal redaction the way a record-factory hook does.
 
 ---
 

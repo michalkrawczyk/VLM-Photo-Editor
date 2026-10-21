@@ -40,15 +40,6 @@ Fix: `prompt: str = Field(min_length=1)`, `model: str = Field(min_length=1)`.
 
 ---
 
-**S-D3: `Recipe.source_path` is an unvalidated bare string**
-**File:** [vlm_photo_editor/schema/recipe.py:20](vlm_photo_editor/schema/recipe.py#L20)
-
-`source_path` is serialised to the sidecar JSON. An attacker-controlled recipe can embed a path to a critical file; any replay logic that opens `recipe.source_path` directly would follow it.
-
-Fix: validate on construction (`Path(v).resolve()` and check it's within an allowed root), or type as `pathlib.Path` so callers are at least aware they're dealing with a path.
-
----
-
 ### Code Smells / Maintainability
 
 **S-C3: `HumanPlan.mode` and `EditDelta.mode` are unvalidated bare strings**
@@ -165,35 +156,6 @@ Fix: remove `install_loader_deps()` from this module; provide a `scripts/install
 ## Batch 3 Review — Image I/O
 
 Review date: 2026-06-26. Files: `imageio/container.py`, `imageio/loaders.py`, `imageio/savers.py`.
-
----
-
-### Bugs & Correctness
-
-**IO-B3: `bit_depth` and `pixels.dtype` can be inconsistent — field is not authoritative**
-**File:** [vlm_photo_editor/imageio/container.py:11-13](vlm_photo_editor/imageio/container.py#L11)
-
-`ImageContainer` accepts any `(bit_depth, pixels)` combination without validation. A container with `bit_depth=16` and `pixels.dtype=np.uint8` can be freely constructed. The saver branches on `pixels.dtype`, not `bit_depth`, so the field is informational-only. Any consumer that branches on `bit_depth` (rather than the array dtype) will produce incorrect output without error.
-
-Fix: add `__post_init__` asserting `(bit_depth == 8 and pixels.dtype == np.uint8) or (bit_depth == 16 and pixels.dtype == np.uint16)`.
-
----
-
-### Security & Data Integrity
-
-**IO-D1: PIL file handle not explicitly closed in `_load_pil`**
-**File:** [vlm_photo_editor/imageio/loaders.py:45-46](vlm_photo_editor/imageio/loaders.py#L45)
-
-`Image.open(path)` followed by `img.load()` does not close the underlying file handle. PIL defers close until GC in some modes. Under batch processing (P9), hundreds of images are opened concurrently; if GC is delayed the process exhausts the OS file descriptor limit and subsequent opens raise `OSError: [Errno 24] Too many open files`.
-
-Fix: use `with Image.open(path) as img: img.load()` (Pillow ≥ 9.1 supports `__exit__`), or call `img.close()` explicitly after the pixel array is extracted.
-
----
-
-**IO-D2: RAW loader silently discards ICC profile and EXIF**
-**File:** [vlm_photo_editor/imageio/loaders.py:33-38](vlm_photo_editor/imageio/loaders.py#L33)
-
-`_load_raw` always returns `icc_profile=None, metadata={}`. rawpy exposes the embedded ICC profile via `raw.color_desc` and full EXIF via `raw.libraw_processed_image`. Discarding ICC means the RAW's color space is unknown; downstream ops apply implicit sRGB assumptions that are incorrect for wide-gamut cameras (e.g., Canon Wide Gamut, ProPhoto). The `ImageContainer` fields exist specifically to carry this data; RAW files always arrive with both empty.
 
 ---
 
@@ -850,25 +812,6 @@ Per-module AGENTS.md is the documented pre-edit reference for this layer (Princi
 
 ### Bugs & Correctness
 
-**OE-B1: `CROP` params are never remapped through `origin`, while `bbox` and FRAME focus are — a second size-changing op runs in the wrong coordinate space**
-**File:** [vlm_photo_editor/ops/executor.py:44-120](vlm_photo_editor/ops/executor.py#L44)
-
-`_remap_for_origin` shifts `op.bbox` and `focus_x`/`focus_y` from plan-start coordinates into the current image's space, and `_advance_origin` accumulates the offset. `op.params["left"]/["top"]` are not touched — yet `_advance_origin` adds them to the running origin (line 109), which only makes sense if crop params are relative to the *current* image, i.e. the opposite space from `bbox`. Two coordinate conventions coexist inside one `Op`.
-
-The rest of the system reads them as plan-start coordinates: `validate_crop_bounds` is called against the original `container.width/height` ([main.py:116](vlm_photo_editor/app/main.py#L116), [edit_flow.py:71](vlm_photo_editor/agents/edit_flow.py#L71)), and the prompt tells the model `0 ≤ left < right ≤ image_width` for the image it was shown ([op_catalog.py:67](vlm_photo_editor/schema/op_catalog.py#L67)).
-
-Verified on a 100×100 image with `crop(0,0,80,80)` then `crop(10,10,90,90)` — both pass `validate_crop_bounds` at plan time, then execution raises:
-
-```
-ValueError: crop params out of bounds: left=10 top=10 right=90 bottom=90 image=80x80
-```
-
-A crop that stays in range after the first crop is worse: it silently crops the wrong region. `frame` → `crop` and `frame` → `frame` have the same defect.
-
-Fix: remap `left/top/right/bottom` in `_remap_for_origin` exactly as `bbox` is (clamping to the current image), or reject a graph containing more than one `SIZE_CHANGING` op in `validate_op_graph`.
-
----
-
 **OE-B5: float→int truncation and unchecked `astype` in `cv_backend`**
 **Files:** [vlm_photo_editor/ops/backends/cv_backend.py](vlm_photo_editor/ops/backends/cv_backend.py) (`apply_blur`, `_denoise`)
 
@@ -1250,21 +1193,6 @@ Boundary check: the module imports `schema`, `imageio`, numpy/scipy/skimage, and
 
 ### Principle & Scope Violations
 
-**BG-P1: the seam gate can never fire — threshold is ~100× the metric's maximum, and the one production caller throws the flag away**
-**File:** [vlm_photo_editor/background/quality.py:36,43](vlm_photo_editor/background/quality.py#L36), [background/__init__.py:21](vlm_photo_editor/background/__init__.py#L21), [ops/backends/genai_backend.py:30](vlm_photo_editor/ops/backends/genai_backend.py#L30)
-
-`seam_metric` divides pixels to `[0, 1]` before `sobel`, then returns the difference of two mean gradient magnitudes — a number bounded well below 1. The default `threshold=10.0` in both `select_best` and `run_background_pipeline` is therefore unreachable. Verified on a deliberately worst-case composite (uniform noise outside, flat black inside the mask — the hardest seam constructible):
-
-```
-seam_metric worst-case: 0.10890008923967973   threshold default 10.0
-```
-
-So `best_metric < threshold` is always true, `select_best` always returns `needs_manual=False`, the extra-seed re-roll branch ([quality.py:71-86](vlm_photo_editor/background/quality.py#L71)) is dead code, and `AGENTS.md`'s "Seam gate: hard gate — re-roll seed, then flag for manual if still failing" is decorative. Even if the threshold were fixed, [genai_backend.py:30](vlm_photo_editor/ops/backends/genai_backend.py#L30) unpacks the result as `result, genai_op, _` — the manual-review flag is discarded on the only path the executor uses, so no caller can act on it.
-
-Fix: calibrate the threshold against the metric's actual scale (or normalise the metric to a documented 0–1 scale) and propagate `needs_manual` through `genai_backend.apply` into `ExecutionResult` so the UI can gate on it. A test asserting `needs_manual is True` for a known-bad composite is the DoD.
-
----
-
 **BG-P4: `AGENTS.md` promises byte-identical pixels outside the mask; `composite()` deliberately does not deliver that**
 **File:** [vlm_photo_editor/background/AGENTS.md:11](vlm_photo_editor/background/AGENTS.md#L11), [composite.py:94-134](vlm_photo_editor/background/composite.py#L94)
 
@@ -1282,34 +1210,6 @@ All four collapse to a single candidate when `seed is not None` (`seeds = [seed]
 ---
 
 ### Bugs & Correctness
-
-**BG-B1: `composite()` raises `RuntimeError` on any realistically sized image — the whole genAI path is dead outside unit tests**
-**File:** [vlm_photo_editor/background/composite.py:104,130-133](vlm_photo_editor/background/composite.py#L104)
-
-`alpha = gaussian_filter(mask, sigma=feather_px)` has effectively unbounded support, while the safety check treats everything beyond `binary_dilation(mask, iterations=feather_px*3)` as "must equal source exactly". The Gaussian tail is small there but not zero, and after `_from_float`'s rounding it changes pixel values. Verified on a 400×400 frame, 100×100 mask, default `feather_px=20`:
-
-```
-RuntimeError: composite: subject pixels outside feather zone were modified
-max alpha in 'safe' zone: 0.004454833269953386
-safe pixels: 118920
-```
-
-`tests/unit/test_background.py` passes only because its fixtures are small enough that `safe_outside.any()` is False and the assertion is skipped — exactly the escape hatch the comment at [composite.py:128-129](vlm_photo_editor/background/composite.py#L128) installs. Fix: truncate the alpha ramp (`alpha[safe_outside] = 0`, or use a distance-transform ramp with finite support) so the invariant is true by construction rather than asserted after the fact.
-
----
-
-**BG-B2: every provider drops 16-bit sources to 8-bit values held in a 16-bit container — the generated region comes back near-black**
-**File:** [vlm_photo_editor/background/providers/replicate.py:49](vlm_photo_editor/background/providers/replicate.py#L49), [openai_provider.py:38](vlm_photo_editor/background/providers/openai_provider.py#L38), [google_provider.py:29](vlm_photo_editor/background/providers/google_provider.py#L29), [huggingface.py:41](vlm_photo_editor/background/providers/huggingface.py#L41)
-
-`np.array(img, dtype=source.pixels.dtype)` reinterprets 0–255 PNG data as `uint16` without rescaling, so a mid-grey 200 stays 200 in a 0–65535 container. Verified:
-
-```
-cast result max: 200   (expected ~51400 for a 16-bit container)
-```
-
-The container is then marked `bit_depth=16`, and `composite` divides by 65535 — the whole generated background renders as near-black, and `_from_float` writes that back. Same defect shape as OPS-B2/OE-B2 in Batch 3. Fix in one shared helper: `(arr.astype(np.uint16) << 8) | arr` (or `* 257`) when the source is 16-bit.
-
----
 
 **BG-B4: the blend never reaches alpha 1.0, so the "generated" region is permanently diluted with the old background**
 **File:** [vlm_photo_editor/background/composite.py:104-107](vlm_photo_editor/background/composite.py#L104)
@@ -1415,33 +1315,6 @@ The candidate picker now shows each candidate's seam metric, but the executor pa
 Review date: 2026-08-13. Files: `secrets/__init__.py` (empty), `secrets/redaction.py`, `secrets/store.py`, `secrets/AGENTS.md`. Cross-checked against consumers: `app/main.py` (install call site) and every logger-construction site in the app (`schema/plan.py`, `pipeline/cost_router.py`, `pipeline/batch.py`, `agents/planner.py`, `agents/critic.py`, `agents/aggregator.py`), plus `background/providers/google_provider.py` (the one live consumer of a key format the redaction regex doesn't cover).
 
 Boundary check: `secrets/` imports stdlib only (`os`, `re`, `logging`) plus `keyring`/`python-dotenv` behind lazy `try/except` imports inside methods. No sibling imports. Boundary honored.
-
----
-
-### Principle & Scope Violations
-
-**SR-P1: `install_redaction_filter()` attaches to the wrong object — redaction is a structural no-op for every logger the app actually uses**
-**File:** [vlm_photo_editor/secrets/redaction.py:20-21](vlm_photo_editor/secrets/redaction.py#L20)
-
-```python
-def install_redaction_filter() -> None:
-    logging.getLogger().addFilter(RedactionFilter())
-```
-
-`Logger.handle()` checks `self.filters` — the filters of the logger a record was logged *through*, not any ancestor's. A filter added to the root logger only fires for records logged via the root logger itself (`logging.info(...)`, `logging.getLogger().warning(...)`). Verified empirically:
-
-```
-CHILD LOGGER OUTPUT: 'leaked key: sk-ant-abcdefghijklmnopqrstuvwx\n'          # unredacted
-ROOT LOGGER OUTPUT:  'leaked key via root: [REDACTED]\n'                      # redacted
-```
-
-Every application logger is a named/child logger, not root: `schema/plan.py:12`, `pipeline/cost_router.py:13`, `pipeline/batch.py:24`, `agents/planner.py:8` all do `logging.getLogger(__name__)`. None of these are protected. `agents/critic.py:15` and `agents/aggregator.py:11` use `structlog.get_logger()`; no `structlog.configure()` call exists anywhere in the codebase, so structlog's default `PrintLogger` writes straight to stdout, bypassing the stdlib `logging` module — and this filter — entirely.
-
-This directly contradicts CLAUDE.md Principle 2 ("redaction filter scrubs logs") and secrets/AGENTS.md's own critical invariant ("Redaction filter wired at startup ... before any key ever flows through the system") — the invariant is documented as holding and does not hold. It is also more fundamental than two already-open rows, AGT-D2 (planner.py uses stdlib logging, "bypasses" structlog's `RedactionProcessor`) and SEC-C4 (filter not guaranteed to run before first log call): fixing either leaves this defect in place, since a message logged through *any* named logger, at any time, is unprotected regardless of call order or which logging API is used.
-
-The one existing test for this path, `test_install_redaction_filter_attaches_to_root`, only asserts the filter object is present in `root.filters` — it never logs through a real named logger and inspects the output, so this has never been exercised end-to-end.
-
-Fix: attach `RedactionFilter` to the handler(s) rather than the logger (e.g. `for h in logging.getLogger().handlers: h.addFilter(RedactionFilter())`, applied after handlers exist). For structlog output, add the same scrubbing as a structlog processor run before rendering — structlog never consults stdlib `logging.Filter` objects by default.
 
 ---
 
@@ -1756,21 +1629,12 @@ All issues across all batches, sorted by severity.
 | PL-P3 | High | planner.py:40,75, edit_flow.py:66,88 | `agents/` imports `ops.backends.pil_backend`, `ops.validator`, `ops.executor` — banned by `agents/AGENTS.md` invariant 1 |
 | OE-P2 | High | executor.py:152, cv_backend.py:15, genai_backend.py:17 | `invert` honoured on only 2 of 4 dispatch paths — `apply_inpaint`/genAI edit exactly the region the flag says to protect (Principle 6) |
 | OE-P3 | Medium | genai_backend.py:17-20 | Backend still falls back to an all-True fill mask without a bbox; the `requires_bbox` guard covers only the compile/executor path |
-| OE-B1 | High | executor.py:44-120 | `CROP` params never remapped through `origin` while `bbox`/focus are — a second size-changing op crashes or crops the wrong region (verified) |
-| BG-P1 | High | quality.py:36,43 | Seam metric is bounded ~0.1 but threshold defaults to 10.0 (verified) — gate never fires, re-roll branch dead, and `genai_backend.py:30` discards `needs_manual` anyway |
-| BG-B1 | High | composite.py:104,130-133 | Gaussian alpha tail (~0.0045) beyond the `3*feather` safe zone trips the RuntimeError on any realistic frame (verified 400x400) — genAI path dead outside small fixtures |
-| BG-B2 | High | replicate.py:49, openai_provider.py:38, google_provider.py:29, huggingface.py:41 | `np.array(img, dtype=uint16)` keeps 0-255 values in a 16-bit container (verified) — generated background renders near-black |
-| SR-P1 | High | secrets/redaction.py:20-21 | `install_redaction_filter()` adds the filter to the root *logger*, not a handler — every named logger in the app (verified) and all structlog output bypass redaction entirely; more fundamental than AGT-D2/SEC-C4 |
 | D6 | Medium | edit_flow.py:107 | Module-level `edit_graph` singleton breaks multi-worker deploy |
 | S-D2 | Medium | recipe.py:11 | `GenAIOp.prompt`/`model` accept empty strings |
-| S-D3 | Medium | recipe.py:20 | `source_path` unvalidated bare string — replay path risk |
 | SEC-D2 | Medium | registry.py:95, settings.py:22 | Module-level singletons mutated across Streamlit sessions |
 | SEC-D3 | Medium | models/registry.py:67 | API key in constructor kwarg — exposed in exception repr/traceback |
 | SEC-C4 | Low | redaction.py | `install_redaction_filter()` ordering is by convention in `app/main.py` only; other entry points unprotected (superseded by SR-P1) |
 | SR-S1 | Medium | secrets/redaction.py:6 | Redaction regex covers `sk-ant-`/`sk-`/`r8_` only — Google API keys (live `google` provider) pass through unredacted |
-| IO-B3 | Medium | container.py:11 | `bit_depth` and `pixels.dtype` can be inconsistent — no validation |
-| IO-D1 | Medium | loaders.py:45 | PIL file handle not closed — fd leak under batch load |
-| IO-D2 | Medium | loaders.py:33 | RAW loader discards ICC profile and EXIF; container fields always empty for RAW |
 | IO-P1 | Medium | loaders.py:52-57 | `_load_pil` converts every 16-bit PNG/TIFF to 8-bit RGB before the dtype test — the `uint16` branch is unreachable (verified) |
 | IO-P2 | Medium | savers.py:15-16,51 | Source guard is path-inequality only: existing `dest` silently clobbered, app path guards a temp copy, hardlink defeats `resolve()` |
 | IO-D3 | Medium | savers.py:47-51 | (EXIF fixed 2026-10-05; XMP/IPTC/16-bit open) All EXIF/XMP/IPTC discarded on save — `container.metadata` is populated by 6 modules and read by none |

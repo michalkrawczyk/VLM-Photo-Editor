@@ -111,6 +111,35 @@ Let the planner ask a structured multiple-choice question before building a plan
 
 ---
 
+## Multi-Region Annotated Edits
+
+Draw several boxes on the preview, give each its own instruction (ordinary edit or genAI edit), and process them all in one plan → one approval → one run.
+
+**Motivation:** the canvas keeps only the last drawn rect (`objects[-1]`) and writes one `state["bbox"]` (`app/components/canvas.py`); `app/main.py:295-338` injects that single box into ops with `bbox is None`. There is no per-box text, so the user cannot say "remove this, brighten that" spatially. VLMs are weak at pixel grounding (see the grounding entry above); user-drawn boxes give exact coordinates. Distinct from that entry: boxes here are user-drawn, not auto-resolved from free text.
+
+**Design:**
+- New schema type (`schema/`, root dep): `RegionAnnotation {region_id, bbox: BoundingBox, instruction: str, kind: "edit" | "genai" | "auto"}`. Passed to the planner as grounded input, not as ops.
+- Canvas: keep all rect objects with numbered labels; below it one `st.text_area` per region, a `kind` selector, and delete. Normalized coords as today, scaled to pixels at submit.
+- Planner prompt gains a `USER REGIONS` block (id, pixel bbox, instruction), mirroring the `SUBJECT DETECTION` block (`agents/planner.py` ~273). Planner emits one plan step per region (stable step-ID ↔ `region_id`). Compiler sets `Op.bbox` from the annotation — never from VLM-guessed numbers.
+- `kind=edit` → confined imaging ops (`GENERIC_CONFINABLE` / opencv); `kind=genai` → `region_edit` genai; `auto` → planner chooses.
+- Manual mode: one approval for the whole plan. Risk tiers unchanged (genai = HIGH, so gated under `auto_low`/`auto_medium`).
+- No new executor path: `Executor.apply` already iterates ops. Recipe records bbox + prompt + seed per op. "At once" means one plan/approval/run, not concurrent genAI calls — ops still run sequentially.
+
+**Constraints / risks:**
+- Overlapping boxes: apply in step order; flag overlap in `plan_view`. genAI on overlapping boxes is order-dependent — warn or reject.
+- Subject freeze (Principle 6): a genAI box overlapping the detected subject must not alter subject pixels — mask the subject out or warn.
+- Size-changing ops (crop/frame) combined with regions: bbox origin remap is fragile (`plans/issues.md` OE-B1). Fix that first, or run regions after the size change.
+- `full_auto` genAI ceiling: N genAI regions count against the per-run ceiling; surface the count before the run.
+- Planner ↔ Executor parity (Principle 8): offer `kind=genai` only when policy and keys allow it.
+- Replace `state["bbox"]` with `state["regions"]`; keep the single-box path working during migration. Schema addition is T3.
+- `streamlit-drawable-canvas` already needs a compat shim and its multi-object handling is flaky; a different widget may be required.
+
+**Reference points:** `app/components/canvas.py`, `app/main.py:295-338`, `agents/planner.py`, `planner/compiler.py`, `schema/ops.py` (`BoundingBox`, `Op.bbox`), `schema/op_catalog.py` (`region_edit`).
+
+**Trigger for adoption:** users repeatedly chain single-box runs or change requests to edit different areas, or planner-guessed region coordinates are often wrong.
+
+---
+
 ## Planner-Authored Scripts (Op Catalog Extension Point B)
 
 The op registry and developer-registered ops (Extension Point A) shipped — see `vlm_photo_editor/schema/op_catalog.py`. Still out of scope: the LLM proposing a small novel script as part of a plan, executed as a MEDIUM/HIGH-risk op. This is arbitrary AI-authored code execution with no sandboxing infrastructure in this codebase. Needs its own design/threat-model document first (execution sandbox, resource limits, review/approval flow beyond the existing plan-approval UI, secrets isolation). Do not fold into catalog work.
