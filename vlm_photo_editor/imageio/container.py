@@ -14,6 +14,14 @@ class ImageContainer:
     icc_profile: bytes | None = None
     metadata: dict = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        expected = {8: np.uint8, 16: np.uint16}.get(self.bit_depth)
+        if expected is None or self.pixels.dtype != expected:
+            raise ValueError(
+                f"bit_depth={self.bit_depth} inconsistent with pixels.dtype={self.pixels.dtype}; "
+                "expected 8 with uint8 or 16 with uint16"
+            )
+
     @property
     def width(self) -> int:
         return int(self.pixels.shape[1])

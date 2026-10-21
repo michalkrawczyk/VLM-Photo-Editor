@@ -39,16 +39,68 @@ def test_redaction_filter_short_sk_not_redacted():
     assert "[REDACTED]" not in record.msg
 
 
-def test_install_redaction_filter_attaches_to_root():
-    root_logger = logging.getLogger()
-    before = len(root_logger.filters)
+_LEAK = "sk-ant-abcdefghijklmnopqrstuvwx"
+
+
+@pytest.fixture
+def clean_logging_state():
+    """Snapshot/restore the process-global hooks install_redaction_filter() mutates."""
+    import structlog
+
+    factory = logging.getLogRecordFactory()
+    config = structlog.get_config()
+    yield
+    logging.setLogRecordFactory(factory)
+    structlog.configure(**config)
+
+
+def test_install_redacts_named_logger_output(clean_logging_state):
+    """SR-P1: records from a named/child logger, to any handler, are scrubbed."""
+    import io
+
     install_redaction_filter()
-    assert len(root_logger.filters) >= before + 1
-    # Restore: remove the filter we just added
-    for f in list(root_logger.filters):
-        if isinstance(f, RedactionFilter):
-            root_logger.removeFilter(f)
-            break
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)  # attached AFTER install, to a child logger
+    child = logging.getLogger("vlm_photo_editor.test_sr_p1")
+    child.addHandler(handler)
+    child.setLevel(logging.INFO)
+    child.propagate = False
+    try:
+        child.info("leaked key: %s", _LEAK)
+        child.info("fstring key: " + _LEAK)
+    finally:
+        child.removeHandler(handler)
+    out = stream.getvalue()
+    assert _LEAK not in out
+    assert out.count("[REDACTED]") == 2
+
+
+def test_install_redacts_structlog_output(clean_logging_state, capsys):
+    """SR-P1: structlog bypasses stdlib logging, so it needs its own processor."""
+    import structlog
+
+    structlog.reset_defaults()
+    install_redaction_filter()
+    structlog.get_logger().info("calling", key=_LEAK, nested={"k": [_LEAK]})
+    out = capsys.readouterr().out
+    assert "calling" in out
+    assert _LEAK not in out
+    assert "[REDACTED]" in out
+
+
+def test_install_is_idempotent(clean_logging_state):
+    """Streamlit reruns main.py on every interaction; repeated installs must not stack."""
+    import structlog
+
+    from vlm_photo_editor.secrets.redaction import redaction_processor
+
+    install_redaction_filter()
+    factory = logging.getLogRecordFactory()
+    n_procs = structlog.get_config()["processors"].count(redaction_processor)
+    install_redaction_filter()
+    install_redaction_filter()
+    assert logging.getLogRecordFactory() is factory
+    assert structlog.get_config()["processors"].count(redaction_processor) == n_procs == 1
 
 
 def test_secret_store_from_env(monkeypatch):

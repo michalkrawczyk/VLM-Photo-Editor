@@ -81,16 +81,100 @@ def test_icc_profile_preserved(tmp_path: Path) -> None:
     assert loaded2.icc_profile == srgb_bytes
 
 
-def test_raw_16bit_loader() -> None:
-    """T5: verify _load_raw builds a 16-bit container without a real RAW fixture."""
-    pixels = np.ones((10, 10, 3), dtype=np.uint16) * 32768
+def _srgb_bytes() -> bytes:
+    return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+
+def _raw_mock(pixels: np.ndarray, thumb) -> MagicMock:
     mock_cm = MagicMock()
-    mock_cm.__enter__.return_value.postprocess.return_value = pixels
-    with patch("rawpy.imread", return_value=mock_cm):
+    raw = mock_cm.__enter__.return_value
+    raw.postprocess.return_value = pixels
+    raw.extract_thumb.return_value = thumb
+    return mock_cm
+
+
+def test_raw_16bit_loader() -> None:
+    """T5 + IO-D2: _load_raw builds a 16-bit sRGB-tagged container carrying preview EXIF."""
+    import rawpy
+
+    pixels = np.ones((10, 10, 3), dtype=np.uint16) * 32768
+    exif = Image.Exif()
+    exif[0x010F] = "TestCam"
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4)).save(buf, format="JPEG", exif=exif.tobytes())
+    thumb = MagicMock(format=rawpy.ThumbFormat.JPEG, data=buf.getvalue())
+
+    with patch("rawpy.imread", return_value=_raw_mock(pixels, thumb)):
         container = load(Path("fake.nef"))
     assert container.bit_depth == 16
     assert container.pixels.dtype == np.uint16
     np.testing.assert_array_equal(container.pixels, pixels)
+    assert container.icc_profile == _srgb_bytes()
+    loaded = Image.Exif()
+    loaded.load(container.metadata["exif"])
+    assert loaded[0x010F] == "TestCam"
+
+
+@pytest.mark.parametrize(
+    "thumb_error",
+    [True, False],
+    ids=["no_thumbnail", "bitmap_thumbnail"],
+)
+def test_raw_loader_without_usable_preview_has_icc_but_no_exif(thumb_error: bool) -> None:
+    import rawpy
+
+    pixels = np.zeros((4, 4, 3), dtype=np.uint16)
+    mock_cm = _raw_mock(pixels, MagicMock(format=rawpy.ThumbFormat.BITMAP))
+    if thumb_error:
+        mock_cm.__enter__.return_value.extract_thumb.side_effect = rawpy.LibRawNoThumbnailError()
+    with patch("rawpy.imread", return_value=mock_cm):
+        container = load(Path("fake.nef"))
+    assert container.icc_profile == _srgb_bytes()
+    assert container.metadata == {}
+
+
+@pytest.mark.parametrize(
+    ("dtype", "bit_depth", "ok"),
+    [
+        (np.uint8, 8, True),
+        (np.uint16, 16, True),
+        (np.uint8, 16, False),
+        (np.uint16, 8, False),
+        (np.float32, 8, False),
+        (np.uint8, 12, False),
+    ],
+)
+def test_container_bit_depth_must_match_dtype(dtype, bit_depth: int, ok: bool) -> None:
+    """IO-B3: bit_depth is authoritative; construction and copy() reject a mismatch."""
+    pixels = np.zeros((2, 2, 3), dtype=dtype)
+    if ok:
+        c = ImageContainer(pixels=pixels, bit_depth=bit_depth, source_path=Path("x.png"))
+        assert c.copy().bit_depth == bit_depth
+    else:
+        with pytest.raises(ValueError, match="bit_depth"):
+            ImageContainer(pixels=pixels, bit_depth=bit_depth, source_path=Path("x.png"))
+
+
+def test_pil_loader_closes_opened_image(tmp_path: Path) -> None:
+    """IO-D1: `_load_pil` releases the Image it opened via a context manager.
+
+    Pillow 12 already drops the fp inside ``load()`` for single-path opens, so the
+    observable contract is the ``with`` exit, not the fp state.
+    """
+    from PIL import ImageFile
+
+    src = tmp_path / "source.png"
+    _make_rgb_png(src)
+    exited: list[str | None] = []
+    real_exit = ImageFile.ImageFile.__exit__
+
+    def _spy(self, *args):
+        exited.append(self.format)
+        return real_exit(self, *args)
+
+    with patch.object(ImageFile.ImageFile, "__exit__", _spy):
+        load(src)
+    assert exited == ["PNG"]
 
 
 def test_16bit_jpeg_raises_valueerror(tmp_path: Path) -> None:

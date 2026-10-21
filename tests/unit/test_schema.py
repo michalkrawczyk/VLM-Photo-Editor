@@ -48,6 +48,20 @@ def test_recipe_fixture():
 
 
 @pytest.mark.parametrize(
+    "bad",
+    ["", "  ", "a\x00b.jpg", "../x.jpg", "a/../../x.jpg", "a\\..\\x.jpg", ".."],
+)
+def test_recipe_rejects_unsafe_source_path(bad):
+    with pytest.raises(ValidationError, match="source_path"):
+        Recipe(source_path=bad, op_graph=OpGraph())
+
+
+@pytest.mark.parametrize("ok", ["x.jpg", "/abs/dir/x.jpg", "sub/x..y.jpg", "..x/y.jpg"])
+def test_recipe_accepts_plain_source_path(ok):
+    assert Recipe(source_path=ok, op_graph=OpGraph()).source_path == ok
+
+
+@pytest.mark.parametrize(
     "op_name,params",
     [
         (OpName.CROP, {"left": 0, "top": 0, "right": 100, "bottom": 100}),

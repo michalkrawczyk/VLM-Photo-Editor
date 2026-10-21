@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .ops import OpGraph
 
@@ -31,3 +32,17 @@ class Recipe(BaseModel):
     genai_ops: list[GenAIOp] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(tz=timezone.utc).isoformat())
     branch: str = "main"
+
+    @field_validator("source_path")
+    @classmethod
+    def _source_path_is_plain(cls, v: str) -> str:
+        # S-D3: sidecars are loaded from disk, so source_path is untrusted input that
+        # replay later opens. Reject the shapes that escape the folder it names; the
+        # schema layer cannot know an allowed root, so this is hardening, not containment.
+        if not v.strip():
+            raise ValueError("source_path must not be empty")
+        if "\x00" in v:
+            raise ValueError("source_path must not contain NUL bytes")
+        if ".." in re.split(r"[\\/]", v):
+            raise ValueError("source_path must not contain '..' segments")
+        return v
